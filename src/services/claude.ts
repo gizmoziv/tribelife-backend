@@ -1,6 +1,6 @@
-import Anthropic from '@anthropic-ai/sdk';
+import OpenAI from 'openai';
 
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 export interface BeaconAnalysis {
   isAppropriate: boolean;
@@ -13,11 +13,11 @@ export interface BeaconAnalysis {
 
 /**
  * Analyze a beacon for appropriateness and extract structured intent.
- * Single Claude call does both moderation and NLP parsing.
+ * Single call does both moderation and NLP parsing.
  */
 export async function analyzeBeacon(rawText: string): Promise<BeaconAnalysis> {
-  const message = await client.messages.create({
-    model: 'claude-sonnet-4-6',
+  const response = await client.chat.completions.create({
+    model: 'gpt-4o-mini',
     max_tokens: 512,
     messages: [
       {
@@ -54,7 +54,7 @@ Examples of appropriate beacons:
     ],
   });
 
-  const raw = message.content[0].type === 'text' ? message.content[0].text : '{}';
+  const raw = response.choices[0]?.message?.content ?? '{}';
 
   try {
     return JSON.parse(raw) as BeaconAnalysis;
@@ -87,8 +87,8 @@ export async function compareBeacons(
   intentB: string,
   keywordsB: string[]
 ): Promise<MatchResult> {
-  const message = await client.messages.create({
-    model: 'claude-haiku-4-5-20251001',  // Haiku for cost-efficient batch matching
+  const response = await client.chat.completions.create({
+    model: 'gpt-4o-mini',
     max_tokens: 256,
     messages: [
       {
@@ -115,7 +115,7 @@ isMatch = true if score >= 0.65. A match means one person can meaningfully help 
     ],
   });
 
-  const raw = message.content[0].type === 'text' ? message.content[0].text : '{}';
+  const raw = response.choices[0]?.message?.content ?? '{}';
 
   try {
     return JSON.parse(raw) as MatchResult;

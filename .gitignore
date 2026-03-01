@@ -40,3 +40,4 @@ drizzle/meta/
 
 # Vercel
 .vercel
+.omc
