@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import path from 'path';
 import express from 'express';
 import { createServer } from 'http';
 import { Server as SocketServer } from 'socket.io';
@@ -29,7 +30,18 @@ const app = express();
 const httpServer = createServer(app);
 
 // ── Middleware ─────────────────────────────────────────────────────────────
-app.use(helmet());
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", "data:", "https:"],
+      fontSrc: ["'self'", "data:"],
+      connectSrc: ["'self'", "ws:", "wss:"],
+    },
+  },
+}));
 app.use(cors({
   origin: process.env.CLIENT_URL ?? '*',
   credentials: true,
@@ -47,6 +59,13 @@ app.use('/api/notifications', notificationsRouter);
 app.use('/api/users', usersRouter);
 
 app.get('/health', (_req, res) => res.json({ ok: true, ts: Date.now() }));
+
+// ── Marketing website (SPA) ──────────────────────────────────────────────
+const publicDir = path.join(__dirname, '../public');
+app.use(express.static(publicDir));
+app.get('*', (_req, res) => {
+  res.sendFile(path.join(publicDir, 'index.html'));
+});
 
 // ── Socket.io ─────────────────────────────────────────────────────────────
 const io = new SocketServer(httpServer, {

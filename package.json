@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
+    "build:web": "cd web && npm install && npm run build && cp -r dist ../public",
+    "build:all": "npm run build:web && npm run build",
     "start": "node dist/server.js",
     "db:push": "drizzle-kit push",
     "db:generate": "drizzle-kit generate",

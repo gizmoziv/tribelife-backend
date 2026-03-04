@@ -40,4 +40,10 @@ drizzle/meta/
 
 # Vercel
 .vercel
+
+# Built website output
+public/
+
+# Website dependencies (installed at build time)
+web/node_modules/
 .omc
