@@ -61,9 +61,14 @@ app.use('/api/users', usersRouter);
 app.get('/health', (_req, res) => res.json({ ok: true, ts: Date.now() }));
 
 // ── Marketing website (SPA) ──────────────────────────────────────────────
-const publicDir = path.join(__dirname, '../public');
+const publicDir = path.resolve(__dirname, '../public');
 app.use(express.static(publicDir));
-app.get('*', (_req, res) => {
+// SPA fallback: serve index.html for non-file, non-API routes
+app.get('*', (_req, res, next) => {
+  // Skip if the request looks like a file (has an extension)
+  if (_req.path.includes('.')) {
+    return next();
+  }
   res.sendFile(path.join(publicDir, 'index.html'));
 });
 
