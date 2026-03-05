@@ -43,7 +43,7 @@ drizzle/meta/
 
 # Build output
 dist/
-public/
+/public/
 
 # Website dependencies (installed at build time)
 web/node_modules/
