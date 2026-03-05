@@ -30,6 +30,7 @@ const app = express();
 const httpServer = createServer(app);
 
 // ── Middleware ─────────────────────────────────────────────────────────────
+app.set('trust proxy', 1);
 app.use(helmet({
   contentSecurityPolicy: {
     directives: {
@@ -58,13 +59,26 @@ app.use('/api/beacons', beaconsRouter);
 app.use('/api/notifications', notificationsRouter);
 app.use('/api/users', usersRouter);
 
+// ── Resolve public directory for static files ────────────────────────────
+const fs = require('fs');
+const publicDirPrimary = path.resolve(__dirname, '../public');
+const publicDirAlt = path.resolve(process.cwd(), 'public');
+const resolvedPublicDir = fs.existsSync(publicDirPrimary) ? publicDirPrimary : publicDirAlt;
+console.log(`[server] Static files dir: ${resolvedPublicDir} (primary: ${publicDirPrimary}, alt: ${publicDirAlt})`);
+
 app.get('/health', (_req, res) => res.json({ ok: true, ts: Date.now() }));
 
+app.get('/debug/static', (_req, res) => {
+  res.json({
+    __dirname,
+    cwd: process.cwd(),
+    resolvedPublicDir,
+    publicExists: fs.existsSync(resolvedPublicDir),
+    publicContents: fs.existsSync(resolvedPublicDir) ? fs.readdirSync(resolvedPublicDir) : [],
+  });
+});
+
 // ── Marketing website (SPA) ──────────────────────────────────────────────
-const publicDir = path.resolve(__dirname, '../public');
-const publicDirAlt = path.resolve(process.cwd(), 'public');
-const resolvedPublicDir = require('fs').existsSync(publicDir) ? publicDir : publicDirAlt;
-console.log(`[server] Static files dir: ${resolvedPublicDir} (primary: ${publicDir}, alt: ${publicDirAlt})`);
 app.use(express.static(resolvedPublicDir));
 // SPA fallback: serve index.html for non-file, non-API routes
 app.get('*', (_req, res, next) => {
