@@ -119,7 +119,7 @@ router.post('/conversations', async (req: AuthRequest, res: Response): Promise<v
 // ── Get messages in a DM conversation ─────────────────────────────────────
 router.get('/conversations/:id/messages', async (req: AuthRequest, res: Response): Promise<void> => {
   const userId = req.user!.id;
-  const convId = parseInt(req.params.id);
+  const convId = parseInt(req.params.id as string);
   const cursor = req.query.before ? new Date(req.query.before as string) : undefined;
   const limit = Math.min(parseInt(req.query.limit as string ?? '50'), 100);
 
@@ -179,7 +179,7 @@ router.get('/conversations/:id/messages', async (req: AuthRequest, res: Response
 
 // ── Get recent location-based (room) chat history ─────────────────────────
 router.get('/room/:roomId/messages', async (req: AuthRequest, res: Response): Promise<void> => {
-  const { roomId } = req.params;
+  const roomId = req.params.roomId as string;
   const cursor = req.query.before ? new Date(req.query.before as string) : undefined;
   const limit = Math.min(parseInt(req.query.limit as string ?? '50'), 100);
 

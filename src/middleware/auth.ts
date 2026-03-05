@@ -61,9 +61,6 @@ export async function requireAuth(
 }
 
 export function signToken(userId: number): string {
-  return jwt.sign(
-    { userId },
-    process.env.JWT_SECRET!,
-    { expiresIn: process.env.JWT_EXPIRES_IN ?? '30d' }
-  );
+  const expiresIn = (process.env.JWT_EXPIRES_IN ?? '30d') as any;
+  return jwt.sign({ userId }, process.env.JWT_SECRET!, { expiresIn });
 }

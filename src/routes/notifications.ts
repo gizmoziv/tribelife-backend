@@ -38,7 +38,7 @@ router.put('/read-all', async (req: AuthRequest, res: Response): Promise<void> =
 
 router.put('/:id/read', async (req: AuthRequest, res: Response): Promise<void> => {
   const userId = req.user!.id;
-  const notifId = parseInt(req.params.id);
+  const notifId = parseInt(req.params.id as string);
 
   await db
     .update(notifications)

@@ -170,7 +170,7 @@ router.post('/onboarding', requireAuth, async (req: AuthRequest, res: Response):
 
 // ── Check handle availability ──────────────────────────────────────────────
 router.get('/handle-check/:handle', async (req: Request, res: Response): Promise<void> => {
-  const handle = req.params.handle.toLowerCase();
+  const handle = (req.params.handle as string).toLowerCase();
 
   if (!/^[a-zA-Z0-9_]{3,30}$/.test(handle)) {
     res.json({ available: false, reason: 'Invalid handle format' });

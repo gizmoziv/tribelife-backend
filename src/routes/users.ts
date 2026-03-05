@@ -9,7 +9,7 @@ router.use(requireAuth);
 
 // ── Get a user's public profile ────────────────────────────────────────────
 router.get('/:handle', async (req: AuthRequest, res: Response): Promise<void> => {
-  const handle = req.params.handle.toLowerCase();
+  const handle = (req.params.handle as string).toLowerCase();
 
   const result = await db
     .select({

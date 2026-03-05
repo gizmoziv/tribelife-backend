@@ -121,7 +121,7 @@ router.get('/mine', async (req: AuthRequest, res: Response): Promise<void> => {
 // ── Deactivate a beacon ────────────────────────────────────────────────────
 router.delete('/:id', async (req: AuthRequest, res: Response): Promise<void> => {
   const userId = req.user!.id;
-  const beaconId = parseInt(req.params.id);
+  const beaconId = parseInt(req.params.id as string);
 
   const [updated] = await db
     .update(beacons)
@@ -185,7 +185,7 @@ router.get('/matches', async (req: AuthRequest, res: Response): Promise<void> =>
 
 // ── Mark match as viewed ───────────────────────────────────────────────────
 router.put('/matches/:id/viewed', async (req: AuthRequest, res: Response): Promise<void> => {
-  const matchId = parseInt(req.params.id);
+  const matchId = parseInt(req.params.id as string);
 
   await db
     .update(beaconMatches)
