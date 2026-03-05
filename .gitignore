@@ -41,7 +41,8 @@ drizzle/meta/
 # Vercel
 .vercel
 
-# Built website output
+# Build output
+dist/
 public/
 
 # Website dependencies (installed at build time)

@@ -62,14 +62,17 @@ app.get('/health', (_req, res) => res.json({ ok: true, ts: Date.now() }));
 
 // ── Marketing website (SPA) ──────────────────────────────────────────────
 const publicDir = path.resolve(__dirname, '../public');
-app.use(express.static(publicDir));
+const publicDirAlt = path.resolve(process.cwd(), 'public');
+const resolvedPublicDir = require('fs').existsSync(publicDir) ? publicDir : publicDirAlt;
+console.log(`[server] Static files dir: ${resolvedPublicDir} (primary: ${publicDir}, alt: ${publicDirAlt})`);
+app.use(express.static(resolvedPublicDir));
 // SPA fallback: serve index.html for non-file, non-API routes
 app.get('*', (_req, res, next) => {
   // Skip if the request looks like a file (has an extension)
   if (_req.path.includes('.')) {
     return next();
   }
-  res.sendFile(path.join(publicDir, 'index.html'));
+  res.sendFile(path.join(resolvedPublicDir, 'index.html'));
 });
 
 // ── Socket.io ─────────────────────────────────────────────────────────────
