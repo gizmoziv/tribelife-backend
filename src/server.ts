@@ -68,16 +68,6 @@ console.log(`[server] Static files dir: ${resolvedPublicDir} (primary: ${publicD
 
 app.get('/health', (_req, res) => res.json({ ok: true, ts: Date.now() }));
 
-app.get('/debug/static', (_req, res) => {
-  res.json({
-    __dirname,
-    cwd: process.cwd(),
-    resolvedPublicDir,
-    publicExists: fs.existsSync(resolvedPublicDir),
-    publicContents: fs.existsSync(resolvedPublicDir) ? fs.readdirSync(resolvedPublicDir) : [],
-  });
-});
-
 // ── Marketing website (SPA) ──────────────────────────────────────────────
 app.use(express.static(resolvedPublicDir));
 // SPA fallback: serve index.html for non-file, non-API routes
