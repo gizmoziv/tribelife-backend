@@ -186,8 +186,19 @@ router.get('/handle-check/:handle', async (req: Request, res: Response): Promise
   res.json({ available: existing.length === 0 });
 });
 
-// ── Get current user ───────────────────────────────────────────────────────
+// ── Get current user (also refreshes timezone if provided) ────────────────
 router.get('/me', requireAuth, async (req: AuthRequest, res: Response): Promise<void> => {
+  const timezone = req.query.timezone as string | undefined;
+
+  if (timezone && timezone !== req.user!.timezone) {
+    await db
+      .update(userProfiles)
+      .set({ timezone, updatedAt: new Date() })
+      .where(eq(userProfiles.userId, req.user!.id));
+
+    req.user!.timezone = timezone;
+  }
+
   res.json({ user: req.user });
 });
 
