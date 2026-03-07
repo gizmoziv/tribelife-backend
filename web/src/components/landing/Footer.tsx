@@ -36,6 +36,12 @@ const Footer = () => {
             >
               Download
             </a>
+            <Link
+              to="/support"
+              className="hover:text-foreground transition-colors"
+            >
+              Support
+            </Link>
           </div>
         </div>
 

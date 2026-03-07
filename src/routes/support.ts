@@ -1,4 +1,4 @@
-import { Router, Response } from 'express';
+import { Router, Request, Response } from 'express';
 import sgMail from '@sendgrid/mail';
 import { z } from 'zod';
 import { requireAuth, AuthRequest } from '../middleware/auth';
@@ -10,6 +10,12 @@ sgMail.setApiKey(process.env.SENDGRID_API_KEY!);
 const supportSchema = z.object({
   subject: z.string().min(1).max(200),
   message: z.string().min(1).max(5000),
+});
+
+const publicSupportSchema = z.object({
+  subject: z.string().min(1).max(200),
+  message: z.string().min(1).max(5000),
+  email: z.string().email().max(320),
 });
 
 router.post(
@@ -47,5 +53,36 @@ router.post(
     }
   },
 );
+
+// Public endpoint (no auth) for the website support form
+router.post('/public', async (req: Request, res: Response): Promise<void> => {
+  const parse = publicSupportSchema.safeParse(req.body);
+  if (!parse.success) {
+    res.status(400).json({ error: 'Email, subject, and message are required' });
+    return;
+  }
+
+  const { subject, message, email } = parse.data;
+
+  try {
+    await sgMail.send({
+      to: 'info@tribelife.app',
+      from: process.env.SENDGRID_FROM_EMAIL!,
+      replyTo: email,
+      subject: `[TribeLife Support] ${subject}`,
+      text: `From: ${email}\n\n${message}`,
+      html: `
+        <p><strong>From:</strong> ${email}</p>
+        <hr />
+        <p>${message.replace(/\n/g, '<br />')}</p>
+      `,
+    });
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[support] Failed to send email:', err);
+    res.status(500).json({ error: 'Failed to send support email' });
+  }
+});
 
 export default router;
