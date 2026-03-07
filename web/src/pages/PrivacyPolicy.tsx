@@ -113,9 +113,9 @@ const PrivacyPolicy = () => {
               <section>
                 <h2 className="text-xl font-bold mb-3">9. Children's Privacy</h2>
                 <p className="text-muted-foreground">
-                  TribeLife is not intended for users under the age of 18. We do not knowingly collect 
+                  TribeLife is not intended for users under the age of 16. We do not knowingly collect 
                   information from children. If we become aware that we have collected personal information 
-                  from a child under 18, we will take steps to delete that information promptly.
+                  from a child under 16, we will take steps to delete that information promptly.
                 </p>
               </section>
 
