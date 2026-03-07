@@ -38,7 +38,7 @@ Respond with valid JSON only (no markdown, no explanation) in this exact shape:
 }
 
 Rules:
-- isAppropriate = false if the beacon contains: hate speech, sexual content, illegal activity solicitation, personal contact info, spam/advertising links, or threatening language.
+- isAppropriate = false if the beacon contains: hate speech, violence or threats, sexual or nude content, illegal activity or drug solicitation, weapons or firearms sales, gambling, personal contact info (phone/email/address), spam/advertising links, discriminatory language, self-harm references, or any content that would violate Apple App Store or Google Play guidelines.
 - flagReason = concise reason if isAppropriate is false, else null.
 - parsedIntent = a clean, normalized 1-2 sentence description of the intent. Correct typos. Remove personal info.
 - category = one of: childcare, education, entertainment, sports, real_estate, services, social, pets, transportation, health, food, other.
