@@ -1,3 +1,4 @@
+import { Helmet } from "react-helmet-async";
 import Navbar from "@/components/landing/Navbar";
 import Footer from "@/components/landing/Footer";
 import { motion } from "framer-motion";
@@ -5,6 +6,11 @@ import { motion } from "framer-motion";
 const PrivacyPolicy = () => {
   return (
     <div className="min-h-screen bg-background">
+      <Helmet>
+        <title>Privacy Policy | TribeLife</title>
+        <meta name="description" content="Read TribeLife's privacy policy. Learn how we collect, use, and protect your personal information in our community matching app." />
+        <link rel="canonical" href="https://tribelife.app/privacy" />
+      </Helmet>
       <Navbar />
       <main className="pt-28 pb-20">
         <div className="container mx-auto px-6 max-w-3xl">
@@ -132,8 +138,8 @@ const PrivacyPolicy = () => {
                 <h2 className="text-xl font-bold mb-3">11. Contact Us</h2>
                 <p className="text-muted-foreground">
                   If you have any questions about this Privacy Policy, please contact us at{" "}
-                  <a href="mailto:support@tribelife.app" className="text-primary hover:underline">
-                    support@tribelife.app
+                  <a href="/support" className="text-primary hover:underline">
+                    our support page
                   </a>.
                 </p>
               </section>

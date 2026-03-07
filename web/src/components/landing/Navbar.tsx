@@ -1,4 +1,5 @@
 import { motion } from 'framer-motion';
+import { Link } from 'react-router-dom';
 import logo from '@/assets/tribelife-logo.png';
 import ThemeToggle from './ThemeToggle';
 const APP_STORE_URL =
@@ -18,7 +19,7 @@ const Navbar = () => {
         <a href="/" className="flex items-center gap-2">
           <img
             src={logo}
-            alt="TribeLife - Community Matching App"
+            alt="TribeLife - Local Community Matching App"
             className="h-20"
           />
         </a>
@@ -42,6 +43,12 @@ const Navbar = () => {
           >
             Community
           </a>
+          <Link
+            to="/support"
+            className="hover:text-foreground transition-colors"
+          >
+            Support
+          </Link>
         </div>
 
         <div className="flex items-center gap-3">

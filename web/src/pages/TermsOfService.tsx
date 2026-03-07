@@ -1,3 +1,4 @@
+import { Helmet } from "react-helmet-async";
 import Navbar from "@/components/landing/Navbar";
 import Footer from "@/components/landing/Footer";
 import { motion } from "framer-motion";
@@ -5,6 +6,11 @@ import { motion } from "framer-motion";
 const TermsOfService = () => {
   return (
     <div className="min-h-screen bg-background">
+      <Helmet>
+        <title>Terms of Service | TribeLife</title>
+        <meta name="description" content="Read TribeLife's terms of service. Understand the rules and guidelines for using our community matching platform." />
+        <link rel="canonical" href="https://tribelife.app/terms" />
+      </Helmet>
       <Navbar />
       <main className="pt-28 pb-20">
         <div className="container mx-auto px-6 max-w-3xl">

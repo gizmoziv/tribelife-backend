@@ -1,0 +1,41 @@
+# TribeLife
+
+> TribeLife is a community matching app that connects real people nearby through intelligent beacon matching.
+
+## What is TribeLife?
+
+TribeLife is a mobile application (iOS and Android) that helps people find and connect with others in their local community. Users create "beacons" — short descriptions of what they need or offer (e.g., a babysitter, a pickleball partner, a tutor) — and TribeLife's AI-powered matching engine connects them with relevant people nearby.
+
+## Key Features
+
+- **Beacon Matching**: Post what you need or offer, and get matched with relevant community members using AI.
+- **Hyperlocal Discovery**: Connections are based on real proximity — your neighborhood, not the entire internet.
+- **Community Chat**: Timezone-based community rooms for local conversation.
+- **Direct Messaging**: Private conversations with your matches.
+- **AI-Powered Moderation**: All content is screened for safety before posting.
+- **Verified Profiles**: Google Sign-In ensures real identity.
+
+## How It Works
+
+1. Download TribeLife and create a profile.
+2. Create a beacon describing what you need or offer.
+3. TribeLife's matching engine finds relevant people in your area.
+4. Connect via chat and build real community relationships.
+
+## Company
+
+TribeLife is built by UBot Labs.
+
+- Website: https://tribelife.app
+- Support: https://tribelife.app/support
+- Privacy Policy: https://tribelife.app/privacy
+- Terms of Service: https://tribelife.app/terms
+
+## Pricing
+
+- Free: 1 active beacon at a time
+- Premium ($4.99/month): Up to 3 active beacons, priority matching
+
+## Availability
+
+Available on iOS via the Apple App Store. Android version coming soon.

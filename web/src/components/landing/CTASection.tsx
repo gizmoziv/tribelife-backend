@@ -6,7 +6,7 @@ const PLAY_STORE_URL = "https://apps.apple.com/us/developer/ubot-labs/id18380688
 
 const CTASection = () => {
   return (
-    <section id="community" className="py-24 md:py-32 section-gradient">
+    <section id="community" aria-label="Download TribeLife" className="py-24 md:py-32 section-gradient">
       <div className="container mx-auto px-6">
         <motion.div
           initial={{ opacity: 0, y: 20 }}

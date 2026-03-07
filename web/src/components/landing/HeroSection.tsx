@@ -7,10 +7,10 @@ const PLAY_STORE_URL = "https://apps.apple.com/us/developer/ubot-labs/id18380688
 
 const HeroSection = () => {
   return (
-    <section className="relative min-h-screen flex items-center justify-center overflow-hidden pt-20">
+    <section aria-label="Hero" className="relative min-h-screen flex items-center justify-center overflow-hidden pt-20">
       {/* Background */}
       <div className="absolute inset-0">
-        <img src={heroBg} alt="" className="w-full h-full object-cover opacity-40" />
+        <img src={heroBg} alt="People connecting in a local community" className="w-full h-full object-cover opacity-40" />
         <div className="absolute inset-0 bg-gradient-to-b from-background/60 via-background/40 to-background" />
       </div>
 
@@ -35,8 +35,8 @@ const HeroSection = () => {
           transition={{ duration: 0.7, delay: 0.35 }}
           className="text-5xl md:text-7xl font-bold leading-tight mb-6"
         >
-          Your Community,{" "}
-          <span className="gradient-text">Supercharged</span>
+          Meet Real People in{" "}
+          <span className="gradient-text">Your Community</span>
         </motion.h1>
 
         <motion.p

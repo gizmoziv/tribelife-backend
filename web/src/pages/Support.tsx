@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Helmet } from "react-helmet-async";
 import Navbar from "@/components/landing/Navbar";
 import Footer from "@/components/landing/Footer";
 import { motion } from "framer-motion";
@@ -46,6 +47,11 @@ const Support = () => {
 
   return (
     <div className="min-h-screen bg-background">
+      <Helmet>
+        <title>Contact Support | TribeLife</title>
+        <meta name="description" content="Need help with TribeLife? Contact our support team. We're here to help with any questions, issues, or feedback about the TribeLife community app." />
+        <link rel="canonical" href="https://tribelife.app/support" />
+      </Helmet>
       <Navbar />
       <main className="pt-28 pb-20">
         <div className="container mx-auto px-6 max-w-3xl">
