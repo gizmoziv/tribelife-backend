@@ -70,6 +70,21 @@ console.log(`[server] Static files dir: ${resolvedPublicDir} (primary: ${publicD
 
 app.get('/health', (_req, res) => res.json({ ok: true, ts: Date.now() }));
 
+// ── SEO: Redirect old/dead routes to homepage ────────────────────────────
+const deadRoutes = ['/fundraising', '/spaces', '/jobs', '/discussions'];
+for (const route of deadRoutes) {
+  app.get(route, (_req, res) => res.redirect(301, '/'));
+}
+
+// ── SEO: Redirect www to non-www ─────────────────────────────────────────
+app.use((req, res, next) => {
+  const host = req.hostname;
+  if (host.startsWith('www.')) {
+    return res.redirect(301, `https://${host.slice(4)}${req.originalUrl}`);
+  }
+  next();
+});
+
 // ── Marketing website (SPA) ──────────────────────────────────────────────
 app.use(express.static(resolvedPublicDir));
 // SPA fallback: serve index.html for non-file, non-API routes
