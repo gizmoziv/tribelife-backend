@@ -25,6 +25,7 @@ import notificationsRouter from './routes/notifications';
 import usersRouter from './routes/users';
 import supportRouter from './routes/support';
 import revenuecatRouter from './routes/revenuecat';
+import moderationRouter from './routes/moderation';
 import { startBeaconMatcherCron } from './jobs/beaconMatcher';
 import { sendPushToUser } from './services/pushNotifications';
 
@@ -62,6 +63,7 @@ app.use('/api/notifications', notificationsRouter);
 app.use('/api/users', usersRouter);
 app.use('/api/support', supportRouter);
 app.use('/api/revenuecat', revenuecatRouter);
+app.use('/api/moderation', moderationRouter);
 
 // ── Resolve public directory for static files ────────────────────────────
 const fs = require('fs');

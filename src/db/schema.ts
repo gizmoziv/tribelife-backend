@@ -147,6 +147,30 @@ export const notifications = pgTable('notifications', {
 }));
 
 // ─────────────────────────────────────────────
+// MODERATION
+// ─────────────────────────────────────────────
+export const blockedUsers = pgTable('blocked_users', {
+  id: serial('id').primaryKey(),
+  userId: integer('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
+  blockedUserId: integer('blocked_user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
+  createdAt: timestamp('created_at').defaultNow(),
+}, (t) => ({
+  uniqBlock: unique().on(t.userId, t.blockedUserId),
+}));
+
+export const contentReports = pgTable('content_reports', {
+  id: serial('id').primaryKey(),
+  reporterId: integer('reporter_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
+  reportedUserId: integer('reported_user_id').references(() => users.id, { onDelete: 'set null' }),
+  contentType: varchar('content_type', { length: 50 }).notNull(),  // 'message' | 'beacon' | 'profile'
+  contentId: integer('content_id'),
+  reason: text('reason').notNull(),
+  status: varchar('status', { length: 50 }).notNull().default('pending'),  // 'pending' | 'reviewed' | 'actioned'
+  createdAt: timestamp('created_at').defaultNow(),
+  reviewedAt: timestamp('reviewed_at'),
+});
+
+// ─────────────────────────────────────────────
 // RELATIONS
 // ─────────────────────────────────────────────
 export const usersRelations = relations(users, ({ one, many }) => ({
@@ -155,6 +179,10 @@ export const usersRelations = relations(users, ({ one, many }) => ({
   beacons: many(beacons),
   notifications: many(notifications),
   conversationParticipants: many(conversationParticipants),
+  blocksInitiated: many(blockedUsers, { relationName: 'blocksInitiated' }),
+  blocksReceived: many(blockedUsers, { relationName: 'blocksReceived' }),
+  reportsSubmitted: many(contentReports, { relationName: 'reportsSubmitted' }),
+  reportsReceived: many(contentReports, { relationName: 'reportsReceived' }),
 }));
 
 export const userProfilesRelations = relations(userProfiles, ({ one }) => ({
@@ -183,4 +211,14 @@ export const beaconMatchesRelations = relations(beaconMatches, ({ one }) => ({
 
 export const notificationsRelations = relations(notifications, ({ one }) => ({
   user: one(users, { fields: [notifications.userId], references: [users.id] }),
+}));
+
+export const blockedUsersRelations = relations(blockedUsers, ({ one }) => ({
+  user: one(users, { fields: [blockedUsers.userId], references: [users.id], relationName: 'blocksInitiated' }),
+  blockedUser: one(users, { fields: [blockedUsers.blockedUserId], references: [users.id], relationName: 'blocksReceived' }),
+}));
+
+export const contentReportsRelations = relations(contentReports, ({ one }) => ({
+  reporter: one(users, { fields: [contentReports.reporterId], references: [users.id], relationName: 'reportsSubmitted' }),
+  reportedUser: one(users, { fields: [contentReports.reportedUserId], references: [users.id], relationName: 'reportsReceived' }),
 }));

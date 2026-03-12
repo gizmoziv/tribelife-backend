@@ -250,6 +250,9 @@ const onboardingSchema = z.object({
     .regex(/^[a-zA-Z0-9_]+$/, 'Handle can only contain letters, numbers, and underscores'),
   timezone: z.string().min(1),
   avatarUrl: z.string().url().optional(),
+  acceptedTerms: z.literal(true, {
+    errorMap: () => ({ message: 'You must accept the Terms of Service to continue' }),
+  }),
 });
 
 router.post('/onboarding', requireAuth, async (req: AuthRequest, res: Response): Promise<void> => {

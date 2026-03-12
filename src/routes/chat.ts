@@ -1,5 +1,5 @@
 import { Router, Response } from 'express';
-import { eq, and, inArray, desc, lt, sql } from 'drizzle-orm';
+import { eq, and, inArray, desc, lt, sql, notInArray } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '../db';
 import {
@@ -8,6 +8,7 @@ import {
   messages,
   users,
   userProfiles,
+  blockedUsers,
 } from '../db/schema';
 import { requireAuth, AuthRequest } from '../middleware/auth';
 
@@ -31,6 +32,13 @@ router.get('/conversations', async (req: AuthRequest, res: Response): Promise<vo
 
   const convIds = participations.map((p) => p.conversationId);
 
+  // Get blocked user IDs so we can exclude their conversations
+  const blockedRows = await db
+    .select({ blockedUserId: blockedUsers.blockedUserId })
+    .from(blockedUsers)
+    .where(eq(blockedUsers.userId, userId));
+  const blockedIds = blockedRows.map((r) => r.blockedUserId);
+
   // For each conversation, get the other participant + last message
   const result = await db
     .select({
@@ -52,7 +60,11 @@ router.get('/conversations', async (req: AuthRequest, res: Response): Promise<vo
     )
     .innerJoin(users, eq(users.id, conversationParticipants.userId))
     .leftJoin(userProfiles, eq(userProfiles.userId, conversationParticipants.userId))
-    .where(inArray(conversations.id, convIds))
+    .where(
+      blockedIds.length > 0
+        ? and(inArray(conversations.id, convIds), notInArray(conversationParticipants.userId, blockedIds))
+        : inArray(conversations.id, convIds)
+    )
     .orderBy(desc(conversations.lastMessageAt));
 
   // Attach last message preview
@@ -179,9 +191,26 @@ router.get('/conversations/:id/messages', async (req: AuthRequest, res: Response
 
 // ── Get recent location-based (room) chat history ─────────────────────────
 router.get('/room/:roomId/messages', async (req: AuthRequest, res: Response): Promise<void> => {
+  const userId = req.user!.id;
   const roomId = req.params.roomId as string;
   const cursor = req.query.before ? new Date(req.query.before as string) : undefined;
   const limit = Math.min(parseInt(req.query.limit as string ?? '50'), 100);
+
+  // Get blocked user IDs to exclude their messages
+  const blockedRows = await db
+    .select({ blockedUserId: blockedUsers.blockedUserId })
+    .from(blockedUsers)
+    .where(eq(blockedUsers.userId, userId));
+  const blockedIds = blockedRows.map((r) => r.blockedUserId);
+
+  const baseWhere = cursor
+    ? and(eq(messages.roomId, roomId), lt(messages.createdAt, cursor))
+    : eq(messages.roomId, roomId);
+
+  const whereClause =
+    blockedIds.length > 0 && messages.senderId !== null
+      ? and(baseWhere, notInArray(messages.senderId, blockedIds))
+      : baseWhere;
 
   const rows = await db
     .select({
@@ -197,11 +226,7 @@ router.get('/room/:roomId/messages', async (req: AuthRequest, res: Response): Pr
     .from(messages)
     .leftJoin(users, eq(users.id, messages.senderId))
     .leftJoin(userProfiles, eq(userProfiles.userId, messages.senderId))
-    .where(
-      cursor
-        ? and(eq(messages.roomId, roomId), lt(messages.createdAt, cursor))
-        : eq(messages.roomId, roomId)
-    )
+    .where(whereClause)
     .orderBy(desc(messages.createdAt))
     .limit(limit);
 
