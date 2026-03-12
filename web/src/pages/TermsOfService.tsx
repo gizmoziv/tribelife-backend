@@ -55,11 +55,19 @@ const TermsOfService = () => {
               </section>
 
               <section>
-                <h2 className="text-xl font-bold mb-3">4. User Conduct</h2>
-                <p className="text-muted-foreground mb-3">You agree not to:</p>
+                <h2 className="text-xl font-bold mb-3">4. User Conduct & Zero-Tolerance Policy</h2>
+                <p className="text-muted-foreground mb-3">
+                  TribeLife has a <strong>zero-tolerance policy</strong> for objectionable content and abusive behavior.
+                  Any user who violates these standards will have their content removed and their account permanently
+                  terminated. You agree not to:
+                </p>
                 <ul className="list-disc list-inside space-y-2 text-muted-foreground">
                   <li>Use the Service for any unlawful purpose or in violation of any applicable laws</li>
-                  <li>Harass, abuse, or harm other users</li>
+                  <li>Harass, abuse, threaten, bully, or harm other users</li>
+                  <li>Post objectionable, offensive, sexually explicit, or pornographic content</li>
+                  <li>Post content that promotes violence, self-harm, terrorism, or hate speech</li>
+                  <li>Post discriminatory content targeting race, ethnicity, religion, gender, sexual orientation, disability, or national origin</li>
+                  <li>Post content related to illegal drugs, weapons, or gambling</li>
                   <li>Create false or misleading profiles or beacons</li>
                   <li>Impersonate any person or entity</li>
                   <li>Attempt to gain unauthorized access to the Service or other users' accounts</li>
@@ -69,7 +77,18 @@ const TermsOfService = () => {
               </section>
 
               <section>
-                <h2 className="text-xl font-bold mb-3">5. Beacons and Matching</h2>
+                <h2 className="text-xl font-bold mb-3">5. Content Moderation & Reporting</h2>
+                <p className="text-muted-foreground">
+                  We actively moderate content on TribeLife using automated systems and human review. All beacons are
+                  screened before being published. Users can report objectionable content or abusive behavior directly
+                  within the app. We commit to reviewing all reports within 24 hours and will remove offending content
+                  and terminate the accounts of users who violate these terms. Users may also block other users at any
+                  time, which immediately removes that user's content from their experience.
+                </p>
+              </section>
+
+              <section>
+                <h2 className="text-xl font-bold mb-3">6. Beacons and Matching</h2>
                 <p className="text-muted-foreground">
                   Beacons created on TribeLife are visible to other users within your community. We use intelligent 
                   matching algorithms to connect users based on relevance, proximity, and preferences. We do not 
@@ -79,7 +98,7 @@ const TermsOfService = () => {
               </section>
 
               <section>
-                <h2 className="text-xl font-bold mb-3">6. Intellectual Property</h2>
+                <h2 className="text-xl font-bold mb-3">7. Intellectual Property</h2>
                 <p className="text-muted-foreground">
                   The Service and its original content, features, and functionality are owned by UBot Labs and are 
                   protected by international copyright, trademark, and other intellectual property laws. You retain 
@@ -89,7 +108,7 @@ const TermsOfService = () => {
               </section>
 
               <section>
-                <h2 className="text-xl font-bold mb-3">7. Termination</h2>
+                <h2 className="text-xl font-bold mb-3">8. Termination</h2>
                 <p className="text-muted-foreground">
                   We reserve the right to suspend or terminate your account at any time, with or without cause, 
                   and with or without notice. You may delete your account at any time through the app settings. 
@@ -98,7 +117,7 @@ const TermsOfService = () => {
               </section>
 
               <section>
-                <h2 className="text-xl font-bold mb-3">8. Disclaimers</h2>
+                <h2 className="text-xl font-bold mb-3">9. Disclaimers</h2>
                 <p className="text-muted-foreground">
                   The Service is provided "as is" and "as available" without warranties of any kind. We do not 
                   warrant that the Service will be uninterrupted, secure, or error-free. We are not responsible 
@@ -108,7 +127,7 @@ const TermsOfService = () => {
               </section>
 
               <section>
-                <h2 className="text-xl font-bold mb-3">9. Limitation of Liability</h2>
+                <h2 className="text-xl font-bold mb-3">10. Limitation of Liability</h2>
                 <p className="text-muted-foreground">
                   To the maximum extent permitted by law, UBot Labs shall not be liable for any indirect, 
                   incidental, special, consequential, or punitive damages arising out of or relating to your 
@@ -117,7 +136,7 @@ const TermsOfService = () => {
               </section>
 
               <section>
-                <h2 className="text-xl font-bold mb-3">10. Changes to Terms</h2>
+                <h2 className="text-xl font-bold mb-3">11. Changes to Terms</h2>
                 <p className="text-muted-foreground">
                   We reserve the right to modify these terms at any time. We will notify users of material changes 
                   through the app or via email. Your continued use of the Service after changes constitutes 
@@ -126,7 +145,7 @@ const TermsOfService = () => {
               </section>
 
               <section>
-                <h2 className="text-xl font-bold mb-3">11. Contact Us</h2>
+                <h2 className="text-xl font-bold mb-3">12. Contact Us</h2>
                 <p className="text-muted-foreground">
                   If you have any questions about these Terms of Service, please contact us at{" "}
                   <a href="mailto:support@tribelife.app" className="text-primary hover:underline">
