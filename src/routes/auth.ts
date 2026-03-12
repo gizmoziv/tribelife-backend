@@ -326,6 +326,19 @@ router.get('/me', requireAuth, async (req: AuthRequest, res: Response): Promise<
   res.json({ user: req.user });
 });
 
+// ── Delete account ────────────────────────────────────────────────────────
+router.delete('/account', requireAuth, async (req: AuthRequest, res: Response): Promise<void> => {
+  const userId = req.user!.id;
+
+  try {
+    await db.delete(users).where(eq(users.id, userId));
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[auth/delete-account]', err);
+    res.status(500).json({ error: 'Failed to delete account' });
+  }
+});
+
 // ── Update push token ──────────────────────────────────────────────────────
 router.put('/push-token', requireAuth, async (req: AuthRequest, res: Response): Promise<void> => {
   const { expoPushToken } = req.body;
