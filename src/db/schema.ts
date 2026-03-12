@@ -32,6 +32,7 @@ export const userProfiles = pgTable('user_profiles', {
   avatarUrl: text('avatar_url'),
   timezone: varchar('timezone', { length: 100 }),                // e.g. "America/New_York"
   googleId: text('google_id').unique(),                          // from Google OAuth
+  appleId: text('apple_id').unique(),                            // from Sign in with Apple
   isPremium: boolean('is_premium').notNull().default(false),
   premiumExpiresAt: timestamp('premium_expires_at'),
   revenuecatCustomerId: text('revenuecat_customer_id'),
