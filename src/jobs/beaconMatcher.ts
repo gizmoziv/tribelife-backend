@@ -9,7 +9,7 @@
 import cron from 'node-cron';
 import { eq, and, isNull, or, lt, sql } from 'drizzle-orm';
 import { db } from '../db';
-import { beacons, beaconMatches, userProfiles, notifications } from '../db/schema';
+import { beacons, beaconMatches, userProfiles, notifications, blockedUsers } from '../db/schema';
 import { compareBeacons } from '../services/claude';
 import { sendPushToUser } from '../services/pushNotifications';
 
@@ -43,6 +43,16 @@ async function runBeaconMatching(): Promise<void> {
     return;
   }
 
+  // Load all block relationships into a Set for O(1) lookup
+  const allBlocks = await db
+    .select({ userId: blockedUsers.userId, blockedUserId: blockedUsers.blockedUserId })
+    .from(blockedUsers);
+
+  const blockedPairs = new Set<string>();
+  for (const row of allBlocks) {
+    blockedPairs.add(`${row.userId}:${row.blockedUserId}`);
+  }
+
   // Group by timezone for locality-aware matching
   const byTimezone = new Map<string, typeof activeBeacons>();
   for (const beacon of activeBeacons) {
@@ -65,6 +75,12 @@ async function runBeaconMatching(): Promise<void> {
 
         // Skip same user
         if (a.userId === b.userId) continue;
+
+        // Skip pairs where either user has blocked the other
+        if (
+          blockedPairs.has(`${a.userId}:${b.userId}`) ||
+          blockedPairs.has(`${b.userId}:${a.userId}`)
+        ) continue;
 
         // Skip pairs that already have a match recorded today
         const existingMatch = await db

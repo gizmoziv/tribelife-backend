@@ -27,6 +27,42 @@ router.post('/block/:userId', async (req: AuthRequest, res: Response): Promise<v
       .values({ userId, blockedUserId })
       .onConflictDoNothing();
 
+    // Fetch blocker and blocked user info for the notification email
+    const blockerInfo = req.user!;
+
+    const blockedRows = await db
+      .select({ name: users.name, email: users.email, handle: userProfiles.handle })
+      .from(users)
+      .leftJoin(userProfiles, eq(userProfiles.userId, users.id))
+      .where(eq(users.id, blockedUserId))
+      .limit(1);
+
+    const blocked = blockedRows[0];
+    const blockedDesc = blocked
+      ? `${blocked.name} (${blocked.email}) @${blocked.handle ?? 'N/A'}`
+      : `User ID ${blockedUserId}`;
+
+    try {
+      await sgMail.send({
+        to: 'info@tribelife.app',
+        from: process.env.SENDGRID_FROM_EMAIL!,
+        subject: '[TribeLife] User blocked',
+        text: [
+          `Blocker: ${blockerInfo.name} (${blockerInfo.email}) @${blockerInfo.handle ?? 'N/A'}`,
+          `Blocked: ${blockedDesc}`,
+          `Timestamp: ${new Date().toISOString()}`,
+        ].join('\n'),
+        html: `
+          <p><strong>Blocker:</strong> ${blockerInfo.name} (${blockerInfo.email}) @${blockerInfo.handle ?? 'N/A'}</p>
+          <p><strong>Blocked:</strong> ${blockedDesc}</p>
+          <p><strong>Timestamp:</strong> ${new Date().toISOString()}</p>
+        `,
+      });
+    } catch (emailErr) {
+      console.error('[moderation/block] Email notification failed', emailErr);
+      // Non-fatal — block was already recorded
+    }
+
     res.json({ ok: true });
   } catch (err) {
     console.error('[moderation/block]', err);

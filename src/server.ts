@@ -16,6 +16,7 @@ import {
   conversationParticipants,
   userProfiles,
   notifications,
+  blockedUsers,
 } from './db/schema';
 
 import authRouter from './routes/auth';
@@ -28,6 +29,7 @@ import revenuecatRouter from './routes/revenuecat';
 import moderationRouter from './routes/moderation';
 import { startBeaconMatcherCron } from './jobs/beaconMatcher';
 import { sendPushToUser } from './services/pushNotifications';
+import { moderateMessage } from './services/claude';
 
 const app = express();
 const httpServer = createServer(app);
@@ -158,6 +160,13 @@ io.on('connection', (socket) => {
     const content = data.content?.trim();
     if (!content || content.length > 2000) return;
 
+    // Content moderation check
+    const modResult = moderateMessage(content);
+    if (!modResult.isAllowed) {
+      socket.emit('message:rejected', { reason: modResult.reason });
+      return;
+    }
+
     // Parse @mentions
     const mentionedHandles = [...content.matchAll(/@([a-zA-Z0-9_]+)/g)].map(
       (m) => m[1].toLowerCase()
@@ -238,6 +247,13 @@ io.on('connection', (socket) => {
     const content = data.content?.trim();
     if (!content || content.length > 2000) return;
 
+    // Content moderation check
+    const dmModResult = moderateMessage(content);
+    if (!dmModResult.isAllowed) {
+      socket.emit('message:rejected', { reason: dmModResult.reason });
+      return;
+    }
+
     // Verify participant
     const participation = await db
       .select()
@@ -251,6 +267,34 @@ io.on('connection', (socket) => {
       .limit(1);
 
     if (participation.length === 0) return;
+
+    // Block check — reject if any other participant in the conversation has blocked the sender
+    const allParticipants = await db
+      .select({ userId: conversationParticipants.userId })
+      .from(conversationParticipants)
+      .where(eq(conversationParticipants.conversationId, data.conversationId));
+
+    const otherParticipantIds = allParticipants
+      .map((p) => p.userId)
+      .filter((id) => id !== userId);
+
+    for (const otherId of otherParticipantIds) {
+      const block = await db
+        .select({ id: blockedUsers.id })
+        .from(blockedUsers)
+        .where(
+          and(
+            eq(blockedUsers.userId, otherId),
+            eq(blockedUsers.blockedUserId, userId)
+          )
+        )
+        .limit(1);
+
+      if (block.length > 0) {
+        socket.emit('message:rejected', { reason: 'You cannot message this user' });
+        return;
+      }
+    }
 
     // Save message
     const [msg] = await db

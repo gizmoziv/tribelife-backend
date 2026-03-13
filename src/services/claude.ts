@@ -1,5 +1,64 @@
 import OpenAI from 'openai';
 
+// ── Message Content Filter ─────────────────────────────────────────────────
+// Synchronous keyword blocklist for real-time chat moderation (Apple Guideline 1.2).
+// Intentionally avoids AI calls to keep latency at zero.
+
+export interface ModerationResult {
+  isAllowed: boolean;
+  reason?: string;
+}
+
+// Core blocklist — slurs, extreme profanity, hate speech triggers.
+// Using word-boundary regex so "assassin" doesn't match "ass".
+const BLOCKED_PATTERNS: Array<{ pattern: RegExp; reason: string }> = [
+  // Hate speech / slurs
+  { pattern: /\bn[i1!][g9][g9][e3]r\b/i, reason: 'Hate speech detected' },
+  { pattern: /\bn[i1!][g9]{2}[ae3]\b/i, reason: 'Hate speech detected' },
+  { pattern: /\bf[a@]g+[o0]t\b/i, reason: 'Slur detected' },
+  { pattern: /\bf[a@]gg?[ie]?\b/i, reason: 'Slur detected' },
+  { pattern: /\bk[i1][k]e\b/i, reason: 'Slur detected' },
+  { pattern: /\bch[i1]nk\b/i, reason: 'Slur detected' },
+  { pattern: /\bsp[i1][ck]\b/i, reason: 'Slur detected' },
+  { pattern: /\btrannie\b/i, reason: 'Slur detected' },
+  { pattern: /\br[e3]t[a@]rd\b/i, reason: 'Slur detected' },
+  // Threats / violence
+  { pattern: /\bkill\s+your?self\b/i, reason: 'Violent threat detected' },
+  { pattern: /\bi\s+will\s+kill\s+you\b/i, reason: 'Violent threat detected' },
+  { pattern: /\bi\s+w[i1]ll\s+[hk][u4][r][t]\s+you\b/i, reason: 'Violent threat detected' },
+  { pattern: /\bkys\b/i, reason: 'Harmful content detected' },
+  // Extreme profanity (l33t evasions included)
+  { pattern: /\bc[u4][n][t]\b/i, reason: 'Profanity detected' },
+  { pattern: /\b[f][u4@][c(][k]\b/i, reason: 'Profanity detected' },
+  { pattern: /\bf+[u4@]+[c(]+k+\b/i, reason: 'Profanity detected' },
+  { pattern: /\bsh[i1!][t]\b/i, reason: 'Profanity detected' },
+  { pattern: /\b[a@][s$][s$]h[o0][l1][e3]\b/i, reason: 'Profanity detected' },
+  { pattern: /\bb[i1][t][c(][h]\b/i, reason: 'Profanity detected' },
+  // Self-harm
+  { pattern: /\bsu[i1][c(][i1]d[e3]\b/i, reason: 'Self-harm reference detected' },
+  { pattern: /\bcut\s+myself\b/i, reason: 'Self-harm reference detected' },
+  // Sexual content
+  { pattern: /\bcp\b.*\bporn\b/i, reason: 'Illegal sexual content detected' },
+  { pattern: /\bchild\s+porn/i, reason: 'Illegal sexual content detected' },
+  { pattern: /\bpedoph/i, reason: 'Illegal sexual content detected' },
+];
+
+/**
+ * Synchronous content filter for real-time chat messages.
+ * Returns immediately — no async/AI calls.
+ */
+export function moderateMessage(content: string): ModerationResult {
+  const normalized = content.toLowerCase();
+
+  for (const { pattern, reason } of BLOCKED_PATTERNS) {
+    if (pattern.test(normalized)) {
+      return { isAllowed: false, reason };
+    }
+  }
+
+  return { isAllowed: true };
+}
+
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 export interface BeaconAnalysis {
