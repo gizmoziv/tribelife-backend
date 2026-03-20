@@ -2,10 +2,13 @@ import { motion } from 'framer-motion';
 import { Link } from 'react-router-dom';
 import logo from '@/assets/tribelife-logo.png';
 import ThemeToggle from './ThemeToggle';
-const APP_STORE_URL =
-  'https://apps.apple.com/us/developer/ubot-labs/id1838068835';
-const PLAY_STORE_URL =
-  'https://apps.apple.com/us/developer/ubot-labs/id1838068835';
+const APP_STORE_URL = 'https://apps.apple.com/us/app/tribelife-app/id6759845843';
+const PLAY_STORE_URL = ''; // TODO: replace with Play Store URL when Android app is published
+
+function getDownloadUrl() {
+  if (PLAY_STORE_URL && /android/i.test(navigator.userAgent)) return PLAY_STORE_URL;
+  return APP_STORE_URL;
+}
 
 const Navbar = () => {
   return (
@@ -54,7 +57,7 @@ const Navbar = () => {
         <div className="flex items-center gap-3">
           <ThemeToggle />
           <a
-            href={APP_STORE_URL}
+            href={getDownloadUrl()}
             target="_blank"
             rel="noopener noreferrer"
             className="gradient-bg gradient-bg-hover text-primary-foreground px-5 py-2.5 rounded-full text-sm font-semibold transition-all glow-shadow hover:scale-105"

@@ -1,8 +1,8 @@
 import { motion } from "framer-motion";
 import { Apple, Play } from "lucide-react";
 
-const APP_STORE_URL = "https://apps.apple.com/us/developer/ubot-labs/id1838068835";
-const PLAY_STORE_URL = "https://apps.apple.com/us/developer/ubot-labs/id1838068835";
+const APP_STORE_URL = "https://apps.apple.com/us/app/tribelife-app/id6759845843";
+const PLAY_STORE_URL = "https://apps.apple.com/us/app/tribelife-app/id6759845843";
 
 const CTASection = () => {
   return (

@@ -1,6 +1,14 @@
 import { Link } from 'react-router-dom';
 import logo from '@/assets/tribelife-logo.png';
 
+const APP_STORE_URL = 'https://apps.apple.com/us/app/tribelife-app/id6759845843';
+const PLAY_STORE_URL = ''; // TODO: replace with Play Store URL when Android app is published
+
+function getDownloadUrl() {
+  if (PLAY_STORE_URL && /android/i.test(navigator.userAgent)) return PLAY_STORE_URL;
+  return APP_STORE_URL;
+}
+
 const Footer = () => {
   const currentYear = new Date().getFullYear();
 
@@ -29,7 +37,7 @@ const Footer = () => {
               Privacy Policy
             </Link>
             <a
-              href="https://apps.apple.com/us/developer/ubot-labs/id1838068835"
+              href={getDownloadUrl()}
               target="_blank"
               rel="noopener noreferrer"
               className="hover:text-foreground transition-colors"
