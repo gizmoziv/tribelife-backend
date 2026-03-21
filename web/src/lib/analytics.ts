@@ -1,6 +1,3 @@
-const GA_ID = import.meta.env.VITE_GA4_MEASUREMENT_ID as string | undefined;
-const IS_PROD = import.meta.env.PROD;
-
 declare global {
   interface Window {
     dataLayer: unknown[];
@@ -8,20 +5,13 @@ declare global {
   }
 }
 
+// GA4 is loaded via index.html script tag — no dynamic injection needed
 export function initGA() {
-  if (!GA_ID || !IS_PROD) return;
-  const script = document.createElement('script');
-  script.src = `https://www.googletagmanager.com/gtag/js?id=${GA_ID}`;
-  script.async = true;
-  document.head.appendChild(script);
-  window.dataLayer = window.dataLayer || [];
-  window.gtag = function (...args: unknown[]) { window.dataLayer.push(args); };
-  window.gtag('js', new Date());
-  window.gtag('config', GA_ID, { send_page_view: false });
+  // no-op: gtag is initialized in index.html
 }
 
 export function trackPageView(path: string, title?: string) {
-  if (!GA_ID || !window.gtag) return;
+  if (!window.gtag) return;
   window.gtag('event', 'page_view', { page_path: path, page_title: title });
 }
 
