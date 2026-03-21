@@ -5,10 +5,9 @@ import ThemeToggle from './ThemeToggle';
 import { trackDownloadClick, trackNavClick } from '@/lib/analytics';
 
 const APP_STORE_URL = 'https://apps.apple.com/us/app/tribelife-app/id6759845843';
-const PLAY_STORE_URL = ''; // TODO: replace with Play Store URL when Android app is published
 
 function getDownloadUrl() {
-  if (PLAY_STORE_URL && /android/i.test(navigator.userAgent)) return PLAY_STORE_URL;
+  if (/android/i.test(navigator.userAgent)) return '/android-notify';
   return APP_STORE_URL;
 }
 
@@ -63,15 +62,20 @@ const Navbar = () => {
 
         <div className="flex items-center gap-3">
           <ThemeToggle />
-          <a
-            href={getDownloadUrl()}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={() => trackDownloadClick(getDownloadPlatform(), 'header')}
-            className="gradient-bg gradient-bg-hover text-primary-foreground px-5 py-2.5 rounded-full text-sm font-semibold transition-all glow-shadow hover:scale-105"
-          >
-            Download App
-          </a>
+          {(() => {
+            const downloadUrl = getDownloadUrl();
+            const isExternal = downloadUrl.startsWith('http');
+            return (
+              <a
+                href={downloadUrl}
+                {...(isExternal ? { target: "_blank", rel: "noopener noreferrer" } : {})}
+                onClick={() => trackDownloadClick(getDownloadPlatform(), 'header')}
+                className="gradient-bg gradient-bg-hover text-primary-foreground px-5 py-2.5 rounded-full text-sm font-semibold transition-all glow-shadow hover:scale-105"
+              >
+                Download App
+              </a>
+            );
+          })()}
         </div>
       </div>
     </motion.nav>

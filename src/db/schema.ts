@@ -147,6 +147,15 @@ export const notifications = pgTable('notifications', {
 }));
 
 // ─────────────────────────────────────────────
+// ANDROID WAITLIST
+// ─────────────────────────────────────────────
+export const androidWaitlist = pgTable('android_waitlist', {
+  id: serial('id').primaryKey(),
+  email: varchar('email', { length: 255 }).notNull().unique(),
+  createdAt: timestamp('created_at').defaultNow(),
+});
+
+// ─────────────────────────────────────────────
 // MODERATION
 // ─────────────────────────────────────────────
 export const blockedUsers = pgTable('blocked_users', {

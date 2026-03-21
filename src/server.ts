@@ -25,6 +25,7 @@ import beaconsRouter from './routes/beacons';
 import notificationsRouter from './routes/notifications';
 import usersRouter from './routes/users';
 import supportRouter from './routes/support';
+import androidWaitlistRouter from './routes/androidWaitlist';
 import revenuecatRouter from './routes/revenuecat';
 import moderationRouter from './routes/moderation';
 import { startBeaconMatcherCron } from './jobs/beaconMatcher';
@@ -64,6 +65,7 @@ app.use('/api/beacons', beaconsRouter);
 app.use('/api/notifications', notificationsRouter);
 app.use('/api/users', usersRouter);
 app.use('/api/support', supportRouter);
+app.use('/api/android-waitlist', androidWaitlistRouter);
 app.use('/api/revenuecat', revenuecatRouter);
 app.use('/api/moderation', moderationRouter);
 
