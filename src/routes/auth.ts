@@ -28,15 +28,14 @@ router.post('/google', async (req: Request, res: Response): Promise<void> => {
   }
 
   try {
-    const decoded = JSON.parse(Buffer.from(parse.data.idToken.split('.')[1], 'base64').toString());
-    console.log('[auth/google] token audience:', decoded.aud, 'azp:', decoded.azp);
     const ticket = await googleClient.verifyIdToken({
       idToken: parse.data.idToken,
       audience: [
         process.env.GOOGLE_CLIENT_ID!,
+        process.env.GOOGLE_CLIENT_ID_NEW!,
         process.env.GOOGLE_IOS_CLIENT_ID!,
         process.env.GOOGLE_ANDROID_CLIENT_ID!,
-      ],
+      ].filter(Boolean) as string[],
     });
 
     const payload = ticket.getPayload();
