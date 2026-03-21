@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { Helmet } from "react-helmet-async";
 import Navbar from "@/components/landing/Navbar";
 import Footer from "@/components/landing/Footer";
 import { motion } from "framer-motion";
+import { trackSupportFormStart, trackSupportFormSubmit, trackSupportFormError } from "@/lib/analytics";
 
 const Support = () => {
   const [subject, setSubject] = useState("");
@@ -11,6 +12,14 @@ const Support = () => {
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
   const [error, setError] = useState("");
+  const formStartedRef = useRef(false);
+
+  function handleFormInteraction() {
+    if (!formStartedRef.current) {
+      formStartedRef.current = true;
+      trackSupportFormStart();
+    }
+  }
 
   const canSubmit = subject.trim() && message.trim() && email.trim();
 
@@ -37,9 +46,12 @@ const Support = () => {
         throw new Error(data.error || "Failed to send message");
       }
 
+      trackSupportFormSubmit(subject.trim());
       setSent(true);
     } catch (err: any) {
-      setError(err.message || "Something went wrong. Please try again.");
+      const msg = err.message || "Something went wrong. Please try again.";
+      setError(msg);
+      trackSupportFormError(msg);
     } finally {
       setSending(false);
     }
@@ -85,7 +97,7 @@ const Support = () => {
                     type="email"
                     required
                     value={email}
-                    onChange={(e) => setEmail(e.target.value)}
+                    onChange={(e) => { handleFormInteraction(); setEmail(e.target.value); }}
                     placeholder="you@example.com"
                     className="w-full rounded-lg border border-border bg-card px-4 py-3 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary"
                   />
@@ -100,7 +112,7 @@ const Support = () => {
                     type="text"
                     required
                     value={subject}
-                    onChange={(e) => setSubject(e.target.value)}
+                    onChange={(e) => { handleFormInteraction(); setSubject(e.target.value); }}
                     placeholder="What's this about?"
                     maxLength={200}
                     className="w-full rounded-lg border border-border bg-card px-4 py-3 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary"
@@ -115,7 +127,7 @@ const Support = () => {
                     id="message"
                     required
                     value={message}
-                    onChange={(e) => setMessage(e.target.value)}
+                    onChange={(e) => { handleFormInteraction(); setMessage(e.target.value); }}
                     placeholder="Describe your issue or feedback..."
                     maxLength={5000}
                     rows={6}

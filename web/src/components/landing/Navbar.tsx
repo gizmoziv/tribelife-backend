@@ -1,7 +1,9 @@
 import { motion } from 'framer-motion';
-import { Link } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import logo from '@/assets/tribelife-logo.png';
 import ThemeToggle from './ThemeToggle';
+import { trackDownloadClick, trackNavClick } from '@/lib/analytics';
+
 const APP_STORE_URL = 'https://apps.apple.com/us/app/tribelife-app/id6759845843';
 const PLAY_STORE_URL = ''; // TODO: replace with Play Store URL when Android app is published
 
@@ -10,7 +12,24 @@ function getDownloadUrl() {
   return APP_STORE_URL;
 }
 
+function getDownloadPlatform(): 'ios' | 'android' {
+  return /android/i.test(navigator.userAgent) ? 'android' : 'ios';
+}
+
 const Navbar = () => {
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  function handleSectionNav(e: React.MouseEvent, section: string) {
+    e.preventDefault();
+    trackNavClick(section);
+    if (location.pathname === '/') {
+      document.getElementById(section)?.scrollIntoView({ behavior: 'smooth' });
+    } else {
+      navigate(`/#${section}`);
+    }
+  }
+
   return (
     <motion.nav
       initial={{ y: -20, opacity: 0 }}
@@ -28,28 +47,16 @@ const Navbar = () => {
         </a>
 
         <div className="hidden md:flex items-center gap-8 text-sm font-medium text-muted-foreground">
-          <a
-            href="#features"
-            className="hover:text-foreground transition-colors"
-          >
+          <a href="#features" onClick={(e) => handleSectionNav(e, 'features')} className="hover:text-foreground transition-colors">
             Features
           </a>
-          <a
-            href="#how-it-works"
-            className="hover:text-foreground transition-colors"
-          >
+          <a href="#how-it-works" onClick={(e) => handleSectionNav(e, 'how-it-works')} className="hover:text-foreground transition-colors">
             How It Works
           </a>
-          <a
-            href="#community"
-            className="hover:text-foreground transition-colors"
-          >
+          <a href="#community" onClick={(e) => handleSectionNav(e, 'community')} className="hover:text-foreground transition-colors">
             Community
           </a>
-          <Link
-            to="/support"
-            className="hover:text-foreground transition-colors"
-          >
+          <Link to="/support" className="hover:text-foreground transition-colors">
             Support
           </Link>
         </div>
@@ -60,6 +67,7 @@ const Navbar = () => {
             href={getDownloadUrl()}
             target="_blank"
             rel="noopener noreferrer"
+            onClick={() => trackDownloadClick(getDownloadPlatform(), 'header')}
             className="gradient-bg gradient-bg-hover text-primary-foreground px-5 py-2.5 rounded-full text-sm font-semibold transition-all glow-shadow hover:scale-105"
           >
             Download App

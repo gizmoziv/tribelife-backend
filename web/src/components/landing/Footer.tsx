@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
 import logo from '@/assets/tribelife-logo.png';
+import { trackDownloadClick } from '@/lib/analytics';
 
 const APP_STORE_URL = 'https://apps.apple.com/us/app/tribelife-app/id6759845843';
 const PLAY_STORE_URL = ''; // TODO: replace with Play Store URL when Android app is published
@@ -7,6 +8,10 @@ const PLAY_STORE_URL = ''; // TODO: replace with Play Store URL when Android app
 function getDownloadUrl() {
   if (PLAY_STORE_URL && /android/i.test(navigator.userAgent)) return PLAY_STORE_URL;
   return APP_STORE_URL;
+}
+
+function getDownloadPlatform(): 'ios' | 'android' {
+  return /android/i.test(navigator.userAgent) ? 'android' : 'ios';
 }
 
 const Footer = () => {
@@ -40,6 +45,7 @@ const Footer = () => {
               href={getDownloadUrl()}
               target="_blank"
               rel="noopener noreferrer"
+              onClick={() => trackDownloadClick(getDownloadPlatform(), 'footer')}
               className="hover:text-foreground transition-colors"
             >
               Download

@@ -1,5 +1,6 @@
 import { motion } from "framer-motion";
 import { Apple, Play } from "lucide-react";
+import { trackDownloadClick } from "@/lib/analytics";
 
 const APP_STORE_URL = "https://apps.apple.com/us/app/tribelife-app/id6759845843";
 const PLAY_STORE_URL = "https://apps.apple.com/us/app/tribelife-app/id6759845843";
@@ -31,6 +32,7 @@ const CTASection = () => {
                 href={APP_STORE_URL}
                 target="_blank"
                 rel="noopener noreferrer"
+                onClick={() => trackDownloadClick('ios', 'cta_bottom')}
                 className="gradient-bg gradient-bg-hover text-primary-foreground flex items-center gap-3 px-7 py-4 rounded-2xl font-semibold transition-all glow-shadow hover:scale-105 w-full sm:w-auto justify-center"
               >
                 <Apple className="w-5 h-5" />
@@ -40,6 +42,7 @@ const CTASection = () => {
                 href={PLAY_STORE_URL}
                 target="_blank"
                 rel="noopener noreferrer"
+                onClick={() => trackDownloadClick('android', 'cta_bottom')}
                 className="bg-card border border-border text-foreground flex items-center gap-3 px-7 py-4 rounded-2xl font-semibold transition-all hover:bg-muted hover:scale-105 w-full sm:w-auto justify-center"
               >
                 <Play className="w-5 h-5" />
