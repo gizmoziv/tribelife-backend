@@ -1,31 +1,34 @@
-import { motion } from "framer-motion";
-import { Users, Heart, MapPin, Star } from "lucide-react";
+import { motion } from 'framer-motion';
+import { Users, Heart, MapPin, Star } from 'lucide-react';
 
 const stats = [
-  { icon: Users, value: "50K+", label: "Active Members", delay: 0 },
-  { icon: Heart, value: "12K+", label: "Matches Made", delay: 0.1 },
-  { icon: MapPin, value: "120+", label: "Cities Worldwide", delay: 0.2 },
-  { icon: Star, value: "4.9", label: "Average Rating", delay: 0.3 },
+  { icon: Users, value: '5K+', label: 'Active Members', delay: 0 },
+  { icon: Heart, value: '12K+', label: 'Matches Made', delay: 0.1 },
+  { icon: MapPin, value: '120+', label: 'Cities Worldwide', delay: 0.2 },
+  { icon: Star, value: '5.0', label: 'Average Rating', delay: 0.3 },
 ];
 
 const testimonials = [
   {
-    quote: "TribeLife helped me find my people in a new city. Within weeks I had a tight-knit group that feels like family.",
-    name: "Amara J.",
-    role: "Community Member",
-    location: "Atlanta, GA",
+    quote:
+      'TribeLife helped me find my people in a new city. Within weeks I had a tight-knit group that feels like family.',
+    name: 'Amara J.',
+    role: 'Community Member',
+    location: 'Atlanta, GA',
   },
   {
-    quote: "I was tired of surface-level connections. TribeLife matched me with people who actually share my values and energy.",
-    name: "David R.",
-    role: "Early Adopter",
-    location: "Toronto, CA",
+    quote:
+      'I was tired of surface-level connections. TribeLife matched me with people who actually share my values and energy.',
+    name: 'David R.',
+    role: 'Early Adopter',
+    location: 'Toronto, CA',
   },
   {
-    quote: "The community events are incredible. I've built friendships here that I know will last a lifetime.",
-    name: "Priya S.",
-    role: "Community Leader",
-    location: "London, UK",
+    quote:
+      "The community events are incredible. I've built friendships here that I know will last a lifetime.",
+    name: 'Priya S.',
+    role: 'Community Leader',
+    location: 'London, UK',
   },
 ];
 
@@ -49,11 +52,12 @@ const SocialProofSection = () => {
             Trusted by Thousands
           </span>
           <h2 className="text-3xl md:text-5xl font-display font-bold text-foreground mb-4">
-            Real People. Real{" "}
+            Real People. Real{' '}
             <span className="gradient-text">Connections.</span>
           </h2>
           <p className="text-muted-foreground text-lg max-w-2xl mx-auto">
-            Join a thriving community that's redefining how people connect, grow, and belong.
+            Join a thriving community that's redefining how people connect,
+            grow, and belong.
           </p>
         </motion.div>
 
@@ -84,7 +88,7 @@ const SocialProofSection = () => {
         </div>
 
         {/* Testimonials */}
-        <div className="grid md:grid-cols-3 gap-6">
+        {/* <div className="grid md:grid-cols-3 gap-6">
           {testimonials.map((t, i) => (
             <motion.div
               key={t.name}
@@ -95,7 +99,7 @@ const SocialProofSection = () => {
               className="relative group"
             >
               <div className="gradient-border rounded-2xl p-8 h-full flex flex-col transition-all duration-300 group-hover:scale-[1.02]">
-                {/* Stars */}
+
                 <div className="flex gap-1 mb-4">
                   {Array.from({ length: 5 }).map((_, j) => (
                     <Star
@@ -118,7 +122,7 @@ const SocialProofSection = () => {
               </div>
             </motion.div>
           ))}
-        </div>
+        </div> */}
       </div>
     </section>
   );

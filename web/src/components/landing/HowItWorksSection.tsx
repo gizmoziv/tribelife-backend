@@ -1,26 +1,33 @@
-import { motion } from "framer-motion";
+import { motion } from 'framer-motion';
 
 const steps = [
   {
-    number: "01",
-    title: "Download & Join",
-    description: "Get TribeLife on iOS or Android and create your profile in seconds. Tell us about your interests and what you're looking for.",
+    number: '01',
+    title: 'Download & Join',
+    description:
+      "Get TribeLife on iOS or Android and create your profile in seconds. Tell us about your interests and what you're looking for.",
   },
   {
-    number: "02",
-    title: "Create a Beacon",
-    description: "Need a pickleball partner? Looking for a babysitter? Post a beacon and describe exactly what you need from your community.",
+    number: '02',
+    title: 'Create a Beacon',
+    description:
+      'Need a pickleball partner? Looking for a babysitter? Post a beacon and describe exactly what you need from your community.',
   },
   {
-    number: "03",
-    title: "Get Matched",
-    description: "TribeLife's intelligent matching engine connects you with the right people nearby. Real connections, zero noise.",
+    number: '03',
+    title: 'Get Matched',
+    description:
+      "TribeLife's intelligent matching engine connects you with the right people nearby. Real connections, zero noise.",
   },
 ];
 
 const HowItWorksSection = () => {
   return (
-    <section id="how-it-works" aria-label="How It Works" className="py-24 md:py-32">
+    <section
+      id="how-it-works"
+      aria-label="How It Works"
+      className="py-24 md:py-12"
+    >
       <div className="container mx-auto px-6">
         <motion.div
           initial={{ opacity: 0, y: 20 }}
@@ -47,9 +54,13 @@ const HowItWorksSection = () => {
               transition={{ duration: 0.5, delay: i * 0.15 }}
               className="text-center"
             >
-              <span className="gradient-text text-6xl font-bold">{step.number}</span>
+              <span className="gradient-text text-6xl font-bold">
+                {step.number}
+              </span>
               <h3 className="text-xl font-bold mt-4 mb-3">{step.title}</h3>
-              <p className="text-muted-foreground text-sm leading-relaxed">{step.description}</p>
+              <p className="text-muted-foreground text-sm leading-relaxed">
+                {step.description}
+              </p>
             </motion.div>
           ))}
         </div>
