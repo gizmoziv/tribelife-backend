@@ -5,32 +5,32 @@ const features = [
   {
     icon: Flame,
     title: "Beacon Matching",
-    description: "Post what you need — a workout buddy, a tutor, a dog walker — and TribeLife's AI finds the perfect match in your area.",
+    description: "Post what you need — a Shabbat dinner host, a study partner, a moving helper — and TribeLife matches you daily with the right person.",
   },
   {
     icon: MapPin,
-    title: "Hyperlocal Discovery",
-    description: "Connect with people in your neighborhood, not across the globe. Real proximity creates real relationships.",
+    title: "Timezone-Based Community",
+    description: "Connected to people who are actually awake when you are. Your timezone is your community — no more 3am replies.",
   },
   {
     icon: Users,
-    title: "Community-First Design",
-    description: "No vanity metrics, no infinite scrolling. Every interaction is designed to create genuine, lasting value.",
+    title: "Built to Show Up",
+    description: "No vanity metrics, no infinite scrolling. Every feature is designed around one thing: people showing up for each other.",
   },
   {
     icon: Shield,
-    title: "Verified & Safe",
-    description: "Real profiles, real people. Our verification system ensures you're connecting with genuine community members.",
+    title: "Real People Only",
+    description: "Real profiles, real people. Our verification system keeps the community genuine — because trust is everything.",
   },
   {
     icon: Zap,
-    title: "Intelligent Matching",
-    description: "Our smart algorithm learns what matters to you and surfaces the most relevant connections and opportunities.",
+    title: "Daily AI Matching",
+    description: "Every day at 6am, our matching engine connects people with shared needs and interests. Wake up to your people.",
   },
   {
     icon: Heart,
-    title: "Built for Value",
-    description: "No more cookie-cutter social apps that create noise. TribeLife is built to create real value for real people.",
+    title: "If You Know, You Know",
+    description: "TribeLife is for people who believe in community as a way of life — not just an app feature.",
   },
 ];
 
@@ -58,7 +58,7 @@ const FeaturesSection = () => {
             Why <span className="gradient-text">TribeLife</span>?
           </h2>
           <p className="text-muted-foreground text-lg max-w-xl mx-auto">
-            A community app that actually delivers on its promise. No noise, just connections that matter.
+            Built for people who show up for each other. No noise. Just your people.
           </p>
         </motion.div>
 

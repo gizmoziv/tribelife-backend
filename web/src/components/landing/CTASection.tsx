@@ -24,7 +24,7 @@ const CTASection = () => {
               Ready to Find Your <span className="gradient-text">Tribe</span>?
             </h2>
             <p className="text-muted-foreground text-lg mb-10 max-w-lg mx-auto">
-              Join thousands of people building real connections in their communities. Download TribeLife today.
+              Your chevra is already here. Come find them.
             </p>
 
             <div className="flex flex-col sm:flex-row items-center justify-center gap-4">

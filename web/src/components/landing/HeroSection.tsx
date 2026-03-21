@@ -26,7 +26,7 @@ const HeroSection = () => {
           transition={{ duration: 0.7, delay: 0.2 }}
         >
           <span className="inline-block gradient-bg text-primary-foreground text-xs font-bold uppercase tracking-widest px-4 py-1.5 rounded-full mb-8">
-            Now Available on iOS & Android
+            Now Available on iOS · Android Coming Soon
           </span>
         </motion.div>
 
@@ -36,8 +36,8 @@ const HeroSection = () => {
           transition={{ duration: 0.7, delay: 0.35 }}
           className="text-5xl md:text-7xl font-bold leading-tight mb-6"
         >
-          Meet Real People in{" "}
-          <span className="gradient-text">Your Community</span>
+          Find Your People,{" "}
+          <span className="gradient-text">Wherever You Land</span>
         </motion.h1>
 
         <motion.p
@@ -46,8 +46,8 @@ const HeroSection = () => {
           transition={{ duration: 0.7, delay: 0.5 }}
           className="text-lg md:text-xl text-muted-foreground max-w-2xl mx-auto mb-10 leading-relaxed"
         >
-          Meet real people near you. Create beacons for what you need — a pickleball partner, 
-          a babysitter, a tutor — and let TribeLife's intelligent matching connect you with your community.
+          Looking for a Shabbat dinner host, a study partner, or someone to split the holidays with?
+          Post what you need and we'll match you with your people — every day, in your timezone.
         </motion.p>
 
         <motion.div
@@ -82,7 +82,7 @@ const HeroSection = () => {
           transition={{ duration: 0.7, delay: 0.9 }}
           className="mt-8 text-sm text-muted-foreground"
         >
-          Real users. Real community. Real value.
+          Your chevra. Everywhere.
         </motion.p>
       </div>
     </section>

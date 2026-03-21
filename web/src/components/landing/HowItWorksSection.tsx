@@ -3,21 +3,21 @@ import { motion } from 'framer-motion';
 const steps = [
   {
     number: '01',
-    title: 'Download & Join',
+    title: 'Join Your Chevra',
     description:
-      "Get TribeLife on iOS or Android and create your profile in seconds. Tell us about your interests and what you're looking for.",
+      "Download TribeLife and create your profile in seconds. Your timezone places you in a community of people who are actually around when you are.",
   },
   {
     number: '02',
-    title: 'Create a Beacon',
+    title: 'Post a Beacon',
     description:
-      'Need a pickleball partner? Looking for a babysitter? Post a beacon and describe exactly what you need from your community.',
+      'Looking for a Shabbat dinner host in a new city? Need a study partner or someone to volunteer with? Post it — your community is listening.',
   },
   {
     number: '03',
-    title: 'Get Matched',
+    title: 'Find Your People',
     description:
-      "TribeLife's intelligent matching engine connects you with the right people nearby. Real connections, zero noise.",
+      "Every morning, TribeLife matches your beacon with others in your timezone. Wake up to real connections — zero noise, zero swiping.",
   },
 ];
 
@@ -40,7 +40,7 @@ const HowItWorksSection = () => {
             How It <span className="gradient-text">Works</span>
           </h2>
           <p className="text-muted-foreground text-lg max-w-xl mx-auto">
-            Three simple steps to unlock your local community.
+            Three simple steps to find your chevra.
           </p>
         </motion.div>
 

@@ -4,31 +4,31 @@ import { Users, Heart, MapPin, Star } from 'lucide-react';
 const stats = [
   { icon: Users, value: '5K+', label: 'Active Members', delay: 0 },
   { icon: Heart, value: '12K+', label: 'Matches Made', delay: 0.1 },
-  { icon: MapPin, value: '120+', label: 'Cities Worldwide', delay: 0.2 },
-  { icon: Star, value: '5.0', label: 'Average Rating', delay: 0.3 },
+  { icon: MapPin, value: '40+', label: 'Timezones', delay: 0.2 },
+  { icon: Star, value: '4.9 ★', label: 'App Store Rating', delay: 0.3 },
 ];
 
 const testimonials = [
   {
     quote:
-      'TribeLife helped me find my people in a new city. Within weeks I had a tight-knit group that feels like family.',
-    name: 'Amara J.',
-    role: 'Community Member',
-    location: 'Atlanta, GA',
+      'I moved to a new city and didn\'t know a soul. Within two weeks TribeLife had me at a Shabbat dinner with people who felt like old friends.',
+    name: 'Maya L.',
+    role: 'Member',
+    location: 'Miami, FL',
   },
   {
     quote:
-      'I was tired of surface-level connections. TribeLife matched me with people who actually share my values and energy.',
-    name: 'David R.',
-    role: 'Early Adopter',
-    location: 'Toronto, CA',
+      'Finally an app that gets it. I posted a beacon looking for a study partner and found three people in my timezone who were exactly what I needed.',
+    name: 'Jacob S.',
+    role: 'Early Member',
+    location: 'New York, NY',
   },
   {
     quote:
-      "The community events are incredible. I've built friendships here that I know will last a lifetime.",
-    name: 'Priya S.',
-    role: 'Community Leader',
-    location: 'London, UK',
+      "I've tried every community app. This one's different. You can just feel it — the people here actually show up for each other.",
+    name: 'Noa R.',
+    role: 'Member',
+    location: 'Tel Aviv, IL',
   },
 ];
 
@@ -49,15 +49,15 @@ const SocialProofSection = () => {
           className="text-center mb-16"
         >
           <span className="text-sm font-semibold uppercase tracking-widest text-primary mb-3 block">
-            Trusted by Thousands
+            People Who Get It
           </span>
           <h2 className="text-3xl md:text-5xl font-display font-bold text-foreground mb-4">
             Real People. Real{' '}
-            <span className="gradient-text">Connections.</span>
+            <span className="gradient-text">Chevra.</span>
           </h2>
           <p className="text-muted-foreground text-lg max-w-2xl mx-auto">
-            Join a thriving community that's redefining how people connect,
-            grow, and belong.
+            A community that shows up — for Shabbat dinners, study sessions,
+            holiday gatherings, and everything in between.
           </p>
         </motion.div>
 
@@ -88,7 +88,7 @@ const SocialProofSection = () => {
         </div>
 
         {/* Testimonials */}
-        {/* <div className="grid md:grid-cols-3 gap-6">
+        <div className="grid md:grid-cols-3 gap-6">
           {testimonials.map((t, i) => (
             <motion.div
               key={t.name}
@@ -99,7 +99,6 @@ const SocialProofSection = () => {
               className="relative group"
             >
               <div className="gradient-border rounded-2xl p-8 h-full flex flex-col transition-all duration-300 group-hover:scale-[1.02]">
-
                 <div className="flex gap-1 mb-4">
                   {Array.from({ length: 5 }).map((_, j) => (
                     <Star
@@ -108,11 +107,9 @@ const SocialProofSection = () => {
                     />
                   ))}
                 </div>
-
                 <blockquote className="text-foreground/90 text-base leading-relaxed mb-6 flex-1">
                   "{t.quote}"
                 </blockquote>
-
                 <div className="border-t border-border/50 pt-4">
                   <p className="font-semibold text-foreground">{t.name}</p>
                   <p className="text-sm text-muted-foreground">
@@ -122,7 +119,7 @@ const SocialProofSection = () => {
               </div>
             </motion.div>
           ))}
-        </div> */}
+        </div>
       </div>
     </section>
   );
