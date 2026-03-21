@@ -5,9 +5,9 @@ declare global {
   }
 }
 
-// GA4 is loaded via index.html script tag — no dynamic injection needed
+// GA4 is loaded via index.html — only on production hostname
 export function initGA() {
-  // no-op: gtag is initialized in index.html
+  // no-op: gtag initialized in index.html conditionally on hostname
 }
 
 export function trackPageView(path: string, title?: string) {
