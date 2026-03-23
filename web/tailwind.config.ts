@@ -14,7 +14,7 @@ export default {
     },
     extend: {
       fontFamily: {
-        display: ["Space Grotesk", "system-ui", "sans-serif"],
+        display: ["Manrope", "system-ui", "sans-serif"],
         body: ["Plus Jakarta Sans", "system-ui", "sans-serif"],
       },
       colors: {
