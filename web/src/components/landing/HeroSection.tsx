@@ -46,8 +46,8 @@ const HeroSection = () => {
           transition={{ duration: 0.7, delay: 0.5 }}
           className="text-lg md:text-xl text-muted-foreground max-w-2xl mx-auto mb-10 leading-relaxed"
         >
-          Looking for a Shabbat dinner host, a study partner, or someone to split the holidays with?
-          Post what you need and we'll match you with your people — every day, in your timezone.
+          Need a Shabbat dinner host, a study partner, or someone to split the holidays with?
+          Post a beacon — a short request for what you need — and we'll match you with the right people nearby. Every day, in your timezone.
         </motion.p>
 
         <motion.div
@@ -64,7 +64,7 @@ const HeroSection = () => {
             className="gradient-bg gradient-bg-hover text-primary-foreground flex items-center gap-3 px-7 py-4 rounded-2xl font-semibold text-base transition-all glow-shadow hover:scale-105 w-full sm:w-auto justify-center"
           >
             <Apple className="w-5 h-5" />
-            Download for iOS
+            Download for iOS — Free
           </a>
           <a
             href={PLAY_STORE_URL}
@@ -72,7 +72,7 @@ const HeroSection = () => {
             className="bg-card border border-border text-foreground flex items-center gap-3 px-7 py-4 rounded-2xl font-semibold text-base transition-all hover:bg-muted hover:scale-105 w-full sm:w-auto justify-center"
           >
             <Play className="w-5 h-5" />
-            Download for Android
+            Android — Notify Me
           </a>
         </motion.div>
 

@@ -5,7 +5,9 @@ import HeroSection from '@/components/landing/HeroSection';
 import FeaturesSection from '@/components/landing/FeaturesSection';
 import SocialProofSection from '@/components/landing/SocialProofSection';
 import HowItWorksSection from '@/components/landing/HowItWorksSection';
+import FAQSection from '@/components/landing/FAQSection';
 import CTASection from '@/components/landing/CTASection';
+import StickyDownloadBar from '@/components/landing/StickyDownloadBar';
 import Footer from '@/components/landing/Footer';
 
 const Index = () => {
@@ -33,7 +35,9 @@ const Index = () => {
       <FeaturesSection />
       <SocialProofSection />
       <HowItWorksSection />
+      <FAQSection />
       <CTASection />
+      <StickyDownloadBar />
       <Footer />
     </div>
   );

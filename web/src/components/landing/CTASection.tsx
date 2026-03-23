@@ -36,7 +36,7 @@ const CTASection = () => {
                 className="gradient-bg gradient-bg-hover text-primary-foreground flex items-center gap-3 px-7 py-4 rounded-2xl font-semibold transition-all glow-shadow hover:scale-105 w-full sm:w-auto justify-center"
               >
                 <Apple className="w-5 h-5" />
-                App Store
+                Download for iOS — Free
               </a>
               <a
                 href={PLAY_STORE_URL}
@@ -44,7 +44,7 @@ const CTASection = () => {
                 className="bg-card border border-border text-foreground flex items-center gap-3 px-7 py-4 rounded-2xl font-semibold transition-all hover:bg-muted hover:scale-105 w-full sm:w-auto justify-center"
               >
                 <Play className="w-5 h-5" />
-                Google Play
+                Android — Notify Me
               </a>
             </div>
           </div>

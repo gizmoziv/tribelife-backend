@@ -3,9 +3,9 @@ import { Users, Heart, MapPin, Star } from 'lucide-react';
 
 const stats = [
   { icon: Users, value: '5K+', label: 'Active Members', delay: 0 },
-  { icon: Heart, value: '12K+', label: 'Matches Made', delay: 0.1 },
-  { icon: MapPin, value: '40+', label: 'Timezones', delay: 0.2 },
-  { icon: Star, value: '4.9 ★', label: 'App Store Rating', delay: 0.3 },
+  { icon: Heart, value: 'Growing Daily', label: 'Matches Made', delay: 0.1 },
+  { icon: MapPin, value: '24', label: 'Timezones', delay: 0.2 },
+  { icon: Star, value: '5 ★', label: 'App Store Rating', delay: 0.3 },
 ];
 
 const testimonials = [
@@ -88,6 +88,15 @@ const SocialProofSection = () => {
         </div>
 
         {/* Testimonials */}
+        <motion.h3
+          initial={{ opacity: 0, y: 16 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true }}
+          transition={{ duration: 0.5 }}
+          className="text-2xl md:text-3xl font-bold text-center mb-8"
+        >
+          Hear From Our Users
+        </motion.h3>
         <div className="grid md:grid-cols-3 gap-6">
           {testimonials.map((t, i) => (
             <motion.div
@@ -99,14 +108,6 @@ const SocialProofSection = () => {
               className="relative group"
             >
               <div className="gradient-border rounded-2xl p-8 h-full flex flex-col transition-all duration-300 group-hover:scale-[1.02]">
-                <div className="flex gap-1 mb-4">
-                  {Array.from({ length: 5 }).map((_, j) => (
-                    <Star
-                      key={j}
-                      className="w-4 h-4 fill-primary text-primary"
-                    />
-                  ))}
-                </div>
                 <blockquote className="text-foreground/90 text-base leading-relaxed mb-6 flex-1">
                   "{t.quote}"
                 </blockquote>
