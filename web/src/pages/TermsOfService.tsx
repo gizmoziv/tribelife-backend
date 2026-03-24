@@ -49,7 +49,7 @@ const TermsOfService = () => {
                 <p className="text-muted-foreground">
                   To use TribeLife, you must create an account and provide accurate, complete information. You are 
                   responsible for maintaining the confidentiality of your account credentials and for all activities 
-                  that occur under your account. You must be at least 18 years old to create an account. You agree 
+                  that occur under your account. You must be at least 16 years old to create an account. You agree 
                   to notify us immediately of any unauthorized use of your account.
                 </p>
               </section>
@@ -77,7 +77,33 @@ const TermsOfService = () => {
               </section>
 
               <section>
-                <h2 className="text-xl font-bold mb-3">5. Content Moderation & Reporting</h2>
+                <h2 className="text-xl font-bold mb-3">5. Child Safety Standards</h2>
+                <p className="text-muted-foreground mb-3">
+                  TribeLife is intended for users aged 16 and older. You must be at least 16 years old to use the Service.
+                  TribeLife maintains a <strong>strict zero-tolerance policy toward child sexual abuse and exploitation
+                  (CSAE)</strong> in any form. This includes, but is not limited to:
+                </p>
+                <ul className="list-disc list-inside space-y-2 text-muted-foreground mb-3">
+                  <li>Any content that sexualizes, exploits, or endangers minors</li>
+                  <li>Sharing, soliciting, or distributing child sexual abuse material (CSAM)</li>
+                  <li>Grooming, solicitation, or any predatory behavior toward minors</li>
+                  <li>Any content that facilitates or promotes the exploitation of children</li>
+                </ul>
+                <p className="text-muted-foreground">
+                  We proactively screen content using automated moderation systems and human review. Any user found
+                  to be in violation of this policy will have their account immediately and permanently terminated,
+                  their content removed, and the incident reported to the National Center for Missing & Exploited
+                  Children (NCMEC) and applicable law enforcement authorities. To report suspected CSAE content or
+                  behavior, contact us immediately at{" "}
+                  <a href="mailto:info@tribelife.app" className="text-primary hover:underline">
+                    info@tribelife.app
+                  </a>{" "}
+                  or use the in-app reporting feature.
+                </p>
+              </section>
+
+              <section>
+                <h2 className="text-xl font-bold mb-3">6. Content Moderation & Reporting</h2>
                 <p className="text-muted-foreground">
                   We actively moderate content on TribeLife using automated systems and human review. All beacons are
                   screened before being published. Users can report objectionable content or abusive behavior directly
@@ -88,7 +114,7 @@ const TermsOfService = () => {
               </section>
 
               <section>
-                <h2 className="text-xl font-bold mb-3">6. Beacons and Matching</h2>
+                <h2 className="text-xl font-bold mb-3">7. Beacons and Matching</h2>
                 <p className="text-muted-foreground">
                   Beacons created on TribeLife are visible to other users within your community. We use intelligent 
                   matching algorithms to connect users based on relevance, proximity, and preferences. We do not 
@@ -98,7 +124,7 @@ const TermsOfService = () => {
               </section>
 
               <section>
-                <h2 className="text-xl font-bold mb-3">7. Intellectual Property</h2>
+                <h2 className="text-xl font-bold mb-3">8. Intellectual Property</h2>
                 <p className="text-muted-foreground">
                   The Service and its original content, features, and functionality are owned by UBot Labs and are 
                   protected by international copyright, trademark, and other intellectual property laws. You retain 
@@ -108,7 +134,7 @@ const TermsOfService = () => {
               </section>
 
               <section>
-                <h2 className="text-xl font-bold mb-3">8. Termination</h2>
+                <h2 className="text-xl font-bold mb-3">9. Termination</h2>
                 <p className="text-muted-foreground">
                   We reserve the right to suspend or terminate your account at any time, with or without cause, 
                   and with or without notice. You may delete your account at any time through the app settings. 
@@ -117,7 +143,7 @@ const TermsOfService = () => {
               </section>
 
               <section>
-                <h2 className="text-xl font-bold mb-3">9. Disclaimers</h2>
+                <h2 className="text-xl font-bold mb-3">10. Disclaimers</h2>
                 <p className="text-muted-foreground">
                   The Service is provided "as is" and "as available" without warranties of any kind. We do not 
                   warrant that the Service will be uninterrupted, secure, or error-free. We are not responsible 
@@ -127,7 +153,7 @@ const TermsOfService = () => {
               </section>
 
               <section>
-                <h2 className="text-xl font-bold mb-3">10. Limitation of Liability</h2>
+                <h2 className="text-xl font-bold mb-3">11. Limitation of Liability</h2>
                 <p className="text-muted-foreground">
                   To the maximum extent permitted by law, UBot Labs shall not be liable for any indirect, 
                   incidental, special, consequential, or punitive damages arising out of or relating to your 
@@ -136,7 +162,7 @@ const TermsOfService = () => {
               </section>
 
               <section>
-                <h2 className="text-xl font-bold mb-3">11. Changes to Terms</h2>
+                <h2 className="text-xl font-bold mb-3">12. Changes to Terms</h2>
                 <p className="text-muted-foreground">
                   We reserve the right to modify these terms at any time. We will notify users of material changes 
                   through the app or via email. Your continued use of the Service after changes constitutes 
@@ -145,7 +171,7 @@ const TermsOfService = () => {
               </section>
 
               <section>
-                <h2 className="text-xl font-bold mb-3">12. Contact Us</h2>
+                <h2 className="text-xl font-bold mb-3">13. Contact Us</h2>
                 <p className="text-muted-foreground">
                   If you have any questions about these Terms of Service, please contact us at{" "}
                   <a href="mailto:support@tribelife.app" className="text-primary hover:underline">
