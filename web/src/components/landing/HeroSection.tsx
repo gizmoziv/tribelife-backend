@@ -36,8 +36,8 @@ const HeroSection = () => {
           transition={{ duration: 0.7, delay: 0.35 }}
           className="text-5xl md:text-7xl font-bold leading-tight mb-6"
         >
-          Find Your People,{" "}
-          <span className="gradient-text">Wherever You Land</span>
+          Your People Are Here.{" "}
+          <span className="gradient-text whitespace-nowrap">Just Say What You Need.</span>
         </motion.h1>
 
         <motion.p
