@@ -85,7 +85,7 @@ router.post('/', async (req: AuthRequest, res: Response): Promise<void> => {
       userId,
       rawText: parse.data.rawText,
       parsedIntent: analysis.parsedIntent,
-      embedding: JSON.stringify(analysis.keywords), // stored keywords for matching
+      keywords: JSON.stringify(analysis.keywords), // stored keywords for matching
       timezone,
       isActive: true,
       isSanitized: true,

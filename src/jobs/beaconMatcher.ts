@@ -23,7 +23,7 @@ async function runBeaconMatching(): Promise<void> {
       userId: beacons.userId,
       rawText: beacons.rawText,
       parsedIntent: beacons.parsedIntent,
-      embedding: beacons.embedding,   // stores JSON-serialized keywords array
+      keywords: beacons.keywords,      // stores JSON-serialized keywords array
       timezone: beacons.timezone,
     })
     .from(beacons)
@@ -101,8 +101,8 @@ async function runBeaconMatching(): Promise<void> {
 
         totalComparisons++;
 
-        const keywordsA: string[] = a.embedding ? JSON.parse(a.embedding) : [];
-        const keywordsB: string[] = b.embedding ? JSON.parse(b.embedding) : [];
+        const keywordsA: string[] = a.keywords ? JSON.parse(a.keywords) : [];
+        const keywordsB: string[] = b.keywords ? JSON.parse(b.keywords) : [];
 
         let result;
         try {
@@ -127,13 +127,13 @@ async function runBeaconMatching(): Promise<void> {
               {
                 beaconId: a.id,
                 matchedBeaconId: b.id,
-                similarityScore: result.score.toFixed(3),
+                similarityScore: String(parseFloat(result.score.toFixed(3))),
                 matchReason: result.reason,
               },
               {
                 beaconId: b.id,
                 matchedBeaconId: a.id,
-                similarityScore: result.score.toFixed(3),
+                similarityScore: String(parseFloat(result.score.toFixed(3))),
                 matchReason: result.reason,
               },
             ])
