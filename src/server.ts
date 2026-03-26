@@ -15,6 +15,7 @@ import supportRouter from './routes/support';
 import androidWaitlistRouter from './routes/androidWaitlist';
 import revenuecatRouter from './routes/revenuecat';
 import moderationRouter from './routes/moderation';
+import uploadRouter from './routes/upload';
 import { startBeaconMatcherCron } from './jobs/beaconMatcher';
 import { createSocketServer } from './socket';
 
@@ -69,6 +70,7 @@ app.use('/api/support', supportRouter);
 app.use('/api/android-waitlist', androidWaitlistRouter);
 app.use('/api/revenuecat', revenuecatRouter);
 app.use('/api/moderation', moderationRouter);
+app.use('/api/upload', uploadRouter);
 
 // ── Resolve public directory for static files ────────────────────────────
 const fs = require('fs');
