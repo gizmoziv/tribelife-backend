@@ -7,6 +7,7 @@ import {
   boolean,
   varchar,
   jsonb,
+  numeric,
   unique,
   index,
 } from 'drizzle-orm/pg-core';
@@ -51,6 +52,8 @@ export const conversations = pgTable('conversations', {
   id: serial('id').primaryKey(),
   createdAt: timestamp('created_at').defaultNow(),
   lastMessageAt: timestamp('last_message_at').defaultNow(),
+  isGroup: boolean('is_group'),                             // SCHM-04: nullable, null = legacy 1:1 DM
+  groupName: varchar('group_name', { length: 100 }),        // SCHM-04: nullable, only set for groups
 });
 
 export const conversationParticipants = pgTable('conversation_participants', {
@@ -81,6 +84,8 @@ export const messages = pgTable('messages', {
 
   createdAt: timestamp('created_at').defaultNow(),
   deletedAt: timestamp('deleted_at'),
+  replyToId: integer('reply_to_id'),                        // SCHM-01: nullable self-ref FK (added via migration)
+  mediaUrls: jsonb('media_urls').$type<string[]>(),         // SCHM-02: nullable JSON array of URLs
 }, (t) => ({
   roomIdx: index('messages_room_idx').on(t.roomId),
   convIdx: index('messages_conv_idx').on(t.conversationId),
@@ -96,7 +101,7 @@ export const beacons = pgTable('beacons', {
   userId: integer('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
   rawText: text('raw_text').notNull(),              // original user input
   parsedIntent: text('parsed_intent'),              // Claude-extracted normalized intent
-  embedding: text('embedding'),                     // JSON-serialized float[] for similarity search
+  keywords: text('keywords'),                        // renamed from embedding (D-11)
   timezone: varchar('timezone', { length: 100 }),  // denormalized from profile at creation time
   isActive: boolean('is_active').notNull().default(true),
   isSanitized: boolean('is_sanitized').notNull().default(false),  // passed moderation
@@ -114,7 +119,7 @@ export const beaconMatches = pgTable('beacon_matches', {
   id: serial('id').primaryKey(),
   beaconId: integer('beacon_id').references(() => beacons.id, { onDelete: 'cascade' }).notNull(),
   matchedBeaconId: integer('matched_beacon_id').references(() => beacons.id, { onDelete: 'cascade' }).notNull(),
-  similarityScore: text('similarity_score').notNull(),  // stored as string to avoid float precision issues
+  similarityScore: numeric('similarity_score').notNull(),  // changed from text to numeric (D-11)
   matchReason: text('match_reason'),                    // Claude's explanation of why they matched
   notifiedAt: timestamp('notified_at'),
   viewedAt: timestamp('viewed_at'),
@@ -122,6 +127,20 @@ export const beaconMatches = pgTable('beacon_matches', {
 }, (t) => ({
   beaconIdx: index('beacon_matches_beacon_idx').on(t.beaconId),
   uniqMatch: unique().on(t.beaconId, t.matchedBeaconId),
+}));
+
+// ─────────────────────────────────────────────
+// REACTIONS
+// ─────────────────────────────────────────────
+export const reactions = pgTable('reactions', {
+  id: serial('id').primaryKey(),
+  messageId: integer('message_id').references(() => messages.id, { onDelete: 'cascade' }).notNull(),
+  userId: integer('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
+  emoji: varchar('emoji', { length: 20 }).notNull(),
+  createdAt: timestamp('created_at').defaultNow(),
+}, (t) => ({
+  msgIdx: index('reactions_message_idx').on(t.messageId),
+  uniqReaction: unique().on(t.messageId, t.userId, t.emoji),
 }));
 
 // ─────────────────────────────────────────────
@@ -203,9 +222,11 @@ export const conversationsRelations = relations(conversations, ({ many }) => ({
   messages: many(messages),
 }));
 
-export const messagesRelations = relations(messages, ({ one }) => ({
+export const messagesRelations = relations(messages, ({ one, many }) => ({
   sender: one(users, { fields: [messages.senderId], references: [users.id] }),
   conversation: one(conversations, { fields: [messages.conversationId], references: [conversations.id] }),
+  replyTo: one(messages, { fields: [messages.replyToId], references: [messages.id], relationName: 'replies' }),
+  reactions: many(reactions),
 }));
 
 export const beaconsRelations = relations(beacons, ({ one, many }) => ({
@@ -216,6 +237,11 @@ export const beaconsRelations = relations(beacons, ({ one, many }) => ({
 export const beaconMatchesRelations = relations(beaconMatches, ({ one }) => ({
   beacon: one(beacons, { fields: [beaconMatches.beaconId], references: [beacons.id], relationName: 'beaconMatches' }),
   matchedBeacon: one(beacons, { fields: [beaconMatches.matchedBeaconId], references: [beacons.id] }),
+}));
+
+export const reactionsRelations = relations(reactions, ({ one }) => ({
+  message: one(messages, { fields: [reactions.messageId], references: [messages.id] }),
+  user: one(users, { fields: [reactions.userId], references: [users.id] }),
 }));
 
 export const notificationsRelations = relations(notifications, ({ one }) => ({
