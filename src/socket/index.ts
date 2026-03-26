@@ -6,7 +6,7 @@ import { db } from '../db';
 import { userProfiles } from '../db/schema';
 import { registerRoomHandlers } from './roomHandler';
 import { registerDmHandlers } from './dmHandler';
-// import { registerGlobeHandlers } from './globeHandler'; -- Phase 3
+import { registerGlobeHandlers } from './globeHandler';
 
 // ── CORS Origin Configuration ────────────────────────────────────────────
 const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',').map(o => o.trim());
@@ -51,6 +51,8 @@ export function createSocketServer(httpServer: HttpServer): SocketServer {
           handle: userProfiles.handle,
           timezone: userProfiles.timezone,
           expoPushToken: userProfiles.expoPushToken,
+          createdAt: userProfiles.createdAt,
+          avatarUrl: userProfiles.avatarUrl,
         })
         .from(userProfiles)
         .where(eq(userProfiles.userId, payload.userId))
@@ -60,6 +62,8 @@ export function createSocketServer(httpServer: HttpServer): SocketServer {
       socket.data.timezone = profile[0]?.timezone ?? 'UTC';
       socket.data.handle = profile[0]?.handle ?? 'unknown';
       socket.data.expoPushToken = profile[0]?.expoPushToken ?? null;
+      socket.data.createdAt = profile[0]?.createdAt ?? new Date();
+      socket.data.avatarUrl = profile[0]?.avatarUrl ?? null;
       next();
     } catch {
       next(new Error('Invalid token'));
@@ -77,7 +81,7 @@ export function createSocketServer(httpServer: HttpServer): SocketServer {
     // Register modular handlers
     registerRoomHandlers(io, socket);
     registerDmHandlers(io, socket);
-    // registerGlobeHandlers(io, socket); -- Phase 3
+    registerGlobeHandlers(io, socket);
 
     // ── Typing indicators ─────────────────────────────────────────────────
     socket.on('typing:start', (data: { roomId?: string; conversationId?: number }) => {
