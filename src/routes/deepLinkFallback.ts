@@ -17,7 +17,11 @@ router.get('/globe/*', (req: Request, res: Response, next: NextFunction) => {
   const platform = detectPlatform(ua);
 
   if (platform === 'ios') {
-    return res.redirect(302, 'https://apps.apple.com/app/tribelife/id<APP_STORE_ID>');
+    const appStoreId = process.env.APPLE_APP_STORE_ID;
+    const storeUrl = appStoreId
+      ? `https://apps.apple.com/app/tribelife/id${appStoreId}`
+      : 'https://tribelife.app';
+    return res.redirect(302, storeUrl);
   }
 
   if (platform === 'android') {
