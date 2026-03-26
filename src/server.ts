@@ -17,6 +17,8 @@ import revenuecatRouter from './routes/revenuecat';
 import moderationRouter from './routes/moderation';
 import uploadRouter from './routes/upload';
 import globeRouter from './routes/globe';
+import wellKnownRouter from './routes/wellKnown';
+import deepLinkFallbackRouter from './routes/deepLinkFallback';
 import { startBeaconMatcherCron } from './jobs/beaconMatcher';
 import { createSocketServer } from './socket';
 
@@ -97,6 +99,10 @@ app.use((req, res, next) => {
   }
   next();
 });
+
+// ── Deep Link Verification & Fallback (MUST be before SPA catch-all) ────
+app.use('/.well-known', wellKnownRouter);
+app.use(deepLinkFallbackRouter);
 
 // ── Marketing website (SPA) ──────────────────────────────────────────────
 app.use(express.static(resolvedPublicDir));
