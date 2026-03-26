@@ -16,6 +16,7 @@ import androidWaitlistRouter from './routes/androidWaitlist';
 import revenuecatRouter from './routes/revenuecat';
 import moderationRouter from './routes/moderation';
 import uploadRouter from './routes/upload';
+import globeRouter from './routes/globe';
 import { startBeaconMatcherCron } from './jobs/beaconMatcher';
 import { createSocketServer } from './socket';
 
@@ -71,6 +72,7 @@ app.use('/api/android-waitlist', androidWaitlistRouter);
 app.use('/api/revenuecat', revenuecatRouter);
 app.use('/api/moderation', moderationRouter);
 app.use('/api/upload', uploadRouter);
+app.use('/api/globe', globeRouter);
 
 // ── Resolve public directory for static files ────────────────────────────
 const fs = require('fs');
@@ -109,6 +111,7 @@ app.get('*', (_req, res, next) => {
 
 // ── Socket.io ─────────────────────────────────────────────────────────────
 const io = createSocketServer(httpServer);
+app.set('io', io);
 
 // ── Start ──────────────────────────────────────────────────────────────────
 const PORT = process.env.PORT ?? 4000;
