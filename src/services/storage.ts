@@ -12,6 +12,8 @@ const s3 = new S3Client({
     secretAccessKey: process.env.DO_SPACES_SECRET!,
   },
   forcePathStyle: false,
+  requestChecksumCalculation: 'WHEN_REQUIRED',
+  responseChecksumValidation: 'WHEN_REQUIRED',
 });
 
 const BUCKET = process.env.DO_SPACES_BUCKET!;
