@@ -42,7 +42,7 @@ export function registerGlobeHandlers(io: Server, socket: Socket): void {
   });
 
   // ── Send a message to a Globe room ──────────────────────────────────────
-  socket.on('globe:message', async (data: { slug: string; content: string }) => {
+  socket.on('globe:message', async (data: { slug: string; content: string; replyToId?: number }) => {
     const content = data.content?.trim();
     if (!content || content.length > 2000) return;
     if (!isValidGlobeRoom(data.slug)) return;
@@ -78,6 +78,7 @@ export function registerGlobeHandlers(io: Server, socket: Socket): void {
         content,
         senderId: userId,
         roomId,
+        replyToId: data.replyToId ?? null,
       })
       .returning();
 
@@ -91,6 +92,7 @@ export function registerGlobeHandlers(io: Server, socket: Socket): void {
       roomId,
       slug: data.slug,
       createdAt: msg.createdAt,
+      replyToId: data.replyToId ?? null,
     });
   });
 

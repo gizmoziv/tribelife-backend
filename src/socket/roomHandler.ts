@@ -15,7 +15,7 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
   socket.join(timezoneRoom);
 
   // ── Send a message to a timezone room ─────────────────────────────────
-  socket.on('room:message', async (data: { content: string }) => {
+  socket.on('room:message', async (data: { content: string; replyToId?: number }) => {
     const content = data.content?.trim();
     if (!content || content.length > 2000) return;
 
@@ -50,6 +50,7 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
         senderId: userId,
         roomId: timezoneRoom,
         mentions: mentionedUserIds,
+        replyToId: data.replyToId ?? null,
       })
       .returning();
 
@@ -62,6 +63,7 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
       roomId: timezoneRoom,
       createdAt: msg.createdAt,
       mentions: mentionedUserIds,
+      replyToId: data.replyToId ?? null,
     };
 
     io.to(timezoneRoom).emit('room:message', payload);

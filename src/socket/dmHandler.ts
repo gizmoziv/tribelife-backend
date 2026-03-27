@@ -17,7 +17,7 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
   const handle: string = socket.data.handle;
 
   // ── Send a direct message ─────────────────────────────────────────────
-  socket.on('dm:message', async (data: { conversationId: number; content: string }) => {
+  socket.on('dm:message', async (data: { conversationId: number; content: string; replyToId?: number }) => {
     const content = data.content?.trim();
     if (!content || content.length > 2000) return;
 
@@ -77,6 +77,7 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
         content,
         senderId: userId,
         conversationId: data.conversationId,
+        replyToId: data.replyToId ?? null,
       })
       .returning();
 
@@ -93,6 +94,7 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
       senderHandle: handle,
       conversationId: data.conversationId,
       createdAt: msg.createdAt,
+      replyToId: data.replyToId ?? null,
     };
 
     // Emit to conversation room
