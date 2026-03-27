@@ -33,7 +33,6 @@ export async function generateAvatarUploadUrl(userId: number): Promise<{
     Bucket: BUCKET,
     Key: key,
     ContentType: 'image/jpeg',
-    ACL: 'public-read',
   });
 
   const uploadUrl = await getSignedUrl(s3, command, { expiresIn: 300 });
