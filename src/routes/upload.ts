@@ -4,7 +4,7 @@ import { eq } from 'drizzle-orm';
 import { db } from '../db';
 import { userProfiles } from '../db/schema';
 import { requireAuth, AuthRequest } from '../middleware/auth';
-import { generateAvatarUploadUrl, objectExists, deleteObject, cdnUrlToKey } from '../services/storage';
+import { generateAvatarUploadUrl, objectExists, deleteObject, cdnUrlToKey, setPublicRead } from '../services/storage';
 
 const router = Router();
 
@@ -50,6 +50,7 @@ const confirmSchema = z.object({
 });
 
 router.post('/avatar-confirm', requireAuth, async (req: AuthRequest, res: Response): Promise<void> => {
+  console.log('[upload] avatar-confirm called, body:', JSON.stringify(req.body));
   const parse = confirmSchema.safeParse(req.body);
   if (!parse.success) {
     res.status(400).json({ error: 'key is required' });
@@ -60,7 +61,8 @@ router.post('/avatar-confirm', requireAuth, async (req: AuthRequest, res: Respon
 
   try {
     // Security: verify key belongs to this user
-    if (!key.startsWith(`avatars/${req.user!.id}/`)) {
+    const prefix = process.env.DO_SPACES_PREFIX || 'prod';
+    if (!key.startsWith(`${prefix}/avatars/${req.user!.id}/`)) {
       res.status(403).json({ error: 'Key does not belong to this user' });
       return;
     }
@@ -71,6 +73,9 @@ router.post('/avatar-confirm', requireAuth, async (req: AuthRequest, res: Respon
       res.status(400).json({ error: 'Object not found at key' });
       return;
     }
+
+    // Make object publicly readable via CDN
+    await setPublicRead(key);
 
     // Delete old avatar if present
     const [profile] = await db

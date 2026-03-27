@@ -1,5 +1,5 @@
 import { Router, Response } from 'express';
-import { eq, and, desc, count } from 'drizzle-orm';
+import { eq, and, desc, count, isNull } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '../db';
 import { beacons, beaconMatches, userProfiles, users } from '../db/schema';
@@ -155,7 +155,7 @@ router.get('/matches', async (req: AuthRequest, res: Response): Promise<void> =>
     })
     .from(beaconMatches)
     .innerJoin(beacons, eq(beacons.id, beaconMatches.beaconId))
-    .where(eq(beacons.userId, userId))
+    .where(and(eq(beacons.userId, userId), isNull(beaconMatches.dismissedAt)))
     .orderBy(desc(beaconMatches.createdAt));
 
   // Enrich with matched user info
@@ -190,6 +190,32 @@ router.put('/matches/:id/viewed', async (req: AuthRequest, res: Response): Promi
   await db
     .update(beaconMatches)
     .set({ viewedAt: new Date() })
+    .where(eq(beaconMatches.id, matchId));
+
+  res.json({ ok: true });
+});
+
+// ── Dismiss a beacon match ─────────────────────────────────────────────────
+router.put('/matches/:id/dismiss', async (req: AuthRequest, res: Response): Promise<void> => {
+  const userId = req.user!.id;
+  const matchId = parseInt(req.params.id as string);
+
+  // Verify the match belongs to a beacon owned by the requesting user
+  const [match] = await db
+    .select({ id: beaconMatches.id })
+    .from(beaconMatches)
+    .innerJoin(beacons, eq(beacons.id, beaconMatches.beaconId))
+    .where(and(eq(beaconMatches.id, matchId), eq(beacons.userId, userId)))
+    .limit(1);
+
+  if (!match) {
+    res.status(404).json({ error: 'Match not found' });
+    return;
+  }
+
+  await db
+    .update(beaconMatches)
+    .set({ dismissedAt: new Date() })
     .where(eq(beaconMatches.id, matchId));
 
   res.json({ ok: true });

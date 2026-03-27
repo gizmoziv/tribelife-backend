@@ -1,4 +1,4 @@
-import { S3Client, PutObjectCommand, DeleteObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, PutObjectCommand, PutObjectAclCommand, DeleteObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 // ── DigitalOcean Spaces Storage Service ─────────────────────────────────────
@@ -16,28 +16,41 @@ const s3 = new S3Client({
 
 const BUCKET = process.env.DO_SPACES_BUCKET!;
 const CDN_URL = process.env.DO_SPACES_CDN_URL!;
+const PREFIX = process.env.DO_SPACES_PREFIX || 'prod';
 
 /**
  * Generate a pre-signed PUT URL for avatar upload.
- * Key format: avatars/{userId}/{timestamp}.jpg
+ * Key format: {env}/avatars/{userId}/{timestamp}.jpg
  */
 export async function generateAvatarUploadUrl(userId: number): Promise<{
   uploadUrl: string;
   key: string;
   cdnUrl: string;
 }> {
-  const key = `avatars/${userId}/${Date.now()}.jpg`;
+  const key = `${PREFIX}/avatars/${userId}/${Date.now()}.jpg`;
 
   const command = new PutObjectCommand({
     Bucket: BUCKET,
     Key: key,
     ContentType: 'image/jpeg',
+    ACL: 'public-read',
   });
 
   const uploadUrl = await getSignedUrl(s3, command, { expiresIn: 300 });
   const cdnUrl = `${CDN_URL}/${key}`;
 
   return { uploadUrl, key, cdnUrl };
+}
+
+/**
+ * Set an object's ACL to public-read so CDN can serve it.
+ */
+export async function setPublicRead(key: string): Promise<void> {
+  await s3.send(new PutObjectAclCommand({
+    Bucket: BUCKET,
+    Key: key,
+    ACL: 'public-read',
+  }));
 }
 
 /**
