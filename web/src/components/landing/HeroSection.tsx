@@ -1,23 +1,35 @@
-import { motion } from "framer-motion";
-import { Apple, Play } from "lucide-react";
-import heroBg from "@/assets/hero-bg.jpg";
-import { trackDownloadClick } from "@/lib/analytics";
+import { motion } from 'framer-motion';
+import { Apple, Play } from 'lucide-react';
+import heroBg from '@/assets/hero-bg.jpg';
+import { trackDownloadClick } from '@/lib/analytics';
 
-const APP_STORE_URL = "https://apps.apple.com/us/app/tribelife-app/id6759845843";
-const PLAY_STORE_URL = 'https://play.google.com/store/apps/details?id=com.tribelife.app';
+const APP_STORE_URL =
+  'https://apps.apple.com/us/app/tribelife-app/id6759845843';
+const PLAY_STORE_URL =
+  'https://play.google.com/store/apps/details?id=com.tribelife.app';
 
 const HeroSection = () => {
   return (
-    <section aria-label="Hero" className="relative min-h-screen flex items-center justify-center overflow-hidden pt-20">
+    <section
+      aria-label="Hero"
+      className="relative min-h-screen flex items-center justify-center overflow-hidden pt-20"
+    >
       {/* Background */}
       <div className="absolute inset-0">
-        <img src={heroBg} alt="People connecting in a local community" className="w-full h-full object-cover opacity-40" />
+        <img
+          src={heroBg}
+          alt="People connecting in a local community"
+          className="w-full h-full object-cover opacity-40"
+        />
         <div className="absolute inset-0 bg-gradient-to-b from-background/60 via-background/40 to-background" />
       </div>
 
       {/* Floating orbs */}
       <div className="absolute top-1/4 left-1/4 w-64 h-64 rounded-full bg-secondary/10 blur-3xl animate-pulse-glow" />
-      <div className="absolute bottom-1/3 right-1/4 w-48 h-48 rounded-full bg-primary/10 blur-3xl animate-pulse-glow" style={{ animationDelay: "1.5s" }} />
+      <div
+        className="absolute bottom-1/3 right-1/4 w-48 h-48 rounded-full bg-primary/10 blur-3xl animate-pulse-glow"
+        style={{ animationDelay: '1.5s' }}
+      />
 
       <div className="relative z-10 container mx-auto px-6 text-center max-w-4xl">
         <motion.div
@@ -36,8 +48,10 @@ const HeroSection = () => {
           transition={{ duration: 0.7, delay: 0.35 }}
           className="text-5xl md:text-7xl font-bold leading-tight mb-6"
         >
-          Your People Are Here.{" "}
-          <span className="gradient-text whitespace-nowrap">Just Say What You Need.</span>
+          Our People Are Here.{' '}
+          <span className="gradient-text whitespace-nowrap">
+            Just Say What You Need.
+          </span>
         </motion.h1>
 
         <motion.p
@@ -46,8 +60,10 @@ const HeroSection = () => {
           transition={{ duration: 0.7, delay: 0.5 }}
           className="text-lg md:text-xl text-muted-foreground max-w-2xl mx-auto mb-10 leading-relaxed"
         >
-          Need a Shabbat dinner host, a study partner, or someone to split the holidays with?
-          Post a beacon — a short request for what you need — and we'll match you with the right people nearby. Every day, in your timezone.
+          Need a Shabbat dinner host, a study partner, or someone to split the
+          holidays with? Post a beacon — a short request for what you need — and
+          we'll match you with the right people nearby. Every day, in your
+          timezone.
         </motion.p>
 
         <motion.div
