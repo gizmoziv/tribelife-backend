@@ -1,5 +1,5 @@
 import { Router, Response } from 'express';
-import { eq } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 import { z } from 'zod';
 import { Server } from 'socket.io';
 import { db } from '../db';
@@ -8,6 +8,82 @@ import { requireAuth, AuthRequest } from '../middleware/auth';
 
 const router = Router();
 router.use(requireAuth);
+
+// ── Toggle a reaction (add or remove) ─────────────────────────────────────
+const toggleReactionSchema = z.object({
+  messageId: z.number().int().positive(),
+  emoji: z.string().min(1).max(20),
+});
+
+router.post('/toggle', async (req: AuthRequest, res: Response): Promise<void> => {
+  const parse = toggleReactionSchema.safeParse(req.body);
+  if (!parse.success) {
+    res.status(400).json({ error: parse.error.errors[0].message });
+    return;
+  }
+
+  const userId = req.user!.id;
+  const { messageId, emoji } = parse.data;
+
+  // Look up the message for broadcast target
+  const [message] = await db
+    .select({
+      id: messages.id,
+      roomId: messages.roomId,
+      conversationId: messages.conversationId,
+    })
+    .from(messages)
+    .where(eq(messages.id, messageId))
+    .limit(1);
+
+  if (!message) {
+    res.status(404).json({ error: 'Message not found' });
+    return;
+  }
+
+  // Check if reaction already exists
+  const [existing] = await db
+    .select({ id: reactions.id })
+    .from(reactions)
+    .where(
+      and(
+        eq(reactions.messageId, messageId),
+        eq(reactions.userId, userId),
+        eq(reactions.emoji, emoji),
+      )
+    )
+    .limit(1);
+
+  const io = req.app.get('io') as Server;
+  const roomName = message.roomId ?? `conversation:${message.conversationId}`;
+
+  if (existing) {
+    // Remove existing reaction
+    await db.delete(reactions).where(eq(reactions.id, existing.id));
+    io.to(roomName).emit('reaction:update', {
+      messageId, emoji, userId,
+      userHandle: req.user!.handle,
+      action: 'remove',
+      roomId: message.roomId ?? undefined,
+      conversationId: message.conversationId ?? undefined,
+    });
+    res.json({ action: 'removed' });
+  } else {
+    // Add new reaction
+    const [reaction] = await db
+      .insert(reactions)
+      .values({ messageId, userId, emoji })
+      .returning();
+    io.to(roomName).emit('reaction:update', {
+      messageId, emoji, userId,
+      userHandle: req.user!.handle,
+      action: 'add',
+      roomId: message.roomId ?? undefined,
+      conversationId: message.conversationId ?? undefined,
+    });
+    res.status(201).json({ action: 'added', reaction: { id: reaction.id, messageId, userId, emoji, createdAt: reaction.createdAt } });
+  }
+});
 
 // ── Add a reaction to a message ─────────────────────────────────────────────
 const addReactionSchema = z.object({
