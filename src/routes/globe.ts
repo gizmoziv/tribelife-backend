@@ -4,6 +4,7 @@ import { Server } from 'socket.io';
 import { db } from '../db';
 import { messages, users, userProfiles, blockedUsers } from '../db/schema';
 import { requireAuth, AuthRequest } from '../middleware/auth';
+import { attachReactions } from '../utils/attachReactions';
 import { GLOBE_ROOMS, isValidGlobeRoom, getRegionForTimezone } from '../config/globeRooms';
 
 const router = Router();
@@ -106,7 +107,8 @@ router.get('/rooms/:slug/messages', async (req: AuthRequest, res: Response): Pro
     .orderBy(desc(messages.createdAt))
     .limit(limit);
 
-  res.json({ messages: rows.reverse(), hasMore: rows.length === limit });
+  const withReactions = await attachReactions(rows, userId);
+  res.json({ messages: withReactions.reverse(), hasMore: rows.length === limit });
 });
 
 export default router;

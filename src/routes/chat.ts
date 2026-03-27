@@ -11,6 +11,7 @@ import {
   blockedUsers,
 } from '../db/schema';
 import { requireAuth, AuthRequest } from '../middleware/auth';
+import { attachReactions } from '../utils/attachReactions';
 
 const router = Router();
 router.use(requireAuth);
@@ -186,7 +187,8 @@ router.get('/conversations/:id/messages', async (req: AuthRequest, res: Response
     .limit(limit);
 
   const rows = await query;
-  res.json({ messages: rows.reverse(), hasMore: rows.length === limit });
+  const withReactions = await attachReactions(rows, userId);
+  res.json({ messages: withReactions.reverse(), hasMore: rows.length === limit });
 });
 
 // ── Get recent location-based (room) chat history ─────────────────────────
@@ -230,7 +232,8 @@ router.get('/room/:roomId/messages', async (req: AuthRequest, res: Response): Pr
     .orderBy(desc(messages.createdAt))
     .limit(limit);
 
-  res.json({ messages: rows.reverse(), hasMore: rows.length === limit });
+  const withReactions = await attachReactions(rows, userId);
+  res.json({ messages: withReactions.reverse(), hasMore: rows.length === limit });
 });
 
 export default router;
