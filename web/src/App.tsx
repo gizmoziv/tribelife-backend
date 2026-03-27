@@ -9,7 +9,6 @@ import TermsOfService from "./pages/TermsOfService";
 import PrivacyPolicy from "./pages/PrivacyPolicy";
 import NotFound from "./pages/NotFound";
 import Support from "./pages/Support";
-import AndroidNotify from "./pages/AndroidNotify";
 import { trackPageView } from "@/lib/analytics";
 
 const queryClient = new QueryClient();
@@ -34,7 +33,6 @@ const App = () => (
           <Route path="/terms" element={<TermsOfService />} />
           <Route path="/privacy" element={<PrivacyPolicy />} />
           <Route path="/support" element={<Support />} />
-          <Route path="/android-notify" element={<AndroidNotify />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>

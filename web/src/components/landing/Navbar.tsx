@@ -7,7 +7,7 @@ import { trackDownloadClick, trackNavClick } from '@/lib/analytics';
 const APP_STORE_URL = 'https://apps.apple.com/us/app/tribelife-app/id6759845843';
 
 function getDownloadUrl() {
-  if (/android/i.test(navigator.userAgent)) return '/android-notify';
+  if (/android/i.test(navigator.userAgent)) return 'https://play.google.com/store/apps/details?id=com.tribelife.app';
   return APP_STORE_URL;
 }
 

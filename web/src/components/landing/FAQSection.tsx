@@ -26,7 +26,7 @@ const faqs = [
   {
     question: 'Is TribeLife available on Android?',
     answer:
-      "We're finalizing the Android launch right now. Join our waitlist and we'll notify you the moment it's live on Google Play.",
+      'Yes! TribeLife is available on both iOS and Android. Download it from the App Store or Google Play.',
   },
 ];
 

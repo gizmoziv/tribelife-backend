@@ -3,7 +3,7 @@ import logo from '@/assets/tribelife-logo.png';
 import { trackDownloadClick } from '@/lib/analytics';
 
 const APP_STORE_URL = 'https://apps.apple.com/us/app/tribelife-app/id6759845843';
-const PLAY_STORE_URL = ''; // TODO: replace with Play Store URL when Android app is published
+const PLAY_STORE_URL = 'https://play.google.com/store/apps/details?id=com.tribelife.app';
 
 function getDownloadUrl() {
   if (PLAY_STORE_URL && /android/i.test(navigator.userAgent)) return PLAY_STORE_URL;

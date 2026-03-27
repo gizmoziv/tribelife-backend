@@ -4,7 +4,7 @@ import heroBg from "@/assets/hero-bg.jpg";
 import { trackDownloadClick } from "@/lib/analytics";
 
 const APP_STORE_URL = "https://apps.apple.com/us/app/tribelife-app/id6759845843";
-const PLAY_STORE_URL = '/android-notify';
+const PLAY_STORE_URL = 'https://play.google.com/store/apps/details?id=com.tribelife.app';
 
 const HeroSection = () => {
   return (
@@ -26,7 +26,7 @@ const HeroSection = () => {
           transition={{ duration: 0.7, delay: 0.2 }}
         >
           <span className="inline-block gradient-bg text-primary-foreground text-xs font-bold uppercase tracking-widest px-4 py-1.5 rounded-full mb-8">
-            Now Available on iOS · Android Coming Soon
+            Available on iOS & Android
           </span>
         </motion.div>
 
@@ -68,11 +68,13 @@ const HeroSection = () => {
           </a>
           <a
             href={PLAY_STORE_URL}
+            target="_blank"
+            rel="noopener noreferrer"
             onClick={() => trackDownloadClick('android', 'hero_top')}
             className="bg-card border border-border text-foreground flex items-center gap-3 px-7 py-4 rounded-2xl font-semibold text-base transition-all hover:bg-muted hover:scale-105 w-full sm:w-auto justify-center"
           >
             <Play className="w-5 h-5" />
-            Android — Notify Me
+            Get it on Google Play
           </a>
         </motion.div>
 

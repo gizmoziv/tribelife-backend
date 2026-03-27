@@ -3,7 +3,7 @@ import { Apple, Play } from 'lucide-react';
 import { trackDownloadClick } from '@/lib/analytics';
 
 const APP_STORE_URL = 'https://apps.apple.com/us/app/tribelife-app/id6759845843';
-const ANDROID_URL = '/android-notify';
+const ANDROID_URL = 'https://play.google.com/store/apps/details?id=com.tribelife.app';
 
 const StickyDownloadBar = () => {
   const [visible, setVisible] = useState(false);
@@ -27,14 +27,15 @@ const StickyDownloadBar = () => {
       <div className="bg-background/95 backdrop-blur-xl border-t border-border/50 px-4 py-3 flex gap-3">
         <a
           href={isAndroid ? ANDROID_URL : APP_STORE_URL}
-          {...(!isAndroid ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
+          target="_blank"
+          rel="noopener noreferrer"
           onClick={() => trackDownloadClick(isAndroid ? 'android' : 'ios', 'hero_bottom')}
           className="gradient-bg gradient-bg-hover text-primary-foreground flex items-center justify-center gap-2 px-4 py-3 rounded-xl font-semibold text-sm transition-all flex-1"
         >
           {isAndroid ? (
             <>
               <Play className="w-4 h-4" />
-              Android — Notify Me
+              Download on Google Play
             </>
           ) : (
             <>
