@@ -7,7 +7,7 @@
  * 3. Record new matches (score >= 0.65) and send push notifications
  */
 import cron from 'node-cron';
-import { eq, and, isNull, or, lt, sql } from 'drizzle-orm';
+import { eq, and, isNull, isNotNull, or, lt, sql } from 'drizzle-orm';
 import { db } from '../db';
 import { beacons, beaconMatches, userProfiles, notifications, blockedUsers } from '../db/schema';
 import { compareBeacons } from '../services/claude';
@@ -82,9 +82,9 @@ async function runBeaconMatching(): Promise<void> {
           blockedPairs.has(`${b.userId}:${a.userId}`)
         ) continue;
 
-        // Skip pairs that already have a match recorded today
+        // Skip pairs that already have a match recorded today, or that either user dismissed
         const existingMatch = await db
-          .select({ id: beaconMatches.id })
+          .select({ id: beaconMatches.id, dismissedAt: beaconMatches.dismissedAt })
           .from(beaconMatches)
           .where(
             and(
@@ -92,7 +92,10 @@ async function runBeaconMatching(): Promise<void> {
                 and(eq(beaconMatches.beaconId, a.id), eq(beaconMatches.matchedBeaconId, b.id)),
                 and(eq(beaconMatches.beaconId, b.id), eq(beaconMatches.matchedBeaconId, a.id))
               ),
-              sql`${beaconMatches.createdAt} > NOW() - INTERVAL '24 hours'`
+              or(
+                sql`${beaconMatches.createdAt} > NOW() - INTERVAL '24 hours'`,
+                isNotNull(beaconMatches.dismissedAt)
+              )
             )
           )
           .limit(1);

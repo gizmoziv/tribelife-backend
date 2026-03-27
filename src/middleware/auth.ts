@@ -9,6 +9,7 @@ export interface AuthUser {
   email: string;
   name: string;
   handle: string | null;
+  avatarUrl: string | null;
   isPremium: boolean;
   timezone: string | null;
 }
@@ -40,6 +41,7 @@ export async function requireAuth(
         email: users.email,
         name: users.name,
         handle: userProfiles.handle,
+        avatarUrl: userProfiles.avatarUrl,
         isPremium: userProfiles.isPremium,
         timezone: userProfiles.timezone,
       })

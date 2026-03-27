@@ -123,6 +123,7 @@ export const beaconMatches = pgTable('beacon_matches', {
   matchReason: text('match_reason'),                    // Claude's explanation of why they matched
   notifiedAt: timestamp('notified_at'),
   viewedAt: timestamp('viewed_at'),
+  dismissedAt: timestamp('dismissed_at'),
   createdAt: timestamp('created_at').defaultNow(),
 }, (t) => ({
   beaconIdx: index('beacon_matches_beacon_idx').on(t.beaconId),

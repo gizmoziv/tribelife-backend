@@ -12,7 +12,7 @@ export interface GlobeRoom {
   sortOrder: number;
 }
 
-export const AGE_GATE_HOURS = 24;
+export const AGE_GATE_HOURS = parseInt(process.env.AGE_GATE_HOURS || '24', 10);
 
 export const GLOBE_ROOMS: GlobeRoom[] = [
   {

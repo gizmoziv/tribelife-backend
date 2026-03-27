@@ -1,0 +1,1 @@
+ALTER TABLE "beacon_matches" ADD COLUMN "dismissed_at" timestamp;
