@@ -62,9 +62,23 @@ export const conversationParticipants = pgTable('conversation_participants', {
   userId: integer('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
   joinedAt: timestamp('joined_at').defaultNow(),
   lastReadAt: timestamp('last_read_at'),
+  hiddenAt: timestamp('hidden_at'),
 }, (t) => ({
   uniqPair: unique().on(t.conversationId, t.userId),
   userIdx: index('conv_participants_user_idx').on(t.userId),
+}));
+
+// ─────────────────────────────────────────────
+// GLOBE — Read position tracking for unread badges
+// ─────────────────────────────────────────────
+export const globeReadPositions = pgTable('globe_read_positions', {
+  id: serial('id').primaryKey(),
+  userId: integer('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
+  roomSlug: varchar('room_slug', { length: 100 }).notNull(),
+  lastReadAt: timestamp('last_read_at').notNull().defaultNow(),
+}, (t) => ({
+  uniqUserRoom: unique().on(t.userId, t.roomSlug),
+  userIdx: index('globe_read_positions_user_idx').on(t.userId),
 }));
 
 // ─────────────────────────────────────────────
@@ -212,6 +226,7 @@ export const usersRelations = relations(users, ({ one, many }) => ({
   blocksReceived: many(blockedUsers, { relationName: 'blocksReceived' }),
   reportsSubmitted: many(contentReports, { relationName: 'reportsSubmitted' }),
   reportsReceived: many(contentReports, { relationName: 'reportsReceived' }),
+  globeReadPositions: many(globeReadPositions),
 }));
 
 export const userProfilesRelations = relations(userProfiles, ({ one }) => ({
@@ -257,4 +272,8 @@ export const blockedUsersRelations = relations(blockedUsers, ({ one }) => ({
 export const contentReportsRelations = relations(contentReports, ({ one }) => ({
   reporter: one(users, { fields: [contentReports.reporterId], references: [users.id], relationName: 'reportsSubmitted' }),
   reportedUser: one(users, { fields: [contentReports.reportedUserId], references: [users.id], relationName: 'reportsReceived' }),
+}));
+
+export const globeReadPositionsRelations = relations(globeReadPositions, ({ one }) => ({
+  user: one(users, { fields: [globeReadPositions.userId], references: [users.id] }),
 }));
