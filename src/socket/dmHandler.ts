@@ -87,6 +87,20 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
       .set({ lastMessageAt: new Date() })
       .where(eq(conversations.id, data.conversationId));
 
+    // Build replyTo preview if this is a reply
+    let replyTo: { id: number; content: string; senderHandle: string } | null = null;
+    if (data.replyToId) {
+      const [original] = await db
+        .select({ id: messages.id, content: messages.content, senderHandle: userProfiles.handle })
+        .from(messages)
+        .leftJoin(userProfiles, eq(userProfiles.userId, messages.senderId))
+        .where(eq(messages.id, data.replyToId))
+        .limit(1);
+      if (original) {
+        replyTo = { id: original.id, content: original.content ?? '', senderHandle: original.senderHandle ?? 'Unknown' };
+      }
+    }
+
     const msgPayload = {
       id: msg.id,
       content,
@@ -95,6 +109,7 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
       conversationId: data.conversationId,
       createdAt: msg.createdAt,
       replyToId: data.replyToId ?? null,
+      replyTo,
     };
 
     // Emit to conversation room

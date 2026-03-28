@@ -1,6 +1,7 @@
 import { Server, Socket } from 'socket.io';
 import { db } from '../db';
-import { messages } from '../db/schema';
+import { messages, userProfiles } from '../db/schema';
+import { eq } from 'drizzle-orm';
 import { checkRateLimit } from './rateLimit';
 import { isValidGlobeRoom, AGE_GATE_HOURS } from '../config/globeRooms';
 import { moderateMessage } from '../services/claude';
@@ -82,6 +83,20 @@ export function registerGlobeHandlers(io: Server, socket: Socket): void {
       })
       .returning();
 
+    // Build replyTo preview if this is a reply
+    let replyTo: { id: number; content: string; senderHandle: string } | null = null;
+    if (data.replyToId) {
+      const [original] = await db
+        .select({ id: messages.id, content: messages.content, senderHandle: userProfiles.handle })
+        .from(messages)
+        .leftJoin(userProfiles, eq(userProfiles.userId, messages.senderId))
+        .where(eq(messages.id, data.replyToId))
+        .limit(1);
+      if (original) {
+        replyTo = { id: original.id, content: original.content ?? '', senderHandle: original.senderHandle ?? 'Unknown' };
+      }
+    }
+
     // Broadcast to room
     io.to(roomId).emit('globe:message', {
       id: msg.id,
@@ -93,6 +108,7 @@ export function registerGlobeHandlers(io: Server, socket: Socket): void {
       slug: data.slug,
       createdAt: msg.createdAt,
       replyToId: data.replyToId ?? null,
+      replyTo,
     });
   });
 
