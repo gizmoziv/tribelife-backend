@@ -1,8 +1,8 @@
 import { Router, Response } from 'express';
-import { eq, desc, lt, and, notInArray } from 'drizzle-orm';
+import { eq, desc, lt, and, notInArray, gt, isNull, sql, count } from 'drizzle-orm';
 import { Server } from 'socket.io';
 import { db } from '../db';
-import { messages, users, userProfiles, blockedUsers } from '../db/schema';
+import { messages, users, userProfiles, blockedUsers, globeReadPositions } from '../db/schema';
 import { requireAuth, AuthRequest } from '../middleware/auth';
 import { attachReactions } from '../utils/attachReactions';
 import { attachReplyTo } from '../utils/attachReplyTo';
@@ -111,6 +111,62 @@ router.get('/rooms/:slug/messages', async (req: AuthRequest, res: Response): Pro
   const withReactions = await attachReactions(rows, userId);
   const withReplies = await attachReplyTo(withReactions);
   res.json({ messages: withReplies.reverse(), hasMore: rows.length === limit });
+});
+
+// ── Mark a Globe room as read ──────────────────────────────────────────────
+router.put('/rooms/:slug/read', async (req: AuthRequest, res: Response): Promise<void> => {
+  const slug = req.params.slug as string;
+  if (!isValidGlobeRoom(slug)) {
+    res.status(404).json({ error: 'Room not found' });
+    return;
+  }
+
+  const userId = req.user!.id;
+
+  await db
+    .insert(globeReadPositions)
+    .values({ userId, roomSlug: slug, lastReadAt: new Date() })
+    .onConflictDoUpdate({
+      target: [globeReadPositions.userId, globeReadPositions.roomSlug],
+      set: { lastReadAt: new Date() },
+    });
+
+  res.json({ ok: true });
+});
+
+// ── Get unread counts for all Globe rooms ──────────────────────────────────
+router.get('/unread', async (req: AuthRequest, res: Response): Promise<void> => {
+  const userId = req.user!.id;
+
+  // Get all read positions for this user
+  const readPositions = await db
+    .select({ roomSlug: globeReadPositions.roomSlug, lastReadAt: globeReadPositions.lastReadAt })
+    .from(globeReadPositions)
+    .where(eq(globeReadPositions.userId, userId));
+
+  const readMap = new Map(readPositions.map((r) => [r.roomSlug, r.lastReadAt]));
+
+  // Count unread messages per room in parallel
+  const unread: Record<string, number> = {};
+
+  await Promise.all(
+    GLOBE_ROOMS.map(async (room) => {
+      const lastRead = readMap.get(room.slug);
+      const whereClause = lastRead
+        ? and(eq(messages.roomId, room.roomId), gt(messages.createdAt, lastRead))
+        : eq(messages.roomId, room.roomId);
+
+      const [result] = await db
+        .select({ count: count() })
+        .from(messages)
+        .where(whereClause)
+        .limit(1);
+
+      unread[room.slug] = Math.min(result?.count ?? 0, 99);
+    })
+  );
+
+  res.json({ unread });
 });
 
 export default router;

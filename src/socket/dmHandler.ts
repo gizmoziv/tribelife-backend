@@ -87,6 +87,12 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
       .set({ lastMessageAt: new Date() })
       .where(eq(conversations.id, data.conversationId));
 
+    // Clear hiddenAt for all participants so hidden conversations reappear
+    await db
+      .update(conversationParticipants)
+      .set({ hiddenAt: null })
+      .where(eq(conversationParticipants.conversationId, data.conversationId));
+
     // Build replyTo preview if this is a reply
     let replyTo: { id: number; content: string; senderHandle: string } | null = null;
     if (data.replyToId) {
