@@ -15,7 +15,7 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
   socket.join(timezoneRoom);
 
   // ── Send a message to a timezone room ─────────────────────────────────
-  socket.on('room:message', async (data: { content: string }) => {
+  socket.on('room:message', async (data: { content: string; replyToId?: number }) => {
     const content = data.content?.trim();
     if (!content || content.length > 2000) return;
 
@@ -50,8 +50,23 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
         senderId: userId,
         roomId: timezoneRoom,
         mentions: mentionedUserIds,
+        replyToId: data.replyToId ?? null,
       })
       .returning();
+
+    // Build replyTo preview if this is a reply
+    let replyTo: { id: number; content: string; senderHandle: string } | null = null;
+    if (data.replyToId) {
+      const [original] = await db
+        .select({ id: messages.id, content: messages.content, senderHandle: userProfiles.handle })
+        .from(messages)
+        .leftJoin(userProfiles, eq(userProfiles.userId, messages.senderId))
+        .where(eq(messages.id, data.replyToId))
+        .limit(1);
+      if (original) {
+        replyTo = { id: original.id, content: original.content ?? '', senderHandle: original.senderHandle ?? 'Unknown' };
+      }
+    }
 
     // Broadcast to room
     const payload = {
@@ -62,6 +77,8 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
       roomId: timezoneRoom,
       createdAt: msg.createdAt,
       mentions: mentionedUserIds,
+      replyToId: data.replyToId ?? null,
+      replyTo,
     };
 
     io.to(timezoneRoom).emit('room:message', payload);

@@ -32,9 +32,10 @@ router.post('/google', async (req: Request, res: Response): Promise<void> => {
       idToken: parse.data.idToken,
       audience: [
         process.env.GOOGLE_CLIENT_ID!,
-        process.env.GOOGLE_CLIENT_ID_NEW!,
         process.env.GOOGLE_IOS_CLIENT_ID!,
         process.env.GOOGLE_ANDROID_CLIENT_ID!,
+        process.env.GOOGLE_LEGACY_CLIENT_ID!,
+        process.env.GOOGLE_LEGACY_IOS_CLIENT_ID!,
       ].filter(Boolean) as string[],
     });
 

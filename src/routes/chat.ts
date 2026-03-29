@@ -1,5 +1,5 @@
 import { Router, Response } from 'express';
-import { eq, and, inArray, desc, lt, sql, notInArray } from 'drizzle-orm';
+import { eq, and, inArray, desc, lt, sql, notInArray, isNull } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '../db';
 import {
@@ -11,6 +11,8 @@ import {
   blockedUsers,
 } from '../db/schema';
 import { requireAuth, AuthRequest } from '../middleware/auth';
+import { attachReactions } from '../utils/attachReactions';
+import { attachReplyTo } from '../utils/attachReplyTo';
 
 const router = Router();
 router.use(requireAuth);
@@ -19,11 +21,11 @@ router.use(requireAuth);
 router.get('/conversations', async (req: AuthRequest, res: Response): Promise<void> => {
   const userId = req.user!.id;
 
-  // Get all conversations the user participates in
+  // Get all conversations the user participates in (exclude hidden)
   const participations = await db
     .select({ conversationId: conversationParticipants.conversationId })
     .from(conversationParticipants)
-    .where(eq(conversationParticipants.userId, userId));
+    .where(and(eq(conversationParticipants.userId, userId), isNull(conversationParticipants.hiddenAt)));
 
   if (participations.length === 0) {
     res.json({ conversations: [] });
@@ -186,7 +188,49 @@ router.get('/conversations/:id/messages', async (req: AuthRequest, res: Response
     .limit(limit);
 
   const rows = await query;
-  res.json({ messages: rows.reverse(), hasMore: rows.length === limit });
+  const withReactions = await attachReactions(rows, userId);
+  const withReplies = await attachReplyTo(withReactions);
+  res.json({ messages: withReplies.reverse(), hasMore: rows.length === limit });
+});
+
+// ── Hide a DM conversation ───────────────────────────────────────────────
+router.put('/conversations/:id/hide', async (req: AuthRequest, res: Response): Promise<void> => {
+  const userId = req.user!.id;
+  const convId = parseInt(req.params.id as string);
+
+  if (isNaN(convId)) {
+    res.status(400).json({ error: 'Invalid conversation ID' });
+    return;
+  }
+
+  // Verify user is participant
+  const participation = await db
+    .select({ id: conversationParticipants.id })
+    .from(conversationParticipants)
+    .where(
+      and(
+        eq(conversationParticipants.conversationId, convId),
+        eq(conversationParticipants.userId, userId)
+      )
+    )
+    .limit(1);
+
+  if (participation.length === 0) {
+    res.status(403).json({ error: 'Not a participant in this conversation' });
+    return;
+  }
+
+  await db
+    .update(conversationParticipants)
+    .set({ hiddenAt: new Date() })
+    .where(
+      and(
+        eq(conversationParticipants.conversationId, convId),
+        eq(conversationParticipants.userId, userId)
+      )
+    );
+
+  res.json({ ok: true });
 });
 
 // ── Get recent location-based (room) chat history ─────────────────────────
@@ -230,7 +274,9 @@ router.get('/room/:roomId/messages', async (req: AuthRequest, res: Response): Pr
     .orderBy(desc(messages.createdAt))
     .limit(limit);
 
-  res.json({ messages: rows.reverse(), hasMore: rows.length === limit });
+  const withReactions = await attachReactions(rows, userId);
+  const withReplies = await attachReplyTo(withReactions);
+  res.json({ messages: withReplies.reverse(), hasMore: rows.length === limit });
 });
 
 export default router;

@@ -1,6 +1,7 @@
 import { Server, Socket } from 'socket.io';
 import { db } from '../db';
-import { messages } from '../db/schema';
+import { messages, userProfiles } from '../db/schema';
+import { eq } from 'drizzle-orm';
 import { checkRateLimit } from './rateLimit';
 import { isValidGlobeRoom, AGE_GATE_HOURS } from '../config/globeRooms';
 import { moderateMessage } from '../services/claude';
@@ -42,7 +43,7 @@ export function registerGlobeHandlers(io: Server, socket: Socket): void {
   });
 
   // ── Send a message to a Globe room ──────────────────────────────────────
-  socket.on('globe:message', async (data: { slug: string; content: string }) => {
+  socket.on('globe:message', async (data: { slug: string; content: string; replyToId?: number }) => {
     const content = data.content?.trim();
     if (!content || content.length > 2000) return;
     if (!isValidGlobeRoom(data.slug)) return;
@@ -78,8 +79,23 @@ export function registerGlobeHandlers(io: Server, socket: Socket): void {
         content,
         senderId: userId,
         roomId,
+        replyToId: data.replyToId ?? null,
       })
       .returning();
+
+    // Build replyTo preview if this is a reply
+    let replyTo: { id: number; content: string; senderHandle: string } | null = null;
+    if (data.replyToId) {
+      const [original] = await db
+        .select({ id: messages.id, content: messages.content, senderHandle: userProfiles.handle })
+        .from(messages)
+        .leftJoin(userProfiles, eq(userProfiles.userId, messages.senderId))
+        .where(eq(messages.id, data.replyToId))
+        .limit(1);
+      if (original) {
+        replyTo = { id: original.id, content: original.content ?? '', senderHandle: original.senderHandle ?? 'Unknown' };
+      }
+    }
 
     // Broadcast to room
     io.to(roomId).emit('globe:message', {
@@ -91,6 +107,8 @@ export function registerGlobeHandlers(io: Server, socket: Socket): void {
       roomId,
       slug: data.slug,
       createdAt: msg.createdAt,
+      replyToId: data.replyToId ?? null,
+      replyTo,
     });
   });
 
