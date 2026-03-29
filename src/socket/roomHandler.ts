@@ -3,6 +3,7 @@ import { db } from '../db';
 import { messages, userProfiles, notifications } from '../db/schema';
 import { eq } from 'drizzle-orm';
 import { moderateMessage } from '../services/claude';
+import { moderateMessageImages } from '../services/imageModeration';
 import { sendPushToUser } from '../services/pushNotifications';
 
 export function registerRoomHandlers(io: Server, socket: Socket): void {
@@ -15,15 +16,21 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
   socket.join(timezoneRoom);
 
   // ── Send a message to a timezone room ─────────────────────────────────
-  socket.on('room:message', async (data: { content: string; replyToId?: number }) => {
-    const content = data.content?.trim();
-    if (!content || content.length > 2000) return;
+  socket.on('room:message', async (data: { content: string; replyToId?: number; mediaUrls?: string[] }) => {
+    const content = data.content?.trim() ?? '';
+    const mediaUrls = Array.isArray(data.mediaUrls)
+      ? data.mediaUrls.filter((u): u is string => typeof u === 'string').slice(0, 4)
+      : [];
+    if (!content && mediaUrls.length === 0) return;
+    if (content.length > 2000) return;
 
-    // Content moderation check
-    const modResult = moderateMessage(content);
-    if (!modResult.isAllowed) {
-      socket.emit('message:rejected', { reason: modResult.reason });
-      return;
+    // Content moderation check (skip for image-only messages)
+    if (content) {
+      const modResult = moderateMessage(content);
+      if (!modResult.isAllowed) {
+        socket.emit('message:rejected', { reason: modResult.reason });
+        return;
+      }
     }
 
     // Parse @mentions
@@ -51,6 +58,7 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
         roomId: timezoneRoom,
         mentions: mentionedUserIds,
         replyToId: data.replyToId ?? null,
+        mediaUrls: mediaUrls.length > 0 ? mediaUrls : null,
       })
       .returning();
 
@@ -79,9 +87,16 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
       mentions: mentionedUserIds,
       replyToId: data.replyToId ?? null,
       replyTo,
+      mediaUrls: mediaUrls.length > 0 ? mediaUrls : undefined,
     };
 
     io.to(timezoneRoom).emit('room:message', payload);
+
+    // Fire-and-forget image moderation
+    if (mediaUrls.length > 0) {
+      moderateMessageImages(msg.id, mediaUrls, userId, io, timezoneRoom)
+        .catch(err => console.error('[moderation] Room image check failed:', err));
+    }
 
     // Notify mentioned users
     for (const mentionedId of mentionedUserIds) {

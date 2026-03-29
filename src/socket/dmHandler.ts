@@ -10,6 +10,7 @@ import {
 } from '../db/schema';
 import { eq, and } from 'drizzle-orm';
 import { moderateMessage } from '../services/claude';
+import { moderateMessageImages } from '../services/imageModeration';
 import { sendPushToUser } from '../services/pushNotifications';
 
 export function registerDmHandlers(io: Server, socket: Socket): void {
@@ -17,15 +18,21 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
   const handle: string = socket.data.handle;
 
   // ── Send a direct message ─────────────────────────────────────────────
-  socket.on('dm:message', async (data: { conversationId: number; content: string; replyToId?: number }) => {
-    const content = data.content?.trim();
-    if (!content || content.length > 2000) return;
+  socket.on('dm:message', async (data: { conversationId: number; content: string; replyToId?: number; mediaUrls?: string[] }) => {
+    const content = data.content?.trim() ?? '';
+    const mediaUrls = Array.isArray(data.mediaUrls)
+      ? data.mediaUrls.filter((u): u is string => typeof u === 'string').slice(0, 4)
+      : [];
+    if (!content && mediaUrls.length === 0) return;
+    if (content.length > 2000) return;
 
-    // Content moderation check
-    const dmModResult = moderateMessage(content);
-    if (!dmModResult.isAllowed) {
-      socket.emit('message:rejected', { reason: dmModResult.reason });
-      return;
+    // Content moderation check (skip for image-only messages)
+    if (content) {
+      const dmModResult = moderateMessage(content);
+      if (!dmModResult.isAllowed) {
+        socket.emit('message:rejected', { reason: dmModResult.reason });
+        return;
+      }
     }
 
     // Verify participant
@@ -78,6 +85,7 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
         senderId: userId,
         conversationId: data.conversationId,
         replyToId: data.replyToId ?? null,
+        mediaUrls: mediaUrls.length > 0 ? mediaUrls : null,
       })
       .returning();
 
@@ -116,10 +124,17 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
       createdAt: msg.createdAt,
       replyToId: data.replyToId ?? null,
       replyTo,
+      mediaUrls: mediaUrls.length > 0 ? mediaUrls : undefined,
     };
 
     // Emit to conversation room
     io.to(`conversation:${data.conversationId}`).emit('dm:message', msgPayload);
+
+    // Fire-and-forget image moderation
+    if (mediaUrls.length > 0) {
+      moderateMessageImages(msg.id, mediaUrls, userId, io, `conversation:${data.conversationId}`)
+        .catch(err => console.error('[moderation] DM image check failed:', err));
+    }
 
     // Notify the other participant
     const otherParticipants = await db
