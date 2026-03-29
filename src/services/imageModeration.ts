@@ -1,5 +1,8 @@
 import OpenAI from 'openai';
+import logger from '../lib/logger';
 import { deleteObject, cdnUrlToKey } from './storage';
+
+const log = logger.child({ module: 'moderation' });
 import { db } from '../db';
 import { messages } from '../db/schema';
 import { eq } from 'drizzle-orm';
@@ -97,7 +100,9 @@ If the image is acceptable, return: { "isAllowed": true, "category": null, "conf
       ],
     });
 
-    const raw = visionResponse.choices[0]?.message?.content ?? '{}';
+    const rawContent = visionResponse.choices[0]?.message?.content ?? '{}';
+    // Strip markdown code fences if present (GPT-4o often wraps JSON in ```json ... ```)
+    const raw = rawContent.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?```\s*$/i, '').trim();
 
     try {
       const parsed = JSON.parse(raw) as ImageModerationResult;
@@ -111,7 +116,7 @@ If the image is acceptable, return: { "isAllowed": true, "category": null, "conf
       return { isAllowed: false, category: 'Unable to analyze image' };
     }
   } catch (err) {
-    console.error('[moderation] Image analysis failed:', err);
+    log.error({ err }, 'Image analysis failed');
     return { isAllowed: false, category: 'Moderation service error' };
   }
 }
@@ -176,5 +181,5 @@ export async function moderateMessageImages(
     message: `Image removed: ${category}. See our community guidelines: tribelife.app/terms`,
   });
 
-  console.log(`[moderation] Removed ${flaggedUrls.length} image(s) from message ${messageId}`);
+  log.info({ messageId, count: flaggedUrls.length }, 'Removed flagged images from message');
 }

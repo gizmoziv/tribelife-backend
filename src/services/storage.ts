@@ -1,6 +1,9 @@
 import { S3Client, PutObjectCommand, PutObjectAclCommand, DeleteObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import crypto from 'crypto';
+import logger from '../lib/logger';
+
+const log = logger.child({ module: 'storage' });
 
 // ── DigitalOcean Spaces Storage Service ─────────────────────────────────────
 // S3-compatible object storage for avatar and media uploads via pre-signed URLs.
@@ -92,7 +95,7 @@ export async function deleteObject(key: string): Promise<void> {
   try {
     await s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: key }));
   } catch (err) {
-    console.error('[storage] Failed to delete object:', key, err);
+    log.error({ err, key }, 'Failed to delete object');
   }
 }
 

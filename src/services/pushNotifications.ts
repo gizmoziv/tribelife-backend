@@ -2,6 +2,9 @@
  * Expo Push Notification Service
  * Sends push notifications via Expo's push gateway (free, no Firebase required).
  */
+import logger from '../lib/logger';
+
+const log = logger.child({ module: 'push' });
 
 interface PushMessage {
   to: string;
@@ -54,7 +57,7 @@ export async function sendPushNotifications(
     const result = await response.json() as { data: ExpoTicket[] };
     return result.data ?? [];
   } catch (err) {
-    console.error('[push] Failed to send push notifications', err);
+    log.error({ err }, 'Failed to send push notifications');
     return [];
   }
 }

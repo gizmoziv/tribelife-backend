@@ -1,4 +1,7 @@
 import { Router } from 'express';
+import logger from '../lib/logger';
+
+const log = logger.child({ module: 'well-known' });
 
 const router = Router();
 
@@ -6,7 +9,7 @@ const router = Router();
 router.get('/apple-app-site-association', (_req, res) => {
   const teamId = process.env.APPLE_TEAM_ID;
   if (!teamId) {
-    console.error('[well-known] APPLE_TEAM_ID not set');
+    log.error('APPLE_TEAM_ID not set');
     res.status(503).json({ error: 'AASA not configured' });
     return;
   }
@@ -34,7 +37,7 @@ router.get('/apple-app-site-association', (_req, res) => {
 router.get('/assetlinks.json', (_req, res) => {
   const sha256 = process.env.ANDROID_SHA256_FINGERPRINT;
   if (!sha256) {
-    console.error('[well-known] ANDROID_SHA256_FINGERPRINT not set');
+    log.error('ANDROID_SHA256_FINGERPRINT not set');
     res.status(503).json({ error: 'Asset links not configured' });
     return;
   }

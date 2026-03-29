@@ -1,4 +1,7 @@
 import { Router, Response } from 'express';
+import logger from '../lib/logger';
+
+const log = logger.child({ module: 'reactions' });
 import { eq, and } from 'drizzle-orm';
 import { z } from 'zod';
 import { Server } from 'socket.io';
@@ -151,7 +154,7 @@ router.post('/', async (req: AuthRequest, res: Response): Promise<void> => {
       res.status(409).json({ error: 'Reaction already exists' });
       return;
     }
-    console.error('[reactions] Failed to add reaction', err);
+    log.error({ err }, 'Failed to add reaction');
     res.status(500).json({ error: 'Failed to add reaction' });
   }
 });

@@ -1,5 +1,8 @@
 import { Server, Socket } from 'socket.io';
+import logger from '../lib/logger';
 import { db } from '../db';
+
+const log = logger.child({ module: 'socket:room' });
 import { messages, userProfiles, notifications } from '../db/schema';
 import { eq } from 'drizzle-orm';
 import { moderateMessage } from '../services/claude';
@@ -95,7 +98,7 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
     // Fire-and-forget image moderation
     if (mediaUrls.length > 0) {
       moderateMessageImages(msg.id, mediaUrls, userId, io, timezoneRoom)
-        .catch(err => console.error('[moderation] Room image check failed:', err));
+        .catch(err => log.error({ err }, 'Room image check failed'));
     }
 
     // Notify mentioned users

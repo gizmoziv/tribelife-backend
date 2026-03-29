@@ -1,4 +1,5 @@
 import { Server, Socket } from 'socket.io';
+import logger from '../lib/logger';
 import { db } from '../db';
 import {
   messages,
@@ -12,6 +13,8 @@ import { eq, and } from 'drizzle-orm';
 import { moderateMessage } from '../services/claude';
 import { moderateMessageImages } from '../services/imageModeration';
 import { sendPushToUser } from '../services/pushNotifications';
+
+const log = logger.child({ module: 'socket:dm' });
 
 export function registerDmHandlers(io: Server, socket: Socket): void {
   const userId: number = socket.data.userId;
@@ -133,7 +136,7 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
     // Fire-and-forget image moderation
     if (mediaUrls.length > 0) {
       moderateMessageImages(msg.id, mediaUrls, userId, io, `conversation:${data.conversationId}`)
-        .catch(err => console.error('[moderation] DM image check failed:', err));
+        .catch(err => log.error({ err }, 'DM image check failed'));
     }
 
     // Notify the other participant

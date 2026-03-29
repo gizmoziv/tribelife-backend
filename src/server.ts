@@ -1,6 +1,9 @@
 import 'dotenv/config';
 import path from 'path';
 import express from 'express';
+import logger from './lib/logger';
+
+const log = logger.child({ module: 'server' });
 import { createServer } from 'http';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -43,10 +46,10 @@ app.use(helmet({
 const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',').map(o => o.trim());
 if (!allowedOrigins || allowedOrigins.length === 0) {
   if (process.env.NODE_ENV === 'production') {
-    console.error('[server] FATAL: ALLOWED_ORIGINS not set in production');
+    log.fatal('ALLOWED_ORIGINS not set in production');
     process.exit(1);
   }
-  console.warn('[server] ALLOWED_ORIGINS not set -- allowing all origins (dev mode)');
+  log.warn('ALLOWED_ORIGINS not set -- allowing all origins (dev mode)');
 }
 app.use(cors({
   origin: allowedOrigins && allowedOrigins.length > 0
@@ -81,7 +84,7 @@ const fs = require('fs');
 const publicDirPrimary = path.resolve(__dirname, '../public');
 const publicDirAlt = path.resolve(process.cwd(), 'public');
 const resolvedPublicDir = fs.existsSync(publicDirPrimary) ? publicDirPrimary : publicDirAlt;
-console.log(`[server] Static files dir: ${resolvedPublicDir} (primary: ${publicDirPrimary}, alt: ${publicDirAlt})`);
+log.info({ resolvedPublicDir, publicDirPrimary, publicDirAlt }, 'Static files dir resolved');
 
 app.get('/health', (_req, res) => res.json({ ok: true, ts: Date.now() }));
 
@@ -123,8 +126,9 @@ app.set('io', io);
 const PORT = process.env.PORT ?? 4000;
 
 httpServer.listen(PORT, () => {
-  console.log(`[server] TribeLife backend running on port ${PORT}`);
+  log.info({ port: PORT }, 'TribeLife backend running');
   startBeaconMatcherCron();
 });
 
 export { io };
+export { logger };

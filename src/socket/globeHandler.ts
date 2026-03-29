@@ -1,4 +1,5 @@
 import { Server, Socket } from 'socket.io';
+import logger from '../lib/logger';
 import { db } from '../db';
 import { messages, userProfiles } from '../db/schema';
 import { eq } from 'drizzle-orm';
@@ -9,6 +10,8 @@ import { moderateMessageImages } from '../services/imageModeration';
 
 // ── Globe Room Event Handlers ───────────────────────────────────────────────
 // Events: globe:join, globe:leave, globe:message, globe:typing
+
+const log = logger.child({ module: 'socket:globe' });
 
 export function registerGlobeHandlers(io: Server, socket: Socket): void {
   const userId: number = socket.data.userId;
@@ -123,7 +126,7 @@ export function registerGlobeHandlers(io: Server, socket: Socket): void {
     // Fire-and-forget image moderation
     if (mediaUrls.length > 0) {
       moderateMessageImages(msg.id, mediaUrls, userId, io, roomId)
-        .catch(err => console.error('[moderation] Globe image check failed:', err));
+        .catch(err => log.error({ err }, 'Globe image check failed'));
     }
   });
 

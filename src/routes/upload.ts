@@ -1,4 +1,7 @@
 import { Router, Response } from 'express';
+import logger from '../lib/logger';
+
+const log = logger.child({ module: 'upload' });
 import { z } from 'zod';
 import { eq } from 'drizzle-orm';
 import { db } from '../db';
@@ -39,7 +42,7 @@ router.post('/avatar-url', requireAuth, async (req: AuthRequest, res: Response):
     const result = await generateAvatarUploadUrl(req.user!.id);
     res.json(result);
   } catch (err) {
-    console.error('[upload] Failed to generate avatar URL:', err);
+    log.error({ err }, 'Failed to generate avatar URL');
     res.status(500).json({ error: 'Failed to generate upload URL' });
   }
 });
@@ -50,7 +53,7 @@ const confirmSchema = z.object({
 });
 
 router.post('/avatar-confirm', requireAuth, async (req: AuthRequest, res: Response): Promise<void> => {
-  console.log('[upload] avatar-confirm called, body:', JSON.stringify(req.body));
+  log.info({ body: req.body }, 'avatar-confirm called');
   const parse = confirmSchema.safeParse(req.body);
   if (!parse.success) {
     res.status(400).json({ error: 'key is required' });
@@ -99,7 +102,7 @@ router.post('/avatar-confirm', requireAuth, async (req: AuthRequest, res: Respon
 
     res.json({ avatarUrl: cdnUrl });
   } catch (err) {
-    console.error('[upload] Failed to confirm avatar:', err);
+    log.error({ err }, 'Failed to confirm avatar');
     res.status(500).json({ error: 'Failed to confirm upload' });
   }
 });
@@ -125,7 +128,7 @@ router.post('/media-urls', requireAuth, async (req: AuthRequest, res: Response):
     const uploads = await generateMediaUploadUrls(req.user!.id, parse.data.count);
     res.json({ uploads });
   } catch (err) {
-    console.error('[upload] Failed to generate media URLs:', err);
+    log.error({ err }, 'Failed to generate media URLs');
     res.status(500).json({ error: 'Failed to generate upload URLs' });
   }
 });
@@ -167,7 +170,7 @@ router.post('/media-confirm', requireAuth, async (req: AuthRequest, res: Respons
     const cdnUrl = process.env.DO_SPACES_CDN_URL!;
     res.json({ confirmed: true, cdnUrls: keys.map((k) => `${cdnUrl}/${k}`) });
   } catch (err) {
-    console.error('[upload] Failed to confirm media:', err);
+    log.error({ err }, 'Failed to confirm media');
     res.status(500).json({ error: 'Failed to confirm upload' });
   }
 });

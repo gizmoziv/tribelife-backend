@@ -100,6 +100,7 @@ router.get('/rooms/:slug/messages', async (req: AuthRequest, res: Response): Pro
       senderHandle: userProfiles.handle,
       senderAvatar: userProfiles.avatarUrl,
       mentions: messages.mentions,
+      mediaUrls: messages.mediaUrls,
     })
     .from(messages)
     .leftJoin(users, eq(users.id, messages.senderId))

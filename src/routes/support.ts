@@ -1,4 +1,7 @@
 import { Router, Request, Response } from 'express';
+import logger from '../lib/logger';
+
+const log = logger.child({ module: 'support' });
 import sgMail from '@sendgrid/mail';
 import { z } from 'zod';
 import { requireAuth, AuthRequest } from '../middleware/auth';
@@ -48,7 +51,7 @@ router.post(
 
       res.json({ success: true });
     } catch (err) {
-      console.error('[support] Failed to send email:', err);
+      log.error({ err }, 'Failed to send email');
       res.status(500).json({ error: 'Failed to send support email' });
     }
   },
@@ -80,7 +83,7 @@ router.post('/public', async (req: Request, res: Response): Promise<void> => {
 
     res.json({ success: true });
   } catch (err) {
-    console.error('[support] Failed to send email:', err);
+    log.error({ err }, 'Failed to send email');
     res.status(500).json({ error: 'Failed to send support email' });
   }
 });

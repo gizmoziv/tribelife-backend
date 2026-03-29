@@ -175,6 +175,7 @@ router.get('/conversations/:id/messages', async (req: AuthRequest, res: Response
       senderHandle: userProfiles.handle,
       senderAvatar: userProfiles.avatarUrl,
       mentions: messages.mentions,
+      mediaUrls: messages.mediaUrls,
     })
     .from(messages)
     .leftJoin(users, eq(users.id, messages.senderId))
@@ -266,6 +267,7 @@ router.get('/room/:roomId/messages', async (req: AuthRequest, res: Response): Pr
       senderHandle: userProfiles.handle,
       senderAvatar: userProfiles.avatarUrl,
       mentions: messages.mentions,
+      mediaUrls: messages.mediaUrls,
     })
     .from(messages)
     .leftJoin(users, eq(users.id, messages.senderId))

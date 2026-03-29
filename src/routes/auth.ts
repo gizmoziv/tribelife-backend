@@ -1,4 +1,7 @@
 import { Router, Request, Response } from 'express';
+import logger from '../lib/logger';
+
+const log = logger.child({ module: 'auth' });
 import { OAuth2Client } from 'google-auth-library';
 import { createRemoteJWKSet, jwtVerify } from 'jose';
 import { eq } from 'drizzle-orm';
@@ -119,7 +122,7 @@ router.post('/google', async (req: Request, res: Response): Promise<void> => {
       isNewUser,
     });
   } catch (err) {
-    console.error('[auth/google]', err);
+    log.error({ err }, 'Google authentication failed');
     res.status(401).json({ error: 'Google authentication failed' });
   }
 });
@@ -239,7 +242,7 @@ router.post('/apple', async (req: Request, res: Response): Promise<void> => {
       isNewUser,
     });
   } catch (err) {
-    console.error('[auth/apple]', err);
+    log.error({ err }, 'Apple authentication failed');
     res.status(401).json({ error: 'Apple authentication failed' });
   }
 });
@@ -340,7 +343,7 @@ router.delete('/account', requireAuth, async (req: AuthRequest, res: Response): 
     await db.delete(users).where(eq(users.id, userId));
     res.json({ ok: true });
   } catch (err) {
-    console.error('[auth/delete-account]', err);
+    log.error({ err }, 'Failed to delete account');
     res.status(500).json({ error: 'Failed to delete account' });
   }
 });
