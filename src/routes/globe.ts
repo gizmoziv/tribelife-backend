@@ -1,5 +1,5 @@
 import { Router, Response } from 'express';
-import { eq, desc, lt, and, notInArray, gt, isNull, sql, count } from 'drizzle-orm';
+import { eq, ne, desc, lt, and, notInArray, gt, isNull, sql, count } from 'drizzle-orm';
 import { Server } from 'socket.io';
 import { db } from '../db';
 import { messages, users, userProfiles, blockedUsers, globeReadPositions } from '../db/schema';
@@ -153,8 +153,8 @@ router.get('/unread', async (req: AuthRequest, res: Response): Promise<void> => 
     GLOBE_ROOMS.map(async (room) => {
       const lastRead = readMap.get(room.slug);
       const whereClause = lastRead
-        ? and(eq(messages.roomId, room.roomId), gt(messages.createdAt, lastRead))
-        : eq(messages.roomId, room.roomId);
+        ? and(eq(messages.roomId, room.roomId), gt(messages.createdAt, lastRead), ne(messages.senderId, userId))
+        : and(eq(messages.roomId, room.roomId), ne(messages.senderId, userId));
 
       const [result] = await db
         .select({ count: count() })
