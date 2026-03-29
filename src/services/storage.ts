@@ -1,8 +1,9 @@
 import { S3Client, PutObjectCommand, PutObjectAclCommand, DeleteObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import crypto from 'crypto';
 
 // ── DigitalOcean Spaces Storage Service ─────────────────────────────────────
-// S3-compatible object storage for avatar uploads via pre-signed URLs.
+// S3-compatible object storage for avatar and media uploads via pre-signed URLs.
 
 const s3 = new S3Client({
   endpoint: process.env.DO_SPACES_ENDPOINT,
@@ -40,6 +41,25 @@ export async function generateAvatarUploadUrl(userId: number): Promise<{
   const cdnUrl = `${CDN_URL}/${key}`;
 
   return { uploadUrl, key, cdnUrl };
+}
+
+/**
+ * Generate pre-signed PUT URLs for media uploads (up to 4 images per message).
+ * Key format: {env}/media/{userId}/{uuid}/{index}.jpg
+ */
+export async function generateMediaUploadUrls(
+  userId: number,
+  count: number
+): Promise<Array<{ uploadUrl: string; key: string; cdnUrl: string }>> {
+  const tempId = crypto.randomUUID();
+  const results: Array<{ uploadUrl: string; key: string; cdnUrl: string }> = [];
+  for (let i = 0; i < count; i++) {
+    const key = `${PREFIX}/media/${userId}/${tempId}/${i}.jpg`;
+    const command = new PutObjectCommand({ Bucket: BUCKET, Key: key });
+    const uploadUrl = await getSignedUrl(s3, command, { expiresIn: 300 });
+    results.push({ uploadUrl, key, cdnUrl: `${CDN_URL}/${key}` });
+  }
+  return results;
 }
 
 /**
