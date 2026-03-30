@@ -1,13 +1,17 @@
 import { Server, Socket } from 'socket.io';
+import logger from '../lib/logger';
 import { db } from '../db';
 import { messages, userProfiles } from '../db/schema';
 import { eq } from 'drizzle-orm';
 import { checkRateLimit } from './rateLimit';
 import { isValidGlobeRoom, AGE_GATE_HOURS } from '../config/globeRooms';
 import { moderateMessage } from '../services/claude';
+import { moderateMessageImages } from '../services/imageModeration';
 
 // ── Globe Room Event Handlers ───────────────────────────────────────────────
 // Events: globe:join, globe:leave, globe:message, globe:typing
+
+const log = logger.child({ module: 'socket:globe' });
 
 export function registerGlobeHandlers(io: Server, socket: Socket): void {
   const userId: number = socket.data.userId;
@@ -43,9 +47,13 @@ export function registerGlobeHandlers(io: Server, socket: Socket): void {
   });
 
   // ── Send a message to a Globe room ──────────────────────────────────────
-  socket.on('globe:message', async (data: { slug: string; content: string; replyToId?: number }) => {
-    const content = data.content?.trim();
-    if (!content || content.length > 2000) return;
+  socket.on('globe:message', async (data: { slug: string; content: string; replyToId?: number; mediaUrls?: string[] }) => {
+    const content = data.content?.trim() ?? '';
+    const mediaUrls = Array.isArray(data.mediaUrls)
+      ? data.mediaUrls.filter((u): u is string => typeof u === 'string').slice(0, 4)
+      : [];
+    if (!content && mediaUrls.length === 0) return;
+    if (content.length > 2000) return;
     if (!isValidGlobeRoom(data.slug)) return;
 
     // Age gate check — accounts less than 24 hours old cannot post
@@ -65,11 +73,13 @@ export function registerGlobeHandlers(io: Server, socket: Socket): void {
       return;
     }
 
-    // Content moderation
-    const modResult = moderateMessage(content);
-    if (!modResult.isAllowed) {
-      socket.emit('message:rejected', { reason: modResult.reason });
-      return;
+    // Content moderation (skip for image-only messages)
+    if (content) {
+      const modResult = moderateMessage(content);
+      if (!modResult.isAllowed) {
+        socket.emit('message:rejected', { reason: modResult.reason });
+        return;
+      }
     }
 
     // Persist message
@@ -80,6 +90,7 @@ export function registerGlobeHandlers(io: Server, socket: Socket): void {
         senderId: userId,
         roomId,
         replyToId: data.replyToId ?? null,
+        mediaUrls: mediaUrls.length > 0 ? mediaUrls : null,
       })
       .returning();
 
@@ -109,7 +120,14 @@ export function registerGlobeHandlers(io: Server, socket: Socket): void {
       createdAt: msg.createdAt,
       replyToId: data.replyToId ?? null,
       replyTo,
+      mediaUrls: mediaUrls.length > 0 ? mediaUrls : undefined,
     });
+
+    // Fire-and-forget image moderation
+    if (mediaUrls.length > 0) {
+      moderateMessageImages(msg.id, mediaUrls, userId, io, roomId)
+        .catch(err => log.error({ err }, 'Globe image check failed'));
+    }
   });
 
   // ── Typing indicator ────────────────────────────────────────────────────

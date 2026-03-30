@@ -1,4 +1,7 @@
 import { Router, Request, Response } from 'express';
+import logger from '../lib/logger';
+
+const log = logger.child({ module: 'android-waitlist' });
 import { z } from 'zod';
 import sgMail from '@sendgrid/mail';
 import { db } from '../db';
@@ -23,7 +26,7 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
   try {
     await db.insert(androidWaitlist).values({ email }).onConflictDoNothing();
   } catch (err) {
-    console.error('[android-waitlist] DB error:', err);
+    log.error({ err }, 'DB error');
     res.status(500).json({ error: 'Failed to join waitlist' });
     return;
   }
@@ -47,7 +50,7 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
       }),
     ]);
   } catch (err) {
-    console.error('[android-waitlist] Email error (non-fatal):', err);
+    log.error({ err }, 'Email error (non-fatal)');
   }
 
   res.json({ ok: true });

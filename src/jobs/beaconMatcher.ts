@@ -8,13 +8,16 @@
  */
 import cron from 'node-cron';
 import { eq, and, isNull, isNotNull, or, lt, sql } from 'drizzle-orm';
+import logger from '../lib/logger';
+
+const log = logger.child({ module: 'beacon-matcher' });
 import { db } from '../db';
 import { beacons, beaconMatches, userProfiles, notifications, blockedUsers } from '../db/schema';
 import { compareBeacons } from '../services/claude';
 import { sendPushToUser } from '../services/pushNotifications';
 
 async function runBeaconMatching(): Promise<void> {
-  console.log(`[beacon-matcher] Starting run at ${new Date().toISOString()}`);
+  log.info('Starting run');
 
   // Fetch all active, sanitized, non-expired beacons
   const activeBeacons = await db
@@ -39,7 +42,7 @@ async function runBeaconMatching(): Promise<void> {
     );
 
   if (activeBeacons.length < 2) {
-    console.log('[beacon-matcher] Not enough active beacons to match. Skipping.');
+    log.info('Not enough active beacons to match, skipping');
     return;
   }
 
@@ -65,7 +68,7 @@ async function runBeaconMatching(): Promise<void> {
   let totalComparisons = 0;
 
   for (const [timezone, tzBeacons] of byTimezone) {
-    console.log(`[beacon-matcher] Processing timezone ${timezone}: ${tzBeacons.length} beacons`);
+    log.info({ timezone, count: tzBeacons.length }, 'Processing timezone');
 
     // Compare every pair (O(n²) — acceptable at community scale, revisit with pgvector at 10k+ beacons)
     for (let i = 0; i < tzBeacons.length; i++) {
@@ -116,7 +119,7 @@ async function runBeaconMatching(): Promise<void> {
             keywordsB
           );
         } catch (err) {
-          console.error('[beacon-matcher] Claude comparison error', err);
+          log.error({ err }, 'Claude comparison error');
           continue;
         }
 
@@ -194,9 +197,7 @@ async function runBeaconMatching(): Promise<void> {
     }
   }
 
-  console.log(
-    `[beacon-matcher] Done. Comparisons: ${totalComparisons}, New matches: ${totalMatches}`
-  );
+  log.info({ comparisons: totalComparisons, matches: totalMatches }, 'Run complete');
 }
 
 export function startBeaconMatcherCron(): void {
@@ -205,11 +206,11 @@ export function startBeaconMatcherCron(): void {
     try {
       await runBeaconMatching();
     } catch (err) {
-      console.error('[beacon-matcher] Cron job failed:', err);
+      log.error({ err }, 'Cron job failed');
     }
   });
 
-  console.log('[beacon-matcher] Cron scheduled: daily at 06:00 UTC');
+  log.info('Cron scheduled: daily at 06:00 UTC');
 }
 
 // Export for manual trigger (e.g. admin endpoint or testing)

@@ -13,6 +13,10 @@ import {
 import { requireAuth, AuthRequest } from '../middleware/auth';
 import { attachReactions } from '../utils/attachReactions';
 import { attachReplyTo } from '../utils/attachReplyTo';
+import { translateMessage } from '../services/translation';
+import logger from '../lib/logger';
+
+const log = logger.child({ module: 'chat' });
 
 const router = Router();
 router.use(requireAuth);
@@ -175,6 +179,7 @@ router.get('/conversations/:id/messages', async (req: AuthRequest, res: Response
       senderHandle: userProfiles.handle,
       senderAvatar: userProfiles.avatarUrl,
       mentions: messages.mentions,
+      mediaUrls: messages.mediaUrls,
     })
     .from(messages)
     .leftJoin(users, eq(users.id, messages.senderId))
@@ -266,6 +271,7 @@ router.get('/room/:roomId/messages', async (req: AuthRequest, res: Response): Pr
       senderHandle: userProfiles.handle,
       senderAvatar: userProfiles.avatarUrl,
       mentions: messages.mentions,
+      mediaUrls: messages.mediaUrls,
     })
     .from(messages)
     .leftJoin(users, eq(users.id, messages.senderId))
@@ -277,6 +283,68 @@ router.get('/room/:roomId/messages', async (req: AuthRequest, res: Response): Pr
   const withReactions = await attachReactions(rows, userId);
   const withReplies = await attachReplyTo(withReactions);
   res.json({ messages: withReplies.reverse(), hasMore: rows.length === limit });
+});
+
+const translateSchema = z.object({
+  targetLanguage: z.string().min(1).max(50).default('English'),
+});
+
+// ── Translate message ─────────────────────────────────────────────────────
+router.post('/translate/:messageId', async (req: AuthRequest, res: Response): Promise<void> => {
+  const messageId = parseInt(req.params.messageId as string);
+  if (isNaN(messageId)) {
+    res.status(400).json({ error: 'Invalid message ID' });
+    return;
+  }
+
+  const parse = translateSchema.safeParse(req.body);
+  const targetLanguage = parse.success ? parse.data.targetLanguage : 'English';
+
+  try {
+    const [msg] = await db
+      .select({ id: messages.id, content: messages.content, translatedContent: messages.translatedContent })
+      .from(messages)
+      .where(eq(messages.id, messageId))
+      .limit(1);
+
+    if (!msg) {
+      res.status(404).json({ error: 'Message not found' });
+      return;
+    }
+
+    if (!msg.content) {
+      res.status(422).json({ error: 'No text content to translate' });
+      return;
+    }
+
+    // Check cache (stored as JSON: { "English": "...", "Hebrew": "..." })
+    let cached: Record<string, string> = {};
+    if (msg.translatedContent) {
+      try {
+        cached = JSON.parse(msg.translatedContent);
+      } catch {
+        cached = {};
+      }
+    }
+
+    if (cached[targetLanguage]) {
+      res.json({ translation: cached[targetLanguage], cached: true });
+      return;
+    }
+
+    // Translate and cache
+    const translation = await translateMessage(msg.content, targetLanguage);
+    cached[targetLanguage] = translation;
+    await db
+      .update(messages)
+      .set({ translatedContent: JSON.stringify(cached) })
+      .where(eq(messages.id, messageId));
+
+    res.json({ translation, cached: false });
+  } catch (err) {
+    log.error({ err, messageId }, 'Translation failed');
+    res.status(500).json({ error: 'Translation failed' });
+  }
 });
 
 export default router;

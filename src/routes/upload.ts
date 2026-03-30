@@ -1,14 +1,17 @@
 import { Router, Response } from 'express';
+import logger from '../lib/logger';
+
+const log = logger.child({ module: 'upload' });
 import { z } from 'zod';
 import { eq } from 'drizzle-orm';
 import { db } from '../db';
 import { userProfiles } from '../db/schema';
 import { requireAuth, AuthRequest } from '../middleware/auth';
-import { generateAvatarUploadUrl, objectExists, deleteObject, cdnUrlToKey, setPublicRead } from '../services/storage';
+import { generateAvatarUploadUrl, generateMediaUploadUrls, objectExists, deleteObject, cdnUrlToKey, setPublicRead } from '../services/storage';
 
 const router = Router();
 
-// ── Per-user upload rate limiter (10 uploads/hour) ──────────────────────────
+// ── Per-user upload rate limiter (30 uploads/hour — avatar + media) ─────────
 const uploadCounts = new Map<number, { count: number; resetAt: number }>();
 
 function checkUploadRateLimit(userId: number): boolean {
@@ -20,7 +23,7 @@ function checkUploadRateLimit(userId: number): boolean {
     return true;
   }
 
-  if (entry.count >= 10) {
+  if (entry.count >= 30) {
     return false;
   }
 
@@ -39,7 +42,7 @@ router.post('/avatar-url', requireAuth, async (req: AuthRequest, res: Response):
     const result = await generateAvatarUploadUrl(req.user!.id);
     res.json(result);
   } catch (err) {
-    console.error('[upload] Failed to generate avatar URL:', err);
+    log.error({ err }, 'Failed to generate avatar URL');
     res.status(500).json({ error: 'Failed to generate upload URL' });
   }
 });
@@ -50,7 +53,7 @@ const confirmSchema = z.object({
 });
 
 router.post('/avatar-confirm', requireAuth, async (req: AuthRequest, res: Response): Promise<void> => {
-  console.log('[upload] avatar-confirm called, body:', JSON.stringify(req.body));
+  log.info({ body: req.body }, 'avatar-confirm called');
   const parse = confirmSchema.safeParse(req.body);
   if (!parse.success) {
     res.status(400).json({ error: 'key is required' });
@@ -99,7 +102,75 @@ router.post('/avatar-confirm', requireAuth, async (req: AuthRequest, res: Respon
 
     res.json({ avatarUrl: cdnUrl });
   } catch (err) {
-    console.error('[upload] Failed to confirm avatar:', err);
+    log.error({ err }, 'Failed to confirm avatar');
+    res.status(500).json({ error: 'Failed to confirm upload' });
+  }
+});
+
+// ── POST /media-urls — Generate pre-signed upload URLs for media ────────────
+const mediaUrlsSchema = z.object({
+  count: z.number().int().min(1).max(4),
+});
+
+router.post('/media-urls', requireAuth, async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const parse = mediaUrlsSchema.safeParse(req.body);
+    if (!parse.success) {
+      res.status(400).json({ error: parse.error.errors[0].message });
+      return;
+    }
+
+    if (!checkUploadRateLimit(req.user!.id)) {
+      res.status(429).json({ error: 'Upload rate limit exceeded. Try again later.' });
+      return;
+    }
+
+    const uploads = await generateMediaUploadUrls(req.user!.id, parse.data.count);
+    res.json({ uploads });
+  } catch (err) {
+    log.error({ err }, 'Failed to generate media URLs');
+    res.status(500).json({ error: 'Failed to generate upload URLs' });
+  }
+});
+
+// ── POST /media-confirm — Confirm media uploads and set public-read ACL ────
+const mediaConfirmSchema = z.object({
+  keys: z.array(z.string().min(1)).min(1).max(4),
+});
+
+router.post('/media-confirm', requireAuth, async (req: AuthRequest, res: Response): Promise<void> => {
+  const parse = mediaConfirmSchema.safeParse(req.body);
+  if (!parse.success) {
+    res.status(400).json({ error: parse.error.errors[0].message });
+    return;
+  }
+
+  const { keys } = parse.data;
+  const prefix = process.env.DO_SPACES_PREFIX || 'prod';
+
+  try {
+    // Security: verify every key belongs to this user
+    for (const key of keys) {
+      if (!key.startsWith(`${prefix}/media/${req.user!.id}/`)) {
+        res.status(403).json({ error: 'Key does not belong to this user' });
+        return;
+      }
+    }
+
+    // Verify all objects exist, then set public-read
+    for (const key of keys) {
+      const exists = await objectExists(key);
+      if (!exists) {
+        res.status(400).json({ error: `Object not found at key: ${key}` });
+        return;
+      }
+      await setPublicRead(key);
+    }
+
+    const cdnUrl = process.env.DO_SPACES_CDN_URL!;
+    res.json({ confirmed: true, cdnUrls: keys.map((k) => `${cdnUrl}/${k}`) });
+  } catch (err) {
+    log.error({ err }, 'Failed to confirm media');
     res.status(500).json({ error: 'Failed to confirm upload' });
   }
 });

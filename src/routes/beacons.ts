@@ -1,4 +1,7 @@
 import { Router, Response } from 'express';
+import logger from '../lib/logger';
+
+const log = logger.child({ module: 'beacons' });
 import { eq, and, desc, count, isNull } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '../db';
@@ -62,7 +65,7 @@ router.post('/', async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     analysis = await analyzeBeacon(parse.data.rawText);
   } catch (err) {
-    console.error('[beacons] Claude analysis failed', err);
+    log.error({ err }, 'Claude analysis failed');
     res.status(503).json({ error: 'Beacon analysis temporarily unavailable. Please try again.' });
     return;
   }
