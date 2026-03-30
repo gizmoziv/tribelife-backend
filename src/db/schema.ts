@@ -100,6 +100,7 @@ export const messages = pgTable('messages', {
   deletedAt: timestamp('deleted_at'),
   replyToId: integer('reply_to_id'),                        // SCHM-01: nullable self-ref FK (added via migration)
   mediaUrls: jsonb('media_urls').$type<string[]>(),         // SCHM-02: nullable JSON array of URLs
+  translatedContent: text('translated_content'),
 }, (t) => ({
   roomIdx: index('messages_room_idx').on(t.roomId),
   convIdx: index('messages_conv_idx').on(t.conversationId),
@@ -212,6 +213,22 @@ export const contentReports = pgTable('content_reports', {
   createdAt: timestamp('created_at').defaultNow(),
   reviewedAt: timestamp('reviewed_at'),
 });
+
+// ─────────────────────────────────────────────
+// REFERRALS
+// ─────────────────────────────────────────────
+export const referrals = pgTable('referrals', {
+  id: serial('id').primaryKey(),
+  referrerId: integer('referrer_id').notNull().references(() => users.id),
+  referredUserId: integer('referred_user_id').references(() => users.id),
+  referralCode: varchar('referral_code', { length: 50 }).notNull(),
+  status: varchar('status', { length: 20 }).notNull().default('pending'),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  convertedAt: timestamp('converted_at'),
+}, (t) => [
+  index('referrals_referrer_idx').on(t.referrerId),
+  index('referrals_code_idx').on(t.referralCode),
+]);
 
 // ─────────────────────────────────────────────
 // RELATIONS

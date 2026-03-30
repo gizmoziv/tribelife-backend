@@ -24,6 +24,10 @@ router.get('/apple-app-site-association', (_req, res) => {
               '/': '/globe/*',
               comment: 'Globe room deep links',
             },
+            {
+              '/': '/invite*',
+              comment: 'Referral invite deep links',
+            },
           ],
         },
       ],

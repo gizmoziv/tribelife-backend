@@ -20,6 +20,7 @@ import moderationRouter from './routes/moderation';
 import uploadRouter from './routes/upload';
 import globeRouter from './routes/globe';
 import reactionsRouter from './routes/reactions';
+import referralsRouter from './routes/referrals';
 import wellKnownRouter from './routes/wellKnown';
 import deepLinkFallbackRouter from './routes/deepLinkFallback';
 import { startBeaconMatcherCron } from './jobs/beaconMatcher';
@@ -78,6 +79,7 @@ app.use('/api/moderation', moderationRouter);
 app.use('/api/upload', uploadRouter);
 app.use('/api/globe', globeRouter);
 app.use('/api/reactions', reactionsRouter);
+app.use('/api/referrals', referralsRouter);
 
 // ── Resolve public directory for static files ────────────────────────────
 const fs = require('fs');

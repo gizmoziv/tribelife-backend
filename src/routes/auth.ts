@@ -4,10 +4,10 @@ import logger from '../lib/logger';
 const log = logger.child({ module: 'auth' });
 import { OAuth2Client } from 'google-auth-library';
 import { createRemoteJWKSet, jwtVerify } from 'jose';
-import { eq } from 'drizzle-orm';
+import { eq, count } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '../db';
-import { users, userProfiles } from '../db/schema';
+import { users, userProfiles, referrals } from '../db/schema';
 import { signToken, requireAuth, AuthRequest } from '../middleware/auth';
 
 const router = Router();
@@ -259,6 +259,7 @@ const onboardingSchema = z.object({
   acceptedTerms: z.literal(true, {
     errorMap: () => ({ message: 'You must accept the Terms of Service to continue' }),
   }),
+  referralCode: z.string().max(50).optional(),
 });
 
 router.post('/onboarding', requireAuth, async (req: AuthRequest, res: Response): Promise<void> => {
@@ -268,7 +269,7 @@ router.post('/onboarding', requireAuth, async (req: AuthRequest, res: Response):
     return;
   }
 
-  const { handle, timezone, avatarUrl } = parse.data;
+  const { handle, timezone, avatarUrl, referralCode } = parse.data;
   const userId = req.user!.id;
 
   // Check handle uniqueness
@@ -297,6 +298,45 @@ router.post('/onboarding', requireAuth, async (req: AuthRequest, res: Response):
       set: { handle: handle.toLowerCase(), timezone, updatedAt: new Date() },
     })
     .returning();
+
+  // Track referral if code provided
+  if (referralCode) {
+    const [referrer] = await db
+      .select({ userId: userProfiles.userId })
+      .from(userProfiles)
+      .where(eq(userProfiles.handle, referralCode.toLowerCase()))
+      .limit(1);
+
+    if (referrer && referrer.userId !== userId) {
+      await db.insert(referrals).values({
+        referrerId: referrer.userId,
+        referredUserId: userId,
+        referralCode: referralCode.toLowerCase(),
+        status: 'onboarded',
+        convertedAt: new Date(),
+      });
+
+      // Grant referrer premium: 1 referral = 1 month, cap at 12
+      const [countResult] = await db
+        .select({ total: count() })
+        .from(referrals)
+        .where(eq(referrals.referrerId, referrer.userId));
+
+      const totalReferrals = Math.min(countResult?.total ?? 0, 12);
+      if (totalReferrals > 0) {
+        const premiumExpiry = new Date();
+        premiumExpiry.setMonth(premiumExpiry.getMonth() + totalReferrals);
+        await db
+          .update(userProfiles)
+          .set({
+            isPremium: true,
+            premiumExpiresAt: premiumExpiry,
+            updatedAt: new Date(),
+          })
+          .where(eq(userProfiles.userId, referrer.userId));
+      }
+    }
+  }
 
   res.json({ profile });
 });
