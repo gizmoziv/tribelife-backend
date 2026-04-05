@@ -16,7 +16,9 @@ const StickyDownloadBar = () => {
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
 
+  const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
   const isAndroid = /android/i.test(navigator.userAgent);
+  const showBoth = !isIOS && !isAndroid;
 
   return (
     <div
@@ -24,26 +26,35 @@ const StickyDownloadBar = () => {
         visible ? 'translate-y-0' : 'translate-y-full'
       }`}
     >
-      <div className="bg-background/95 backdrop-blur-xl border-t border-border/50 px-4 py-3 flex gap-3">
-        <a
-          href={isAndroid ? ANDROID_URL : APP_STORE_URL}
-          target="_blank"
-          rel="noopener noreferrer"
-          onClick={() => trackDownloadClick(isAndroid ? 'android' : 'ios', 'hero_bottom')}
-          className="gradient-bg gradient-bg-hover text-primary-foreground flex items-center justify-center gap-2 px-4 py-3 rounded-xl font-semibold text-sm transition-all flex-1"
-        >
-          {isAndroid ? (
-            <>
-              <Play className="w-4 h-4" />
-              Download on Google Play
-            </>
-          ) : (
-            <>
-              <Apple className="w-4 h-4" />
-              Download for iOS — Free
-            </>
-          )}
-        </a>
+      <div className="bg-background/95 backdrop-blur-xl border-t border-border/50 px-4 py-3 flex flex-col gap-2">
+        {(isIOS || showBoth) && (
+          <a
+            href={APP_STORE_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={() => trackDownloadClick('ios', 'hero_bottom')}
+            className="gradient-bg gradient-bg-hover text-primary-foreground flex items-center justify-center gap-2 px-4 py-3 rounded-xl font-semibold text-sm transition-all"
+          >
+            <Apple className="w-4 h-4" />
+            Download for iOS — Free
+          </a>
+        )}
+        {(isAndroid || showBoth) && (
+          <a
+            href={ANDROID_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={() => trackDownloadClick('android', 'hero_bottom')}
+            className={`flex items-center justify-center gap-2 px-4 rounded-xl font-semibold text-sm transition-all ${
+              isAndroid
+                ? 'gradient-bg gradient-bg-hover text-primary-foreground py-3'
+                : 'bg-card border border-border text-foreground py-2.5 hover:bg-muted'
+            }`}
+          >
+            <Play className="w-4 h-4" />
+            Get it on Google Play
+          </a>
+        )}
       </div>
     </div>
   );

@@ -11,17 +11,17 @@ const faqs = [
   {
     question: 'What is a beacon?',
     answer:
-      "A beacon is a short post describing what you need — a Shabbat dinner host, a study partner, a moving helper, a pickleball buddy. Every morning at 6am, our AI matches your beacon with people in your timezone who can help.",
+      "A beacon is a short post describing what you need: a Shabbat dinner host, a study partner, a moving helper, a pickleball buddy. Every morning at 6am, our AI matches your beacon with people in your timezone who can help.",
   },
   {
     question: 'How does matching work?',
     answer:
-      "Every day at 6am your local time, TribeLife's AI engine analyzes all active beacons in your timezone and connects you with the most relevant people. You wake up to real, meaningful matches — no swiping, no endless scrolling.",
+      "Every day at 6am your local time, TribeLife's AI engine analyzes all active beacons in your timezone and connects you with the most relevant people. You wake up to real, meaningful matches. No swiping, no endless scrolling.",
   },
   {
     question: 'Is it safe?',
     answer:
-      'Safety is a priority. Every user signs in with Google to verify their identity. All beacons are moderated by AI before they go live. We keep your community genuine — real people, real profiles.',
+      'Safety is a priority. Every user signs in with Google to verify their identity. All beacons are moderated by AI before they go live. We keep our community genuine. Real people, real profiles.',
   },
   {
     question: 'Is TribeLife available on Android?',

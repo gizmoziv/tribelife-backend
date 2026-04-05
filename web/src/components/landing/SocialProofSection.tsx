@@ -56,8 +56,8 @@ const SocialProofSection = () => {
             <span className="gradient-text">Chevra.</span>
           </h2>
           <p className="text-muted-foreground text-lg max-w-2xl mx-auto">
-            A community that shows up — for Shabbat dinners, study sessions,
-            holiday gatherings, and everything in between.
+            A community that shows up for Shabbat dinners, study sessions,
+            gatherings, business deals and everything in between.
           </p>
         </motion.div>
 
@@ -72,7 +72,7 @@ const SocialProofSection = () => {
               transition={{ duration: 0.5, delay: stat.delay }}
               className="relative group"
             >
-              <div className="gradient-border rounded-2xl p-6 text-center transition-all duration-300 group-hover:scale-[1.03]">
+              <div className="gradient-border rounded-2xl p-6 text-center transition-all duration-300 group-hover:scale-[1.03] h-full flex flex-col items-center justify-center">
                 <div className="inline-flex items-center justify-center w-12 h-12 rounded-xl bg-primary/10 mb-4">
                   <stat.icon className="w-6 h-6 text-primary" />
                 </div>
