@@ -60,7 +60,7 @@ const Footer = () => {
         </div>
 
         <div className="mt-8 pt-8 border-t border-border text-center text-xs text-muted-foreground">
-          © {currentYear} TribeLife™ by UBot Labs. All rights reserved.
+          © {currentYear} TribeLife™ by Ubot Labs, LLC. All rights reserved.
         </div>
       </div>
     </footer>

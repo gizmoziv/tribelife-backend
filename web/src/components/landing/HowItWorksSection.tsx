@@ -11,13 +11,13 @@ const steps = [
     number: '02',
     title: 'Post a Beacon',
     description:
-      'Looking for a Shabbat dinner host in a new city? Need a study partner or someone to volunteer with? Post it — your community is listening.',
+      'Looking for a Shabbat dinner host in a new city? Need a study partner or someone to volunteer with? Post it. Our community is listening.',
   },
   {
     number: '03',
     title: 'Find Your People',
     description:
-      "Every morning, TribeLife matches your beacon with others in your timezone. Wake up to real connections — zero noise, zero swiping.",
+      "Every morning, TribeLife matches your beacon with others in your timezone. Wake up to real connections. Zero noise, zero swiping.",
   },
 ];
 

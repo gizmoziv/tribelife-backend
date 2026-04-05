@@ -61,9 +61,8 @@ const HeroSection = () => {
           className="text-lg md:text-xl text-muted-foreground max-w-2xl mx-auto mb-10 leading-relaxed"
         >
           Need a Shabbat dinner host, a study partner, or someone to split the
-          holidays with? Post a beacon — a short request for what you need — and
-          we'll match you with the right people nearby. Every day, in your
-          timezone.
+          holidays with? Post a beacon, a short request for what you need, and
+          we'll match you with the right people nearby.
         </motion.p>
 
         <motion.div
@@ -94,14 +93,6 @@ const HeroSection = () => {
           </a>
         </motion.div>
 
-        <motion.p
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ duration: 0.7, delay: 0.9 }}
-          className="mt-8 text-sm text-muted-foreground"
-        >
-          Your chevra. Everywhere.
-        </motion.p>
       </div>
     </section>
   );

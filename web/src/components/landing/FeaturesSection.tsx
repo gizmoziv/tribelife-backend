@@ -5,12 +5,12 @@ const features = [
   {
     icon: Flame,
     title: "Beacon Matching",
-    description: "Post what you need — a Shabbat dinner host, a study partner, a moving helper — and TribeLife matches you daily with the right person.",
+    description: "Post what you need: a Shabbat dinner host, a study partner, a moving helper. TribeLife matches you daily with the right person.",
   },
   {
     icon: MapPin,
     title: "Timezone-Based Community",
-    description: "Connected to people who are actually awake when you are. Your timezone is your community — no more 3am replies.",
+    description: "Connected to people who are actually awake when you are. Our timezone is our community. No more 3am replies.",
   },
   {
     icon: Users,
@@ -20,17 +20,17 @@ const features = [
   {
     icon: Shield,
     title: "Real People Only",
-    description: "Real profiles, real people. Our verification system keeps the community genuine — because trust is everything.",
+    description: "Real profiles, real people. Our verification system keeps the community genuine, because trust is everything.",
   },
   {
     icon: Zap,
-    title: "Daily AI Matching",
-    description: "Every day at 6am, our matching engine connects people with shared needs and interests. Wake up to your people.",
+    title: "Intelligent Matching",
+    description: "Every day at 6am, our matching engine connects people with shared needs and interests. Wake up to our people.",
   },
   {
     icon: Heart,
     title: "If You Know, You Know",
-    description: "TribeLife is for people who believe in community as a way of life — not just an app feature.",
+    description: "TribeLife is for people who believe in community as a way of life, not just an app feature.",
   },
 ];
 
@@ -58,7 +58,7 @@ const FeaturesSection = () => {
             Why <span className="gradient-text">TribeLife</span>?
           </h2>
           <p className="text-muted-foreground text-lg max-w-xl mx-auto">
-            Built for people who show up for each other. No noise. Just your people.
+            Built for people who show up for each other. No noise. Just our community.
           </p>
         </motion.div>
 
