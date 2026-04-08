@@ -7,7 +7,7 @@ import { messages, userProfiles, notifications } from '../db/schema';
 import { eq } from 'drizzle-orm';
 import { moderateMessage } from '../services/claude';
 import { moderateMessageImages } from '../services/imageModeration';
-import { sendPushToUser } from '../services/pushNotifications';
+import { sendPushToUser, shouldSendPush } from '../services/pushNotifications';
 
 export function registerRoomHandlers(io: Server, socket: Socket): void {
   const userId: number = socket.data.userId;
@@ -127,12 +127,14 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
         .where(eq(userProfiles.userId, mentionedId))
         .limit(1);
 
-      await sendPushToUser(
-        mentionedProfile[0]?.expoPushToken,
-        `@${handle} mentioned you`,
-        content.slice(0, 100),
-        { type: 'mention', roomId: timezoneRoom }
-      );
+      if (await shouldSendPush(mentionedId, 'mention')) {
+        await sendPushToUser(
+          mentionedProfile[0]?.expoPushToken,
+          `@${handle} mentioned you`,
+          content.slice(0, 100),
+          { type: 'mention', roomId: timezoneRoom }
+        );
+      }
     }
   });
 }

@@ -12,7 +12,7 @@ import {
 import { eq, and } from 'drizzle-orm';
 import { moderateMessage } from '../services/claude';
 import { moderateMessageImages } from '../services/imageModeration';
-import { sendPushToUser } from '../services/pushNotifications';
+import { sendPushToUser, shouldSendPush } from '../services/pushNotifications';
 
 const log = logger.child({ module: 'socket:dm' });
 
@@ -169,12 +169,14 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
         .where(eq(userProfiles.userId, p.userId))
         .limit(1);
 
-      await sendPushToUser(
-        otherProfile[0]?.expoPushToken,
-        `Message from @${handle}`,
-        content.slice(0, 100),
-        { type: 'new_dm', conversationId: data.conversationId }
-      );
+      if (await shouldSendPush(p.userId, 'dm')) {
+        await sendPushToUser(
+          otherProfile[0]?.expoPushToken,
+          `Message from @${handle}`,
+          content.slice(0, 100),
+          { type: 'new_dm', conversationId: data.conversationId }
+        );
+      }
     }
   });
 

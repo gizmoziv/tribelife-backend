@@ -14,7 +14,7 @@ const log = logger.child({ module: 'beacon-matcher' });
 import { db } from '../db';
 import { beacons, beaconMatches, userProfiles, notifications, blockedUsers } from '../db/schema';
 import { compareBeacons } from '../services/claude';
-import { sendPushToUser } from '../services/pushNotifications';
+import { sendPushToUser, shouldSendPush } from '../services/pushNotifications';
 
 async function runBeaconMatching(): Promise<void> {
   log.info('Starting run');
@@ -176,15 +176,20 @@ async function runBeaconMatching(): Promise<void> {
             .where(eq(userProfiles.userId, b.userId))
             .limit(1);
 
+          const [sendA, sendB] = await Promise.all([
+            shouldSendPush(a.userId, 'beacon_match'),
+            shouldSendPush(b.userId, 'beacon_match'),
+          ]);
+
           await Promise.all([
-            sendPushToUser(profileA?.expoPushToken, '✨ Beacon Match!', result.reason, {
+            sendA ? sendPushToUser(profileA?.expoPushToken, '✨ Beacon Match!', result.reason, {
               type: 'beacon_match',
               beaconId: a.id,
-            }),
-            sendPushToUser(profileB?.expoPushToken, '✨ Beacon Match!', result.reason, {
+            }) : Promise.resolve(),
+            sendB ? sendPushToUser(profileB?.expoPushToken, '✨ Beacon Match!', result.reason, {
               type: 'beacon_match',
               beaconId: b.id,
-            }),
+            }) : Promise.resolve(),
           ]);
 
           // Update lastMatchedAt

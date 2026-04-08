@@ -182,6 +182,24 @@ export const notifications = pgTable('notifications', {
 }));
 
 // ─────────────────────────────────────────────
+// NOTIFICATION PREFERENCES
+// ─────────────────────────────────────────────
+export const notificationPreferences = pgTable('notification_preferences', {
+  id: serial('id').primaryKey(),
+  userId: integer('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull().unique(),
+  mentionsPush: boolean('mentions_push').notNull().default(true),
+  timezoneChatPush: boolean('timezone_chat_push').notNull().default(true),
+  beaconMatchesPush: boolean('beacon_matches_push').notNull().default(true),
+  dmPush: boolean('dm_push').notNull().default(true),
+  createdAt: timestamp('created_at').defaultNow(),
+  updatedAt: timestamp('updated_at').defaultNow(),
+});
+
+export const notificationPreferencesRelations = relations(notificationPreferences, ({ one }) => ({
+  user: one(users, { fields: [notificationPreferences.userId], references: [users.id] }),
+}));
+
+// ─────────────────────────────────────────────
 // ANDROID WAITLIST
 // ─────────────────────────────────────────────
 export const androidWaitlist = pgTable('android_waitlist', {
@@ -244,6 +262,7 @@ export const usersRelations = relations(users, ({ one, many }) => ({
   reportsSubmitted: many(contentReports, { relationName: 'reportsSubmitted' }),
   reportsReceived: many(contentReports, { relationName: 'reportsReceived' }),
   globeReadPositions: many(globeReadPositions),
+  notificationPreferences: one(notificationPreferences, { fields: [users.id], references: [notificationPreferences.userId] }),
 }));
 
 export const userProfilesRelations = relations(userProfiles, ({ one }) => ({
