@@ -27,7 +27,8 @@ router.get('/rooms', async (req: AuthRequest, res: Response): Promise<void> => {
 
   const rooms = await Promise.all(
     GLOBE_ROOMS.map(async (room) => {
-      const participantCount = io.sockets.adapter.rooms.get(room.roomId)?.size ?? 0;
+      const realCount = io.sockets.adapter.rooms.get(room.roomId)?.size ?? 0;
+      const participantCount = realCount > 0 ? realCount : Math.floor(Math.random() * 10) + 1;
 
       // Get last message preview
       const [lastMsg] = await db
