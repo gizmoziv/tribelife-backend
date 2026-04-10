@@ -248,7 +248,7 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
             otherProfile[0]?.expoPushToken,
             `Message from @${handle}`,
             content.slice(0, 100),
-            { type: 'new_dm', conversationId: data.conversationId }
+            { type: 'new_dm', conversationId: data.conversationId, senderHandle: handle }
           );
         }
       }
