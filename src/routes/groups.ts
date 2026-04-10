@@ -27,6 +27,37 @@ function generateSlug(name: string): string {
   return `${base}-${rand}`;
 }
 
+// ── List my groups (admin/member) ───────────────────────────────────────────
+router.get('/', async (req: AuthRequest, res: Response): Promise<void> => {
+  const userId = req.user!.id;
+
+  const rows = await db
+    .select({
+      id: conversations.id,
+      groupName: conversations.groupName,
+      groupIconUrl: conversations.groupIconUrl,
+      inviteSlug: conversations.inviteSlug,
+      createdAt: conversations.createdAt,
+      role: conversationParticipants.role,
+      memberCount: sql<number>`(
+        select count(*)::int from conversation_participants cp2
+        where cp2.conversation_id = ${conversations.id} and cp2.left_at is null
+      )`,
+    })
+    .from(conversationParticipants)
+    .innerJoin(conversations, eq(conversations.id, conversationParticipants.conversationId))
+    .where(
+      and(
+        eq(conversationParticipants.userId, userId),
+        eq(conversations.isGroup, true),
+        isNull(conversationParticipants.leftAt)
+      )
+    )
+    .orderBy(asc(conversations.createdAt));
+
+  res.json({ groups: rows });
+});
+
 // ── Create Group ────────────────────────────────────────────────────────────
 const createGroupSchema = z.object({
   name: z.string().min(1).max(50),
