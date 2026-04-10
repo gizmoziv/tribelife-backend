@@ -38,14 +38,15 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
       }
     }
 
-    // Verify participant
+    // Verify participant (must not have left)
     const participation = await db
       .select()
       .from(conversationParticipants)
       .where(
         and(
           eq(conversationParticipants.conversationId, data.conversationId),
-          eq(conversationParticipants.userId, userId)
+          eq(conversationParticipants.userId, userId),
+          isNull(conversationParticipants.leftAt)
         )
       )
       .limit(1);
@@ -177,7 +178,7 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
             type: 'new_dm' as const,
             title: notifTitle,
             body: notifBody,
-            data: { conversationId: data.conversationId, senderHandle: handle, isGroup: true },
+            data: { conversationId: data.conversationId, senderHandle: handle, isGroup: true, groupName: convo.groupName ?? '' },
           }))
         );
       }
@@ -190,6 +191,7 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
           body: notifBody,
           conversationId: data.conversationId,
           isGroup: true,
+          groupName: convo.groupName ?? '',
         });
       }
 
@@ -207,7 +209,7 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
               to: profile.expoPushToken,
               title: notifTitle,
               body: notifBody,
-              data: { type: 'new_dm', conversationId: data.conversationId, isGroup: true },
+              data: { type: 'new_dm', conversationId: data.conversationId, isGroup: true, groupName: convo.groupName ?? '' },
               sound: 'default',
               channelId: 'default',
             });
@@ -254,7 +256,17 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
   });
 
   // ── Join a DM conversation room ───────────────────────────────────────
-  socket.on('dm:join', (data: { conversationId: number }) => {
+  socket.on('dm:join', async (data: { conversationId: number }) => {
+    const membership = await db
+      .select()
+      .from(conversationParticipants)
+      .where(and(
+        eq(conversationParticipants.conversationId, data.conversationId),
+        eq(conversationParticipants.userId, userId),
+        isNull(conversationParticipants.leftAt)
+      ))
+      .limit(1);
+    if (membership.length === 0) return;
     socket.join(`conversation:${data.conversationId}`);
   });
 

@@ -212,14 +212,15 @@ router.get('/conversations/:id/messages', async (req: AuthRequest, res: Response
   const cursor = req.query.before ? new Date(req.query.before as string) : undefined;
   const limit = Math.min(parseInt(req.query.limit as string ?? '50'), 100);
 
-  // Verify user is participant
+  // Verify user is active participant (not left/kicked)
   const participation = await db
     .select()
     .from(conversationParticipants)
     .where(
       and(
         eq(conversationParticipants.conversationId, convId),
-        eq(conversationParticipants.userId, userId)
+        eq(conversationParticipants.userId, userId),
+        isNull(conversationParticipants.leftAt)
       )
     )
     .limit(1);

@@ -67,15 +67,35 @@ router.post('/', async (req: AuthRequest, res: Response): Promise<void> => {
   }
 
   try {
-    const [convo] = await db
-      .insert(conversations)
-      .values({
-        isGroup: true,
-        groupName: name,
-        inviteSlug: slug,
-        createdById: userId,
-      })
-      .returning();
+    let convo: typeof conversations.$inferSelect | undefined;
+    let attempts = 0;
+    while (attempts < 3) {
+      try {
+        const [row] = await db
+          .insert(conversations)
+          .values({
+            isGroup: true,
+            groupName: name,
+            inviteSlug: slug,
+            createdById: userId,
+          })
+          .returning();
+        convo = row;
+        break;
+      } catch (err: any) {
+        if (err?.cause?.code === '23505' && err?.cause?.constraint?.includes('invite_slug')) {
+          slug = generateSlug(name);
+          attempts++;
+          continue;
+        }
+        throw err;
+      }
+    }
+
+    if (!convo) {
+      res.status(500).json({ error: 'Failed to create group — slug collision' });
+      return;
+    }
 
     await db.insert(conversationParticipants).values({
       conversationId: convo.id,
@@ -180,6 +200,7 @@ router.post('/:slug/join', async (req: AuthRequest, res: Response): Promise<void
     .select({
       id: conversationParticipants.id,
       leftAt: conversationParticipants.leftAt,
+      role: conversationParticipants.role,
     })
     .from(conversationParticipants)
     .where(
@@ -192,6 +213,11 @@ router.post('/:slug/join', async (req: AuthRequest, res: Response): Promise<void
 
   if (existing && !existing.leftAt) {
     res.status(400).json({ error: 'Already a member of this group' });
+    return;
+  }
+
+  if (existing && existing.role === 'kicked') {
+    res.status(403).json({ error: 'You were removed from this group' });
     return;
   }
 
@@ -416,7 +442,7 @@ router.delete('/:id/members/:userId', async (req: AuthRequest, res: Response): P
 
   await db
     .update(conversationParticipants)
-    .set({ leftAt: new Date() })
+    .set({ leftAt: new Date(), role: 'kicked' })
     .where(eq(conversationParticipants.id, target.id));
 
   res.json({ ok: true });
