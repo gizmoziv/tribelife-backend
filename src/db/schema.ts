@@ -54,6 +54,10 @@ export const conversations = pgTable('conversations', {
   lastMessageAt: timestamp('last_message_at').defaultNow(),
   isGroup: boolean('is_group'),                             // SCHM-04: nullable, null = legacy 1:1 DM
   groupName: varchar('group_name', { length: 100 }),        // SCHM-04: nullable, only set for groups
+  createdById: integer('created_by_id').references(() => users.id),
+  groupIconUrl: text('group_icon_url'),
+  inviteSlug: varchar('invite_slug', { length: 50 }).unique(),
+  maxMembers: integer('max_members').default(200),
 });
 
 export const conversationParticipants = pgTable('conversation_participants', {
@@ -63,6 +67,8 @@ export const conversationParticipants = pgTable('conversation_participants', {
   joinedAt: timestamp('joined_at').defaultNow(),
   lastReadAt: timestamp('last_read_at'),
   hiddenAt: timestamp('hidden_at'),
+  role: varchar('role', { length: 20 }).default('member'),
+  leftAt: timestamp('left_at'),
 }, (t) => ({
   uniqPair: unique().on(t.conversationId, t.userId),
   userIdx: index('conv_participants_user_idx').on(t.userId),

@@ -21,7 +21,7 @@ const log = logger.child({ module: 'chat' });
 const router = Router();
 router.use(requireAuth);
 
-// ── List DM conversations for current user ─────────────────────────────────
+// ── List DM conversations + groups for current user ─────────────────────────
 router.get('/conversations', async (req: AuthRequest, res: Response): Promise<void> => {
   const userId = req.user!.id;
 
@@ -29,7 +29,11 @@ router.get('/conversations', async (req: AuthRequest, res: Response): Promise<vo
   const participations = await db
     .select({ conversationId: conversationParticipants.conversationId })
     .from(conversationParticipants)
-    .where(and(eq(conversationParticipants.userId, userId), isNull(conversationParticipants.hiddenAt)));
+    .where(and(
+      eq(conversationParticipants.userId, userId),
+      isNull(conversationParticipants.hiddenAt),
+      isNull(conversationParticipants.leftAt)
+    ));
 
   if (participations.length === 0) {
     res.json({ conversations: [] });
@@ -38,15 +42,15 @@ router.get('/conversations', async (req: AuthRequest, res: Response): Promise<vo
 
   const convIds = participations.map((p) => p.conversationId);
 
-  // Get blocked user IDs so we can exclude their conversations
+  // Get blocked user IDs so we can exclude their DM conversations
   const blockedRows = await db
     .select({ blockedUserId: blockedUsers.blockedUserId })
     .from(blockedUsers)
     .where(eq(blockedUsers.userId, userId));
   const blockedIds = blockedRows.map((r) => r.blockedUserId);
 
-  // For each conversation, get the other participant + last message
-  const result = await db
+  // ── Query 1: 1-on-1 DMs (isGroup IS NOT TRUE) ──────────────────────────
+  const dmResult = await db
     .select({
       conversationId: conversations.id,
       lastMessageAt: conversations.lastMessageAt,
@@ -67,15 +71,51 @@ router.get('/conversations', async (req: AuthRequest, res: Response): Promise<vo
     .innerJoin(users, eq(users.id, conversationParticipants.userId))
     .leftJoin(userProfiles, eq(userProfiles.userId, conversationParticipants.userId))
     .where(
-      blockedIds.length > 0
-        ? and(inArray(conversations.id, convIds), notInArray(conversationParticipants.userId, blockedIds))
-        : inArray(conversations.id, convIds)
+      and(
+        inArray(conversations.id, convIds),
+        sql`${conversations.isGroup} IS NOT TRUE`,
+        ...(blockedIds.length > 0 ? [notInArray(conversationParticipants.userId, blockedIds)] : [])
+      )
     )
     .orderBy(desc(conversations.lastMessageAt));
 
-  // Attach last message preview
-  const convosWithPreview = await Promise.all(
-    result.map(async (row) => {
+  // ── Query 2: Groups ─────────────────────────────────────────────────────
+  // Get user's own lastReadAt for groups
+  const groupParticipations = await db
+    .select({
+      conversationId: conversationParticipants.conversationId,
+      lastReadAt: conversationParticipants.lastReadAt,
+    })
+    .from(conversationParticipants)
+    .where(and(
+      eq(conversationParticipants.userId, userId),
+      isNull(conversationParticipants.hiddenAt),
+      isNull(conversationParticipants.leftAt),
+      inArray(conversationParticipants.conversationId, convIds)
+    ));
+  const groupLastReadMap = new Map(groupParticipations.map((p) => [p.conversationId, p.lastReadAt]));
+
+  const groupResult = await db
+    .select({
+      conversationId: conversations.id,
+      groupName: conversations.groupName,
+      groupIconUrl: conversations.groupIconUrl,
+      lastMessageAt: conversations.lastMessageAt,
+      inviteSlug: conversations.inviteSlug,
+      memberCount: sql<number>`(SELECT count(*)::int FROM conversation_participants WHERE conversation_id = ${conversations.id} AND left_at IS NULL)`,
+    })
+    .from(conversations)
+    .where(
+      and(
+        inArray(conversations.id, convIds),
+        eq(conversations.isGroup, true)
+      )
+    )
+    .orderBy(desc(conversations.lastMessageAt));
+
+  // Attach last message preview to DMs
+  const dmsWithPreview = await Promise.all(
+    dmResult.map(async (row) => {
       const [lastMsg] = await db
         .select({ content: messages.content, createdAt: messages.createdAt })
         .from(messages)
@@ -83,11 +123,42 @@ router.get('/conversations', async (req: AuthRequest, res: Response): Promise<vo
         .orderBy(desc(messages.createdAt))
         .limit(1);
 
-      return { ...row, lastMessage: lastMsg ?? null };
+      return { ...row, lastMessage: lastMsg ?? null, isGroup: false as const };
     })
   );
 
-  res.json({ conversations: convosWithPreview });
+  // Attach last message preview to groups
+  const groupsWithPreview = await Promise.all(
+    groupResult.map(async (row) => {
+      const [lastMsg] = await db
+        .select({ content: messages.content, createdAt: messages.createdAt })
+        .from(messages)
+        .where(eq(messages.conversationId, row.conversationId))
+        .orderBy(desc(messages.createdAt))
+        .limit(1);
+
+      return {
+        conversationId: row.conversationId,
+        lastMessageAt: row.lastMessageAt,
+        groupName: row.groupName,
+        groupIconUrl: row.groupIconUrl,
+        inviteSlug: row.inviteSlug,
+        memberCount: row.memberCount,
+        lastReadAt: groupLastReadMap.get(row.conversationId) ?? null,
+        lastMessage: lastMsg ?? null,
+        isGroup: true as const,
+      };
+    })
+  );
+
+  // Merge and sort by lastMessageAt DESC
+  const merged = [...dmsWithPreview, ...groupsWithPreview].sort((a, b) => {
+    const aTime = a.lastMessageAt?.getTime() ?? 0;
+    const bTime = b.lastMessageAt?.getTime() ?? 0;
+    return bTime - aTime;
+  });
+
+  res.json({ conversations: merged });
 });
 
 // ── Get or create a 1-on-1 conversation ───────────────────────────────────
