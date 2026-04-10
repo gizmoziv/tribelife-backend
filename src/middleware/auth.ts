@@ -4,6 +4,11 @@ import { db } from '../db';
 import { users, userProfiles } from '../db/schema';
 import { eq } from 'drizzle-orm';
 
+if (!process.env.JWT_SECRET) {
+  throw new Error('JWT_SECRET environment variable is required');
+}
+const JWT_SECRET = process.env.JWT_SECRET;
+
 export interface AuthUser {
   id: number;
   email: string;
@@ -33,7 +38,7 @@ export async function requireAuth(
   const token = authHeader.slice(7);
 
   try {
-    const payload = jwt.verify(token, process.env.JWT_SECRET!) as { userId: number };
+    const payload = jwt.verify(token, JWT_SECRET) as { userId: number };
 
     const result = await db
       .select({
@@ -64,5 +69,5 @@ export async function requireAuth(
 
 export function signToken(userId: number): string {
   const expiresIn = (process.env.JWT_EXPIRES_IN ?? '30d') as any;
-  return jwt.sign({ userId }, process.env.JWT_SECRET!, { expiresIn });
+  return jwt.sign({ userId }, JWT_SECRET, { expiresIn });
 }

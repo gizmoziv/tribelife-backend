@@ -95,7 +95,24 @@ router.post('/google', async (req: Request, res: Response): Promise<void> => {
           .returning();
 
         isNewUser = true;
-        user = { users: newUser, user_profiles: null } as typeof user;
+
+        // Create skeleton profile so foreign-key dependents work before onboarding
+        const tempHandle = `_temp_${newUser.id}`;
+        await db.insert(userProfiles).values({
+          userId: newUser.id,
+          handle: tempHandle,
+          googleId,
+          avatarUrl: avatarUrl ?? undefined,
+        }).onConflictDoNothing();
+
+        const freshUser = await db
+          .select()
+          .from(users)
+          .leftJoin(userProfiles, eq(users.id, userProfiles.userId))
+          .where(eq(users.id, newUser.id))
+          .limit(1)
+          .then((r) => r[0]);
+        user = freshUser ?? ({ users: newUser, user_profiles: null } as typeof user);
       }
     }
 
@@ -105,7 +122,7 @@ router.post('/google', async (req: Request, res: Response): Promise<void> => {
     }
 
     const token = signToken(user.users.id);
-    const needsOnboarding = !user.user_profiles?.handle;
+    const needsOnboarding = !user.user_profiles?.handle || user.user_profiles.handle.startsWith('_temp_');
 
     res.json({
       token,
@@ -215,7 +232,23 @@ router.post('/apple', async (req: Request, res: Response): Promise<void> => {
           .returning();
 
         isNewUser = true;
-        user = { users: newUser, user_profiles: null } as typeof user;
+
+        // Create skeleton profile so foreign-key dependents work before onboarding
+        const tempHandle = `_temp_${newUser.id}`;
+        await db.insert(userProfiles).values({
+          userId: newUser.id,
+          handle: tempHandle,
+          appleId: appleUserId,
+        }).onConflictDoNothing();
+
+        const freshUser = await db
+          .select()
+          .from(users)
+          .leftJoin(userProfiles, eq(users.id, userProfiles.userId))
+          .where(eq(users.id, newUser.id))
+          .limit(1)
+          .then((r) => r[0]);
+        user = freshUser ?? ({ users: newUser, user_profiles: null } as typeof user);
       }
     }
 
@@ -225,7 +258,7 @@ router.post('/apple', async (req: Request, res: Response): Promise<void> => {
     }
 
     const token = signToken(user.users.id);
-    const needsOnboarding = !user.user_profiles?.handle;
+    const needsOnboarding = !user.user_profiles?.handle || user.user_profiles.handle.startsWith('_temp_');
 
     res.json({
       token,
@@ -342,7 +375,7 @@ router.post('/onboarding', requireAuth, async (req: AuthRequest, res: Response):
 });
 
 // ── Check handle availability ──────────────────────────────────────────────
-router.get('/handle-check/:handle', async (req: Request, res: Response): Promise<void> => {
+router.get('/handle-check/:handle', requireAuth, async (req: AuthRequest, res: Response): Promise<void> => {
   const handle = (req.params.handle as string).toLowerCase();
 
   if (!/^[a-zA-Z0-9_]{3,30}$/.test(handle)) {

@@ -4,7 +4,7 @@ import { db } from '../db';
 
 const log = logger.child({ module: 'socket:room' });
 import { messages, userProfiles, notifications } from '../db/schema';
-import { eq } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import { moderateMessage } from '../services/claude';
 import { moderateMessageImages } from '../services/imageModeration';
 import { sendPushToUser, shouldSendPush } from '../services/pushNotifications';
@@ -47,7 +47,7 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
       const mentionedProfiles = await db
         .select({ userId: userProfiles.userId, handle: userProfiles.handle })
         .from(userProfiles)
-        .where(eq(userProfiles.handle, mentionedHandles[0]));  // simplified for now
+        .where(inArray(userProfiles.handle, mentionedHandles));
 
       mentionedUserIds = mentionedProfiles.map((p) => p.userId);
     }

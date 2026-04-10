@@ -124,7 +124,8 @@ router.get('/mine', async (req: AuthRequest, res: Response): Promise<void> => {
 // ── Deactivate a beacon ────────────────────────────────────────────────────
 router.delete('/:id', async (req: AuthRequest, res: Response): Promise<void> => {
   const userId = req.user!.id;
-  const beaconId = parseInt(req.params.id as string);
+  const beaconId = parseInt(req.params.id as string, 10);
+  if (isNaN(beaconId)) { res.status(400).json({ error: 'Invalid ID' }); return; }
 
   const [updated] = await db
     .update(beacons)

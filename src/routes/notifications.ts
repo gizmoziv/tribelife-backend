@@ -38,7 +38,8 @@ router.put('/read-all', async (req: AuthRequest, res: Response): Promise<void> =
 
 router.put('/:id/read', async (req: AuthRequest, res: Response): Promise<void> => {
   const userId = req.user!.id;
-  const notifId = parseInt(req.params.id as string);
+  const notifId = parseInt(req.params.id as string, 10);
+  if (isNaN(notifId)) { res.status(400).json({ error: 'Invalid ID' }); return; }
 
   await db
     .update(notifications)
