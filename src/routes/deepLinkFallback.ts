@@ -43,7 +43,7 @@ router.get('/g/:slug', (req: Request, res: Response, next: NextFunction) => {
   }
 
   // Sanitize slug (defence-in-depth; Express already URL-decodes :slug)
-  const rawSlug = req.params.slug ?? '';
+  const rawSlug = String(req.params.slug ?? '');
   const safeSlug = rawSlug.replace(/[^a-zA-Z0-9-_]/g, '');
 
   const appStoreId = process.env.APPLE_APP_STORE_ID;
