@@ -47,6 +47,28 @@ export async function generateAvatarUploadUrl(userId: number): Promise<{
 }
 
 /**
+ * Generate a pre-signed PUT URL for group icon upload.
+ * Key format: {env}/groups/{conversationId}/{timestamp}.jpg
+ */
+export async function generateGroupIconUploadUrl(conversationId: number): Promise<{
+  uploadUrl: string;
+  key: string;
+  cdnUrl: string;
+}> {
+  const key = `${PREFIX}/groups/${conversationId}/${Date.now()}.jpg`;
+
+  const command = new PutObjectCommand({
+    Bucket: BUCKET,
+    Key: key,
+  });
+
+  const uploadUrl = await getSignedUrl(s3, command, { expiresIn: 300 });
+  const cdnUrl = `${CDN_URL}/${key}`;
+
+  return { uploadUrl, key, cdnUrl };
+}
+
+/**
  * Generate pre-signed PUT URLs for media uploads (up to 4 images per message).
  * Key format: {env}/media/{userId}/{uuid}/{index}.jpg
  */
