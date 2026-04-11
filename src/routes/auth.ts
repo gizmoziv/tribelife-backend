@@ -24,8 +24,10 @@ const googleAuthSchema = z.object({
 });
 
 router.post('/google', async (req: Request, res: Response): Promise<void> => {
+  log.info({ hasBody: !!req.body, bodyKeys: req.body ? Object.keys(req.body) : [] }, 'google-signin endpoint hit');
   const parse = googleAuthSchema.safeParse(req.body);
   if (!parse.success) {
+    log.warn({ error: parse.error.errors[0]?.message }, 'google-signin validation failed');
     res.status(400).json({ error: 'idToken is required' });
     return;
   }
