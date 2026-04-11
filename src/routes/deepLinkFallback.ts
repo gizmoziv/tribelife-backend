@@ -109,7 +109,10 @@ router.get('/g/:slug', (req: Request, res: Response, next: NextFunction) => {
     : 'https://tribelife.app';
   const androidStoreUrl = 'https://play.google.com/store/apps/details?id=com.tribelife.app';
   const storeUrl = platform === 'ios' ? iosStoreUrl : androidStoreUrl;
-  const deepLink = `tribelife://g/${safeSlug}`;
+  // Three slashes = empty authority. Without this, iOS/Expo Router parses
+  // `g` as the URL host, leaving `/${slug}` as the path — which doesn't
+  // match the `app/g/[slug].tsx` route and renders +not-found.
+  const deepLink = `tribelife:///g/${safeSlug}`;
 
   const html = `<!DOCTYPE html>
 <html lang="en">
