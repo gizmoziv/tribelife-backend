@@ -423,18 +423,31 @@ router.delete('/account', requireAuth, async (req: AuthRequest, res: Response): 
 
 // ── Update push token ──────────────────────────────────────────────────────
 router.put('/push-token', requireAuth, async (req: AuthRequest, res: Response): Promise<void> => {
+  const userId = req.user!.id;
+  const handle = req.user!.handle;
   const { expoPushToken } = req.body;
+
+  log.info({ userId, handle, hasToken: !!expoPushToken, tokenPrefix: typeof expoPushToken === 'string' ? expoPushToken.slice(0, 20) : null }, 'push-token endpoint hit');
+
   if (!expoPushToken) {
+    log.warn({ userId, handle }, 'push-token request missing expoPushToken');
     res.status(400).json({ error: 'expoPushToken is required' });
     return;
   }
 
-  await db
-    .update(userProfiles)
-    .set({ expoPushToken, updatedAt: new Date() })
-    .where(eq(userProfiles.userId, req.user!.id));
+  try {
+    const result = await db
+      .update(userProfiles)
+      .set({ expoPushToken, updatedAt: new Date() })
+      .where(eq(userProfiles.userId, userId))
+      .returning({ userId: userProfiles.userId });
 
-  res.json({ ok: true });
+    log.info({ userId, handle, rowsUpdated: result.length }, 'push-token stored');
+    res.json({ ok: true });
+  } catch (err) {
+    log.error({ err, userId, handle }, 'push-token update failed');
+    res.status(500).json({ error: 'Failed to update push token' });
+  }
 });
 
 export default router;
