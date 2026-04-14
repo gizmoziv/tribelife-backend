@@ -1,4 +1,7 @@
 import { Router, Response } from 'express';
+import logger from '../lib/logger';
+
+const log = logger.child({ module: 'beacons' });
 import { eq, and, desc, count, isNull } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '../db';
@@ -62,7 +65,7 @@ router.post('/', async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     analysis = await analyzeBeacon(parse.data.rawText);
   } catch (err) {
-    console.error('[beacons] Claude analysis failed', err);
+    log.error({ err }, 'Claude analysis failed');
     res.status(503).json({ error: 'Beacon analysis temporarily unavailable. Please try again.' });
     return;
   }
@@ -121,7 +124,8 @@ router.get('/mine', async (req: AuthRequest, res: Response): Promise<void> => {
 // ── Deactivate a beacon ────────────────────────────────────────────────────
 router.delete('/:id', async (req: AuthRequest, res: Response): Promise<void> => {
   const userId = req.user!.id;
-  const beaconId = parseInt(req.params.id as string);
+  const beaconId = parseInt(req.params.id as string, 10);
+  if (isNaN(beaconId)) { res.status(400).json({ error: 'Invalid ID' }); return; }
 
   const [updated] = await db
     .update(beacons)

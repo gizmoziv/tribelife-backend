@@ -4,6 +4,9 @@ import jwt from 'jsonwebtoken';
 import { eq } from 'drizzle-orm';
 import { db } from '../db';
 import { userProfiles } from '../db/schema';
+import logger from '../lib/logger';
+
+const log = logger.child({ module: 'socket' });
 import { registerRoomHandlers } from './roomHandler';
 import { registerDmHandlers } from './dmHandler';
 import { registerGlobeHandlers } from './globeHandler';
@@ -13,10 +16,10 @@ const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',').map(o => o.trim()
 
 if (!allowedOrigins || allowedOrigins.length === 0) {
   if (process.env.NODE_ENV === 'production') {
-    console.error('[server] FATAL: ALLOWED_ORIGINS not set in production');
+    log.fatal('ALLOWED_ORIGINS not set in production');
     process.exit(1);
   }
-  console.warn('[server] ALLOWED_ORIGINS not set -- allowing all origins (dev mode)');
+  log.warn('ALLOWED_ORIGINS not set -- allowing all origins (dev mode)');
 }
 
 export function createSocketServer(httpServer: HttpServer): SocketServer {
@@ -76,7 +79,7 @@ export function createSocketServer(httpServer: HttpServer): SocketServer {
 
     socket.join(`user:${userId}`);  // personal room for targeted events
 
-    console.log(`[socket] User ${handle} (${userId}) connected — room: timezone:${socket.data.timezone}`);
+    log.info({ userId, handle, timezone: socket.data.timezone }, 'User connected');
 
     // Register modular handlers
     registerRoomHandlers(io, socket);
@@ -104,7 +107,7 @@ export function createSocketServer(httpServer: HttpServer): SocketServer {
     });
 
     socket.on('disconnect', () => {
-      console.log(`[socket] User ${handle} (${userId}) disconnected`);
+      log.info({ userId, handle }, 'User disconnected');
     });
   });
 

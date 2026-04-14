@@ -1,8 +1,12 @@
 import { S3Client, PutObjectCommand, PutObjectAclCommand, DeleteObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import crypto from 'crypto';
+import logger from '../lib/logger';
+
+const log = logger.child({ module: 'storage' });
 
 // ── DigitalOcean Spaces Storage Service ─────────────────────────────────────
-// S3-compatible object storage for avatar uploads via pre-signed URLs.
+// S3-compatible object storage for avatar and media uploads via pre-signed URLs.
 
 const s3 = new S3Client({
   endpoint: process.env.DO_SPACES_ENDPOINT,
@@ -43,6 +47,47 @@ export async function generateAvatarUploadUrl(userId: number): Promise<{
 }
 
 /**
+ * Generate a pre-signed PUT URL for group icon upload.
+ * Key format: {env}/groups/{conversationId}/{timestamp}.jpg
+ */
+export async function generateGroupIconUploadUrl(conversationId: number): Promise<{
+  uploadUrl: string;
+  key: string;
+  cdnUrl: string;
+}> {
+  const key = `${PREFIX}/groups/${conversationId}/${Date.now()}.jpg`;
+
+  const command = new PutObjectCommand({
+    Bucket: BUCKET,
+    Key: key,
+  });
+
+  const uploadUrl = await getSignedUrl(s3, command, { expiresIn: 300 });
+  const cdnUrl = `${CDN_URL}/${key}`;
+
+  return { uploadUrl, key, cdnUrl };
+}
+
+/**
+ * Generate pre-signed PUT URLs for media uploads (up to 4 images per message).
+ * Key format: {env}/media/{userId}/{uuid}/{index}.jpg
+ */
+export async function generateMediaUploadUrls(
+  userId: number,
+  count: number
+): Promise<Array<{ uploadUrl: string; key: string; cdnUrl: string }>> {
+  const tempId = crypto.randomUUID();
+  const results: Array<{ uploadUrl: string; key: string; cdnUrl: string }> = [];
+  for (let i = 0; i < count; i++) {
+    const key = `${PREFIX}/media/${userId}/${tempId}/${i}.jpg`;
+    const command = new PutObjectCommand({ Bucket: BUCKET, Key: key });
+    const uploadUrl = await getSignedUrl(s3, command, { expiresIn: 300 });
+    results.push({ uploadUrl, key, cdnUrl: `${CDN_URL}/${key}` });
+  }
+  return results;
+}
+
+/**
  * Set an object's ACL to public-read so CDN can serve it.
  */
 export async function setPublicRead(key: string): Promise<void> {
@@ -72,7 +117,7 @@ export async function deleteObject(key: string): Promise<void> {
   try {
     await s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: key }));
   } catch (err) {
-    console.error('[storage] Failed to delete object:', key, err);
+    log.error({ err, key }, 'Failed to delete object');
   }
 }
 

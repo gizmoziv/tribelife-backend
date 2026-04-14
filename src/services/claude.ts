@@ -140,12 +140,21 @@ export interface MatchResult {
  * Compare two beacon intents and return a similarity score + explanation.
  * Called during daily batch matching.
  */
+function sanitize(s: string): string {
+  // Strip control chars (except \n \r \t) that can corrupt JSON payloads
+  return s.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
+}
+
 export async function compareBeacons(
   intentA: string,
   keywordsA: string[],
   intentB: string,
   keywordsB: string[]
 ): Promise<MatchResult> {
+  const safeIntentA = sanitize(intentA);
+  const safeIntentB = sanitize(intentB);
+  const safeKeywordsA = keywordsA.map(sanitize);
+  const safeKeywordsB = keywordsB.map(sanitize);
   const response = await client.chat.completions.create({
     model: 'gpt-4o-mini',
     max_tokens: 256,
@@ -156,11 +165,11 @@ export async function compareBeacons(
 
 Determine if these two community beacons are a meaningful match (someone who could help the other or share mutual interest).
 
-Beacon A: "${intentA}"
-Keywords A: ${keywordsA.join(', ')}
+Beacon A: "${safeIntentA}"
+Keywords A: ${safeKeywordsA.join(', ')}
 
-Beacon B: "${intentB}"
-Keywords B: ${keywordsB.join(', ')}
+Beacon B: "${safeIntentB}"
+Keywords B: ${safeKeywordsB.join(', ')}
 
 Respond with valid JSON only:
 {

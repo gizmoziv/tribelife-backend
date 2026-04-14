@@ -1,4 +1,7 @@
 import { Router, Request, Response } from 'express';
+import logger from '../lib/logger';
+
+const log = logger.child({ module: 'revenuecat' });
 import { eq } from 'drizzle-orm';
 import { db } from '../db';
 import { userProfiles } from '../db/schema';
@@ -67,7 +70,7 @@ router.post('/webhook', async (req: Request, res: Response): Promise<void> => {
         })
         .where(eq(userProfiles.userId, userId));
 
-      console.log(`[revenuecat] ${eventType}: granted premium to user ${userId}`);
+      log.info({ eventType, userId }, 'Granted premium');
     } else if (isRevoke) {
       await db
         .update(userProfiles)
@@ -77,16 +80,16 @@ router.post('/webhook', async (req: Request, res: Response): Promise<void> => {
         })
         .where(eq(userProfiles.userId, userId));
 
-      console.log(`[revenuecat] ${eventType}: revoked premium from user ${userId}`);
+      log.info({ eventType, userId }, 'Revoked premium');
     } else {
       // CANCELLATION, TRANSFER, etc. — log but no action needed
       // CANCELLATION just means auto-renew is off; user keeps access until expiration
-      console.log(`[revenuecat] ${eventType}: no action for user ${userId}`);
+      log.info({ eventType, userId }, 'No action for event');
     }
 
     res.json({ ok: true });
   } catch (err) {
-    console.error('[revenuecat/webhook]', err);
+    log.error({ err }, 'Webhook processing failed');
     res.status(500).json({ error: 'Webhook processing failed' });
   }
 });

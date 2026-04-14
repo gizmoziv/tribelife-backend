@@ -1,4 +1,7 @@
 import { Router, Response } from 'express';
+import logger from '../lib/logger';
+
+const log = logger.child({ module: 'moderation' });
 import sgMail from '@sendgrid/mail';
 import { eq, and } from 'drizzle-orm';
 import { z } from 'zod';
@@ -59,13 +62,13 @@ router.post('/block/:userId', async (req: AuthRequest, res: Response): Promise<v
         `,
       });
     } catch (emailErr) {
-      console.error('[moderation/block] Email notification failed', emailErr);
+      log.error({ err: emailErr }, 'Block email notification failed');
       // Non-fatal — block was already recorded
     }
 
     res.json({ ok: true });
   } catch (err) {
-    console.error('[moderation/block]', err);
+    log.error({ err }, 'Failed to block user');
     res.status(500).json({ error: 'Failed to block user' });
   }
 });
@@ -92,7 +95,7 @@ router.delete('/block/:userId', async (req: AuthRequest, res: Response): Promise
 
     res.json({ ok: true });
   } catch (err) {
-    console.error('[moderation/unblock]', err);
+    log.error({ err }, 'Failed to unblock user');
     res.status(500).json({ error: 'Failed to unblock user' });
   }
 });
@@ -179,7 +182,7 @@ router.post('/report', async (req: AuthRequest, res: Response): Promise<void> =>
 
     res.json({ ok: true });
   } catch (err) {
-    console.error('[moderation/report]', err);
+    log.error({ err }, 'Failed to submit report');
     res.status(500).json({ error: 'Failed to submit report' });
   }
 });

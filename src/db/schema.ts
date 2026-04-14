@@ -54,6 +54,10 @@ export const conversations = pgTable('conversations', {
   lastMessageAt: timestamp('last_message_at').defaultNow(),
   isGroup: boolean('is_group'),                             // SCHM-04: nullable, null = legacy 1:1 DM
   groupName: varchar('group_name', { length: 100 }),        // SCHM-04: nullable, only set for groups
+  createdById: integer('created_by_id').references(() => users.id),
+  groupIconUrl: text('group_icon_url'),
+  inviteSlug: varchar('invite_slug', { length: 50 }).unique(),
+  maxMembers: integer('max_members').default(200),
 });
 
 export const conversationParticipants = pgTable('conversation_participants', {
@@ -62,9 +66,25 @@ export const conversationParticipants = pgTable('conversation_participants', {
   userId: integer('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
   joinedAt: timestamp('joined_at').defaultNow(),
   lastReadAt: timestamp('last_read_at'),
+  hiddenAt: timestamp('hidden_at'),
+  role: varchar('role', { length: 20 }).default('member'),
+  leftAt: timestamp('left_at'),
 }, (t) => ({
   uniqPair: unique().on(t.conversationId, t.userId),
   userIdx: index('conv_participants_user_idx').on(t.userId),
+}));
+
+// ─────────────────────────────────────────────
+// GLOBE — Read position tracking for unread badges
+// ─────────────────────────────────────────────
+export const globeReadPositions = pgTable('globe_read_positions', {
+  id: serial('id').primaryKey(),
+  userId: integer('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
+  roomSlug: varchar('room_slug', { length: 100 }).notNull(),
+  lastReadAt: timestamp('last_read_at').notNull().defaultNow(),
+}, (t) => ({
+  uniqUserRoom: unique().on(t.userId, t.roomSlug),
+  userIdx: index('globe_read_positions_user_idx').on(t.userId),
 }));
 
 // ─────────────────────────────────────────────
@@ -86,6 +106,7 @@ export const messages = pgTable('messages', {
   deletedAt: timestamp('deleted_at'),
   replyToId: integer('reply_to_id'),                        // SCHM-01: nullable self-ref FK (added via migration)
   mediaUrls: jsonb('media_urls').$type<string[]>(),         // SCHM-02: nullable JSON array of URLs
+  translatedContent: text('translated_content'),
 }, (t) => ({
   roomIdx: index('messages_room_idx').on(t.roomId),
   convIdx: index('messages_conv_idx').on(t.conversationId),
@@ -167,6 +188,24 @@ export const notifications = pgTable('notifications', {
 }));
 
 // ─────────────────────────────────────────────
+// NOTIFICATION PREFERENCES
+// ─────────────────────────────────────────────
+export const notificationPreferences = pgTable('notification_preferences', {
+  id: serial('id').primaryKey(),
+  userId: integer('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull().unique(),
+  mentionsPush: boolean('mentions_push').notNull().default(true),
+  timezoneChatPush: boolean('timezone_chat_push').notNull().default(true),
+  beaconMatchesPush: boolean('beacon_matches_push').notNull().default(true),
+  dmPush: boolean('dm_push').notNull().default(true),
+  createdAt: timestamp('created_at').defaultNow(),
+  updatedAt: timestamp('updated_at').defaultNow(),
+});
+
+export const notificationPreferencesRelations = relations(notificationPreferences, ({ one }) => ({
+  user: one(users, { fields: [notificationPreferences.userId], references: [users.id] }),
+}));
+
+// ─────────────────────────────────────────────
 // ANDROID WAITLIST
 // ─────────────────────────────────────────────
 export const androidWaitlist = pgTable('android_waitlist', {
@@ -200,6 +239,22 @@ export const contentReports = pgTable('content_reports', {
 });
 
 // ─────────────────────────────────────────────
+// REFERRALS
+// ─────────────────────────────────────────────
+export const referrals = pgTable('referrals', {
+  id: serial('id').primaryKey(),
+  referrerId: integer('referrer_id').notNull().references(() => users.id),
+  referredUserId: integer('referred_user_id').references(() => users.id),
+  referralCode: varchar('referral_code', { length: 50 }).notNull(),
+  status: varchar('status', { length: 20 }).notNull().default('pending'),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  convertedAt: timestamp('converted_at'),
+}, (t) => [
+  index('referrals_referrer_idx').on(t.referrerId),
+  index('referrals_code_idx').on(t.referralCode),
+]);
+
+// ─────────────────────────────────────────────
 // RELATIONS
 // ─────────────────────────────────────────────
 export const usersRelations = relations(users, ({ one, many }) => ({
@@ -212,6 +267,8 @@ export const usersRelations = relations(users, ({ one, many }) => ({
   blocksReceived: many(blockedUsers, { relationName: 'blocksReceived' }),
   reportsSubmitted: many(contentReports, { relationName: 'reportsSubmitted' }),
   reportsReceived: many(contentReports, { relationName: 'reportsReceived' }),
+  globeReadPositions: many(globeReadPositions),
+  notificationPreferences: one(notificationPreferences, { fields: [users.id], references: [notificationPreferences.userId] }),
 }));
 
 export const userProfilesRelations = relations(userProfiles, ({ one }) => ({
@@ -257,4 +314,8 @@ export const blockedUsersRelations = relations(blockedUsers, ({ one }) => ({
 export const contentReportsRelations = relations(contentReports, ({ one }) => ({
   reporter: one(users, { fields: [contentReports.reporterId], references: [users.id], relationName: 'reportsSubmitted' }),
   reportedUser: one(users, { fields: [contentReports.reportedUserId], references: [users.id], relationName: 'reportsReceived' }),
+}));
+
+export const globeReadPositionsRelations = relations(globeReadPositions, ({ one }) => ({
+  user: one(users, { fields: [globeReadPositions.userId], references: [users.id] }),
 }));

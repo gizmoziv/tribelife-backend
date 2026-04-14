@@ -1,10 +1,13 @@
 import { Router, Request, Response } from 'express';
+import logger from '../lib/logger';
+
+const log = logger.child({ module: 'auth' });
 import { OAuth2Client } from 'google-auth-library';
 import { createRemoteJWKSet, jwtVerify } from 'jose';
-import { eq } from 'drizzle-orm';
+import { eq, count } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '../db';
-import { users, userProfiles } from '../db/schema';
+import { users, userProfiles, referrals } from '../db/schema';
 import { signToken, requireAuth, AuthRequest } from '../middleware/auth';
 
 const router = Router();
@@ -21,8 +24,10 @@ const googleAuthSchema = z.object({
 });
 
 router.post('/google', async (req: Request, res: Response): Promise<void> => {
+  log.info({ hasBody: !!req.body, bodyKeys: req.body ? Object.keys(req.body) : [] }, 'google-signin endpoint hit');
   const parse = googleAuthSchema.safeParse(req.body);
   if (!parse.success) {
+    log.warn({ error: parse.error.errors[0]?.message }, 'google-signin validation failed');
     res.status(400).json({ error: 'idToken is required' });
     return;
   }
@@ -32,9 +37,10 @@ router.post('/google', async (req: Request, res: Response): Promise<void> => {
       idToken: parse.data.idToken,
       audience: [
         process.env.GOOGLE_CLIENT_ID!,
-        process.env.GOOGLE_CLIENT_ID_NEW!,
         process.env.GOOGLE_IOS_CLIENT_ID!,
         process.env.GOOGLE_ANDROID_CLIENT_ID!,
+        process.env.GOOGLE_LEGACY_CLIENT_ID!,
+        process.env.GOOGLE_LEGACY_IOS_CLIENT_ID!,
       ].filter(Boolean) as string[],
     });
 
@@ -91,7 +97,24 @@ router.post('/google', async (req: Request, res: Response): Promise<void> => {
           .returning();
 
         isNewUser = true;
-        user = { users: newUser, user_profiles: null } as typeof user;
+
+        // Create skeleton profile so foreign-key dependents work before onboarding
+        const tempHandle = `_temp_${newUser.id}`;
+        await db.insert(userProfiles).values({
+          userId: newUser.id,
+          handle: tempHandle,
+          googleId,
+          avatarUrl: avatarUrl ?? undefined,
+        }).onConflictDoNothing();
+
+        const freshUser = await db
+          .select()
+          .from(users)
+          .leftJoin(userProfiles, eq(users.id, userProfiles.userId))
+          .where(eq(users.id, newUser.id))
+          .limit(1)
+          .then((r) => r[0]);
+        user = freshUser ?? ({ users: newUser, user_profiles: null } as typeof user);
       }
     }
 
@@ -101,7 +124,7 @@ router.post('/google', async (req: Request, res: Response): Promise<void> => {
     }
 
     const token = signToken(user.users.id);
-    const needsOnboarding = !user.user_profiles?.handle;
+    const needsOnboarding = !user.user_profiles?.handle || user.user_profiles.handle.startsWith('_temp_');
 
     res.json({
       token,
@@ -118,7 +141,7 @@ router.post('/google', async (req: Request, res: Response): Promise<void> => {
       isNewUser,
     });
   } catch (err) {
-    console.error('[auth/google]', err);
+    log.error({ err }, 'Google authentication failed');
     res.status(401).json({ error: 'Google authentication failed' });
   }
 });
@@ -211,7 +234,23 @@ router.post('/apple', async (req: Request, res: Response): Promise<void> => {
           .returning();
 
         isNewUser = true;
-        user = { users: newUser, user_profiles: null } as typeof user;
+
+        // Create skeleton profile so foreign-key dependents work before onboarding
+        const tempHandle = `_temp_${newUser.id}`;
+        await db.insert(userProfiles).values({
+          userId: newUser.id,
+          handle: tempHandle,
+          appleId: appleUserId,
+        }).onConflictDoNothing();
+
+        const freshUser = await db
+          .select()
+          .from(users)
+          .leftJoin(userProfiles, eq(users.id, userProfiles.userId))
+          .where(eq(users.id, newUser.id))
+          .limit(1)
+          .then((r) => r[0]);
+        user = freshUser ?? ({ users: newUser, user_profiles: null } as typeof user);
       }
     }
 
@@ -221,7 +260,7 @@ router.post('/apple', async (req: Request, res: Response): Promise<void> => {
     }
 
     const token = signToken(user.users.id);
-    const needsOnboarding = !user.user_profiles?.handle;
+    const needsOnboarding = !user.user_profiles?.handle || user.user_profiles.handle.startsWith('_temp_');
 
     res.json({
       token,
@@ -238,7 +277,7 @@ router.post('/apple', async (req: Request, res: Response): Promise<void> => {
       isNewUser,
     });
   } catch (err) {
-    console.error('[auth/apple]', err);
+    log.error({ err }, 'Apple authentication failed');
     res.status(401).json({ error: 'Apple authentication failed' });
   }
 });
@@ -255,6 +294,7 @@ const onboardingSchema = z.object({
   acceptedTerms: z.literal(true, {
     errorMap: () => ({ message: 'You must accept the Terms of Service to continue' }),
   }),
+  referralCode: z.string().max(50).optional(),
 });
 
 router.post('/onboarding', requireAuth, async (req: AuthRequest, res: Response): Promise<void> => {
@@ -264,7 +304,7 @@ router.post('/onboarding', requireAuth, async (req: AuthRequest, res: Response):
     return;
   }
 
-  const { handle, timezone, avatarUrl } = parse.data;
+  const { handle, timezone, avatarUrl, referralCode } = parse.data;
   const userId = req.user!.id;
 
   // Check handle uniqueness
@@ -294,11 +334,50 @@ router.post('/onboarding', requireAuth, async (req: AuthRequest, res: Response):
     })
     .returning();
 
+  // Track referral if code provided
+  if (referralCode) {
+    const [referrer] = await db
+      .select({ userId: userProfiles.userId })
+      .from(userProfiles)
+      .where(eq(userProfiles.handle, referralCode.toLowerCase()))
+      .limit(1);
+
+    if (referrer && referrer.userId !== userId) {
+      await db.insert(referrals).values({
+        referrerId: referrer.userId,
+        referredUserId: userId,
+        referralCode: referralCode.toLowerCase(),
+        status: 'onboarded',
+        convertedAt: new Date(),
+      });
+
+      // Grant referrer premium: 1 referral = 1 month, cap at 12
+      const [countResult] = await db
+        .select({ total: count() })
+        .from(referrals)
+        .where(eq(referrals.referrerId, referrer.userId));
+
+      const totalReferrals = Math.min(countResult?.total ?? 0, 12);
+      if (totalReferrals > 0) {
+        const premiumExpiry = new Date();
+        premiumExpiry.setMonth(premiumExpiry.getMonth() + totalReferrals);
+        await db
+          .update(userProfiles)
+          .set({
+            isPremium: true,
+            premiumExpiresAt: premiumExpiry,
+            updatedAt: new Date(),
+          })
+          .where(eq(userProfiles.userId, referrer.userId));
+      }
+    }
+  }
+
   res.json({ profile });
 });
 
 // ── Check handle availability ──────────────────────────────────────────────
-router.get('/handle-check/:handle', async (req: Request, res: Response): Promise<void> => {
+router.get('/handle-check/:handle', requireAuth, async (req: AuthRequest, res: Response): Promise<void> => {
   const handle = (req.params.handle as string).toLowerCase();
 
   if (!/^[a-zA-Z0-9_]{3,30}$/.test(handle)) {
@@ -339,25 +418,38 @@ router.delete('/account', requireAuth, async (req: AuthRequest, res: Response): 
     await db.delete(users).where(eq(users.id, userId));
     res.json({ ok: true });
   } catch (err) {
-    console.error('[auth/delete-account]', err);
+    log.error({ err }, 'Failed to delete account');
     res.status(500).json({ error: 'Failed to delete account' });
   }
 });
 
 // ── Update push token ──────────────────────────────────────────────────────
 router.put('/push-token', requireAuth, async (req: AuthRequest, res: Response): Promise<void> => {
+  const userId = req.user!.id;
+  const handle = req.user!.handle;
   const { expoPushToken } = req.body;
+
+  log.info({ userId, handle, hasToken: !!expoPushToken, tokenPrefix: typeof expoPushToken === 'string' ? expoPushToken.slice(0, 20) : null }, 'push-token endpoint hit');
+
   if (!expoPushToken) {
+    log.warn({ userId, handle }, 'push-token request missing expoPushToken');
     res.status(400).json({ error: 'expoPushToken is required' });
     return;
   }
 
-  await db
-    .update(userProfiles)
-    .set({ expoPushToken, updatedAt: new Date() })
-    .where(eq(userProfiles.userId, req.user!.id));
+  try {
+    const result = await db
+      .update(userProfiles)
+      .set({ expoPushToken, updatedAt: new Date() })
+      .where(eq(userProfiles.userId, userId))
+      .returning({ userId: userProfiles.userId });
 
-  res.json({ ok: true });
+    log.info({ userId, handle, rowsUpdated: result.length }, 'push-token stored');
+    res.json({ ok: true });
+  } catch (err) {
+    log.error({ err, userId, handle }, 'push-token update failed');
+    res.status(500).json({ error: 'Failed to update push token' });
+  }
 });
 
 export default router;

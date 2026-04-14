@@ -1,9 +1,13 @@
 import { Server, Socket } from 'socket.io';
+import logger from '../lib/logger';
 import { db } from '../db';
+
+const log = logger.child({ module: 'socket:room' });
 import { messages, userProfiles, notifications } from '../db/schema';
-import { eq } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import { moderateMessage } from '../services/claude';
-import { sendPushToUser } from '../services/pushNotifications';
+import { moderateMessageImages } from '../services/imageModeration';
+import { sendPushToUser, shouldSendPush } from '../services/pushNotifications';
 
 export function registerRoomHandlers(io: Server, socket: Socket): void {
   const userId: number = socket.data.userId;
@@ -15,15 +19,21 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
   socket.join(timezoneRoom);
 
   // ── Send a message to a timezone room ─────────────────────────────────
-  socket.on('room:message', async (data: { content: string }) => {
-    const content = data.content?.trim();
-    if (!content || content.length > 2000) return;
+  socket.on('room:message', async (data: { content: string; replyToId?: number; mediaUrls?: string[] }) => {
+    const content = data.content?.trim() ?? '';
+    const mediaUrls = Array.isArray(data.mediaUrls)
+      ? data.mediaUrls.filter((u): u is string => typeof u === 'string').slice(0, 4)
+      : [];
+    if (!content && mediaUrls.length === 0) return;
+    if (content.length > 2000) return;
 
-    // Content moderation check
-    const modResult = moderateMessage(content);
-    if (!modResult.isAllowed) {
-      socket.emit('message:rejected', { reason: modResult.reason });
-      return;
+    // Content moderation check (skip for image-only messages)
+    if (content) {
+      const modResult = moderateMessage(content);
+      if (!modResult.isAllowed) {
+        socket.emit('message:rejected', { reason: modResult.reason });
+        return;
+      }
     }
 
     // Parse @mentions
@@ -37,7 +47,7 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
       const mentionedProfiles = await db
         .select({ userId: userProfiles.userId, handle: userProfiles.handle })
         .from(userProfiles)
-        .where(eq(userProfiles.handle, mentionedHandles[0]));  // simplified for now
+        .where(inArray(userProfiles.handle, mentionedHandles));
 
       mentionedUserIds = mentionedProfiles.map((p) => p.userId);
     }
@@ -50,8 +60,24 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
         senderId: userId,
         roomId: timezoneRoom,
         mentions: mentionedUserIds,
+        replyToId: data.replyToId ?? null,
+        mediaUrls: mediaUrls.length > 0 ? mediaUrls : null,
       })
       .returning();
+
+    // Build replyTo preview if this is a reply
+    let replyTo: { id: number; content: string; senderHandle: string } | null = null;
+    if (data.replyToId) {
+      const [original] = await db
+        .select({ id: messages.id, content: messages.content, senderHandle: userProfiles.handle })
+        .from(messages)
+        .leftJoin(userProfiles, eq(userProfiles.userId, messages.senderId))
+        .where(eq(messages.id, data.replyToId))
+        .limit(1);
+      if (original) {
+        replyTo = { id: original.id, content: original.content ?? '', senderHandle: original.senderHandle ?? 'Unknown' };
+      }
+    }
 
     // Broadcast to room
     const payload = {
@@ -62,9 +88,18 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
       roomId: timezoneRoom,
       createdAt: msg.createdAt,
       mentions: mentionedUserIds,
+      replyToId: data.replyToId ?? null,
+      replyTo,
+      mediaUrls: mediaUrls.length > 0 ? mediaUrls : undefined,
     };
 
     io.to(timezoneRoom).emit('room:message', payload);
+
+    // Fire-and-forget image moderation
+    if (mediaUrls.length > 0) {
+      moderateMessageImages(msg.id, mediaUrls, userId, io, timezoneRoom)
+        .catch(err => log.error({ err }, 'Room image check failed'));
+    }
 
     // Notify mentioned users
     for (const mentionedId of mentionedUserIds) {
@@ -92,12 +127,14 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
         .where(eq(userProfiles.userId, mentionedId))
         .limit(1);
 
-      await sendPushToUser(
-        mentionedProfile[0]?.expoPushToken,
-        `@${handle} mentioned you`,
-        content.slice(0, 100),
-        { type: 'mention', roomId: timezoneRoom }
-      );
+      if (await shouldSendPush(mentionedId, 'mention')) {
+        await sendPushToUser(
+          mentionedProfile[0]?.expoPushToken,
+          `@${handle} mentioned you`,
+          content.slice(0, 100),
+          { type: 'mention', roomId: timezoneRoom }
+        );
+      }
     }
   });
 }

@@ -2,6 +2,12 @@
  * Expo Push Notification Service
  * Sends push notifications via Expo's push gateway (free, no Firebase required).
  */
+import logger from '../lib/logger';
+import { db } from '../db';
+import { notificationPreferences } from '../db/schema';
+import { eq } from 'drizzle-orm';
+
+const log = logger.child({ module: 'push' });
 
 interface PushMessage {
   to: string;
@@ -54,7 +60,7 @@ export async function sendPushNotifications(
     const result = await response.json() as { data: ExpoTicket[] };
     return result.data ?? [];
   } catch (err) {
-    console.error('[push] Failed to send push notifications', err);
+    log.error({ err }, 'Failed to send push notifications');
     return [];
   }
 }
@@ -77,4 +83,24 @@ export async function sendPushToUser(
       channelId: 'default',
     },
   ]);
+}
+
+export async function shouldSendPush(
+  userId: number,
+  notificationType: 'mention' | 'timezone_chat' | 'beacon_match' | 'dm'
+): Promise<boolean> {
+  const [prefs] = await db
+    .select()
+    .from(notificationPreferences)
+    .where(eq(notificationPreferences.userId, userId))
+    .limit(1);
+
+  if (!prefs) return true;
+
+  switch (notificationType) {
+    case 'mention': return prefs.mentionsPush;
+    case 'timezone_chat': return prefs.timezoneChatPush;
+    case 'beacon_match': return prefs.beaconMatchesPush;
+    case 'dm': return prefs.dmPush;
+  }
 }
