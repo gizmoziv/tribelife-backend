@@ -4,8 +4,8 @@
  */
 import logger from '../lib/logger';
 import { db } from '../db';
-import { notificationPreferences } from '../db/schema';
-import { eq } from 'drizzle-orm';
+import { notificationPreferences, notifications } from '../db/schema';
+import { eq, and, sql } from 'drizzle-orm';
 
 const log = logger.child({ module: 'push' });
 
@@ -65,13 +65,59 @@ export async function sendPushNotifications(
   }
 }
 
+/**
+ * Count unread notifications for a user. Used to populate the app icon
+ * badge on iOS. Industry-standard behavior: badge reflects total unread
+ * items across the app.
+ */
+export async function getUnreadBadgeCount(userId: number): Promise<number> {
+  const [row] = await db
+    .select({ count: sql<number>`COUNT(*)::int` })
+    .from(notifications)
+    .where(and(eq(notifications.userId, userId), eq(notifications.isRead, false)));
+  return row?.count ?? 0;
+}
+
+/**
+ * Batched version: count unread notifications for many users in a single
+ * query. Returns a Map<userId, count>. Users with zero unread are omitted
+ * from the map — callers should treat missing entries as zero.
+ */
+export async function getUnreadBadgeCounts(userIds: number[]): Promise<Map<number, number>> {
+  if (userIds.length === 0) return new Map();
+  const rows = await db
+    .select({
+      userId: notifications.userId,
+      count: sql<number>`COUNT(*)::int`,
+    })
+    .from(notifications)
+    .where(and(
+      eq(notifications.isRead, false),
+      sql`${notifications.userId} = ANY(${userIds})`,
+    ))
+    .groupBy(notifications.userId);
+  const map = new Map<number, number>();
+  for (const r of rows) map.set(r.userId, r.count);
+  return map;
+}
+
 export async function sendPushToUser(
   expoPushToken: string | null | undefined,
   title: string,
   body: string,
-  data?: Record<string, unknown>
+  data?: Record<string, unknown>,
+  userId?: number,
 ): Promise<void> {
   if (!expoPushToken) return;
+
+  // Compute badge count: current unread + 1 for this notification (which
+  // has typically just been inserted but may not be committed yet when this
+  // runs concurrently — adding 1 avoids off-by-one on rapid fire).
+  let badge: number | undefined;
+  if (userId !== undefined) {
+    const unread = await getUnreadBadgeCount(userId);
+    badge = unread;
+  }
 
   await sendPushNotifications([
     {
@@ -80,6 +126,7 @@ export async function sendPushToUser(
       body,
       data,
       sound: 'default',
+      badge,
       channelId: 'default',
     },
   ]);

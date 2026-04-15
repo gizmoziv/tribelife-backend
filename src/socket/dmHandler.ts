@@ -12,7 +12,7 @@ import {
 import { eq, and, isNull } from 'drizzle-orm';
 import { moderateMessage } from '../services/claude';
 import { moderateMessageImages } from '../services/imageModeration';
-import { sendPushToUser, sendPushNotifications, shouldSendPush } from '../services/pushNotifications';
+import { sendPushToUser, sendPushNotifications, shouldSendPush, getUnreadBadgeCounts } from '../services/pushNotifications';
 
 const log = logger.child({ module: 'socket:dm' });
 
@@ -211,7 +211,7 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
       // Batch push notifications
       // Reply target uses 'mention' preference so they get notified even if
       // they've turned off group DM push (since they were directly addressed).
-      const pushMessages: { to: string; title: string; body: string; data: Record<string, unknown>; sound: 'default'; channelId: string }[] = [];
+      const eligibleRecipients: { userId: number; expoPushToken: string }[] = [];
       for (const p of recipients) {
         const prefType = isReplyTarget(p.userId) ? 'mention' : 'dm';
         if (await shouldSendPush(p.userId, prefType)) {
@@ -221,17 +221,23 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
             .where(eq(userProfiles.userId, p.userId))
             .limit(1);
           if (profile?.expoPushToken) {
-            pushMessages.push({
-              to: profile.expoPushToken,
-              title: titleFor(p.userId),
-              body: notifBody,
-              data: { type: 'new_dm', conversationId: data.conversationId, isGroup: true, groupName: groupLabel },
-              sound: 'default',
-              channelId: 'default',
-            });
+            eligibleRecipients.push({ userId: p.userId, expoPushToken: profile.expoPushToken });
           }
         }
       }
+
+      // Fetch unread badge counts for all eligible users in a single query
+      const badgeMap = await getUnreadBadgeCounts(eligibleRecipients.map((r) => r.userId));
+
+      const pushMessages = eligibleRecipients.map((r) => ({
+        to: r.expoPushToken,
+        title: titleFor(r.userId),
+        body: notifBody,
+        data: { type: 'new_dm', conversationId: data.conversationId, isGroup: true, groupName: groupLabel },
+        sound: 'default' as const,
+        badge: badgeMap.get(r.userId) ?? 0,
+        channelId: 'default',
+      }));
       if (pushMessages.length > 0) {
         sendPushNotifications(pushMessages).catch((err) => log.error({ err }, 'Group push failed'));
       }
@@ -264,7 +270,8 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
             otherProfile[0]?.expoPushToken,
             `Message from @${handle}`,
             content.slice(0, 100),
-            { type: 'new_dm', conversationId: data.conversationId, senderHandle: handle }
+            { type: 'new_dm', conversationId: data.conversationId, senderHandle: handle },
+            p.userId,
           );
         }
       }

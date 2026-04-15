@@ -185,11 +185,11 @@ async function runBeaconMatching(): Promise<void> {
             sendA ? sendPushToUser(profileA?.expoPushToken, '✨ Beacon Match!', result.reason, {
               type: 'beacon_match',
               beaconId: a.id,
-            }) : Promise.resolve(),
+            }, a.userId) : Promise.resolve(),
             sendB ? sendPushToUser(profileB?.expoPushToken, '✨ Beacon Match!', result.reason, {
               type: 'beacon_match',
               beaconId: b.id,
-            }) : Promise.resolve(),
+            }, b.userId) : Promise.resolve(),
           ]);
 
           // Update lastMatchedAt

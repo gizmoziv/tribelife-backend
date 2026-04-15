@@ -7,7 +7,7 @@ import { messages, userProfiles, notifications, notificationPreferences, blocked
 import { and, eq, inArray, ne, isNotNull, or } from 'drizzle-orm';
 import { moderateMessage } from '../services/claude';
 import { moderateMessageImages } from '../services/imageModeration';
-import { sendPushToUser, sendPushNotifications, shouldSendPush } from '../services/pushNotifications';
+import { sendPushToUser, sendPushNotifications, shouldSendPush, getUnreadBadgeCounts } from '../services/pushNotifications';
 
 export function registerRoomHandlers(io: Server, socket: Socket): void {
   const userId: number = socket.data.userId;
@@ -149,7 +149,8 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
           mentionedProfile[0]?.expoPushToken,
           title,
           content.slice(0, 100),
-          { type: 'mention', roomId: timezoneRoom }
+          { type: 'mention', roomId: timezoneRoom },
+          notifyId,
         );
       }
     }
@@ -212,23 +213,25 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
         // Skip both @mentions AND reply targets — they already got a mention push
         const alreadyNotified = notifyUserIds;
 
-        // Build push batch
-        const pushBatch = candidates
-          .filter((c) => {
-            if (blockedSet.has(c.userId)) return false;
-            if (alreadyNotified.has(c.userId)) return false; // already got mention push
-            // Default to true if no preference row exists
-            const allowed = prefMap.has(c.userId) ? prefMap.get(c.userId) : true;
-            return allowed && !!c.expoPushToken;
-          })
-          .map((c) => ({
-            to: c.expoPushToken as string,
-            title: `@${handle}`,
-            body: content.slice(0, 100),
-            data: { type: 'timezone_chat', roomId: timezoneRoom },
-            sound: 'default' as const,
-            channelId: 'default',
-          }));
+        const eligible = candidates.filter((c) => {
+          if (blockedSet.has(c.userId)) return false;
+          if (alreadyNotified.has(c.userId)) return false; // already got mention push
+          const allowed = prefMap.has(c.userId) ? prefMap.get(c.userId) : true;
+          return allowed && !!c.expoPushToken;
+        });
+
+        // Fetch unread badge counts for all eligible users in a single query
+        const badgeMap = await getUnreadBadgeCounts(eligible.map((c) => c.userId));
+
+        const pushBatch = eligible.map((c) => ({
+          to: c.expoPushToken as string,
+          title: `@${handle}`,
+          body: content.slice(0, 100),
+          data: { type: 'timezone_chat', roomId: timezoneRoom },
+          sound: 'default' as const,
+          badge: badgeMap.get(c.userId) ?? 0,
+          channelId: 'default',
+        }));
 
         if (pushBatch.length > 0) {
           await sendPushNotifications(pushBatch);
