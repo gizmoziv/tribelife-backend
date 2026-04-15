@@ -3,11 +3,11 @@ import logger from '../lib/logger';
 import { db } from '../db';
 
 const log = logger.child({ module: 'socket:room' });
-import { messages, userProfiles, notifications } from '../db/schema';
-import { eq, inArray } from 'drizzle-orm';
+import { messages, userProfiles, notifications, notificationPreferences, blockedUsers } from '../db/schema';
+import { and, eq, inArray, ne, isNotNull, or } from 'drizzle-orm';
 import { moderateMessage } from '../services/claude';
 import { moderateMessageImages } from '../services/imageModeration';
-import { sendPushToUser, shouldSendPush } from '../services/pushNotifications';
+import { sendPushToUser, sendPushNotifications, shouldSendPush } from '../services/pushNotifications';
 
 export function registerRoomHandlers(io: Server, socket: Socket): void {
   const userId: number = socket.data.userId;
@@ -136,5 +136,88 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
         );
       }
     }
+
+    // ── Timezone chat push notifications ──────────────────────────────────
+    // Send to other users in the same timezone who have timezoneChatPush
+    // enabled. Skip sender, mentioned users (already notified), and blocked
+    // pairs. Fire-and-forget — does not block the message broadcast.
+    (async () => {
+      try {
+        // Find all users in this timezone with a push token (excluding sender)
+        const candidates = await db
+          .select({
+            userId: userProfiles.userId,
+            expoPushToken: userProfiles.expoPushToken,
+          })
+          .from(userProfiles)
+          .where(
+            and(
+              eq(userProfiles.timezone, timezone),
+              ne(userProfiles.userId, userId),
+              isNotNull(userProfiles.expoPushToken),
+            ),
+          );
+
+        if (candidates.length === 0) return;
+
+        const candidateIds = candidates.map((c) => c.userId);
+
+        // Fetch preferences for all candidates in one query
+        const prefs = await db
+          .select({
+            userId: notificationPreferences.userId,
+            timezoneChatPush: notificationPreferences.timezoneChatPush,
+          })
+          .from(notificationPreferences)
+          .where(inArray(notificationPreferences.userId, candidateIds));
+
+        const prefMap = new Map(prefs.map((p) => [p.userId, p.timezoneChatPush]));
+
+        // Fetch block relationships (either direction)
+        const blocks = await db
+          .select({
+            userId: blockedUsers.userId,
+            blockedUserId: blockedUsers.blockedUserId,
+          })
+          .from(blockedUsers)
+          .where(
+            or(
+              and(eq(blockedUsers.userId, userId), inArray(blockedUsers.blockedUserId, candidateIds)),
+              and(eq(blockedUsers.blockedUserId, userId), inArray(blockedUsers.userId, candidateIds)),
+            ),
+          );
+
+        const blockedSet = new Set<number>();
+        for (const b of blocks) {
+          blockedSet.add(b.userId === userId ? b.blockedUserId : b.userId);
+        }
+
+        const mentionedSet = new Set(mentionedUserIds);
+
+        // Build push batch
+        const pushBatch = candidates
+          .filter((c) => {
+            if (blockedSet.has(c.userId)) return false;
+            if (mentionedSet.has(c.userId)) return false; // already got mention push
+            // Default to true if no preference row exists
+            const allowed = prefMap.has(c.userId) ? prefMap.get(c.userId) : true;
+            return allowed && !!c.expoPushToken;
+          })
+          .map((c) => ({
+            to: c.expoPushToken as string,
+            title: `@${handle}`,
+            body: content.slice(0, 100),
+            data: { type: 'timezone_chat', roomId: timezoneRoom },
+            sound: 'default' as const,
+            channelId: 'default',
+          }));
+
+        if (pushBatch.length > 0) {
+          await sendPushNotifications(pushBatch);
+        }
+      } catch (err) {
+        log.error({ err }, 'Timezone chat push delivery failed');
+      }
+    })();
   });
 }
