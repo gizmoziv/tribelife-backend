@@ -183,9 +183,10 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
       const isReplyTarget = (id: number) => replyToSenderId !== null && id === replyToSenderId;
       const titleFor = (id: number) => isReplyTarget(id) ? replyTitle : defaultTitle;
 
-      // Batch insert notifications
+      // Batch insert notifications; capture IDs so we can attach them to pushes
+      const notifIdByUser = new Map<number, number>();
       if (recipients.length > 0) {
-        await db.insert(notifications).values(
+        const inserted = await db.insert(notifications).values(
           recipients.map((p) => ({
             userId: p.userId,
             type: 'new_dm' as const,
@@ -193,7 +194,8 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
             body: notifBody,
             data: { conversationId: data.conversationId, senderHandle: handle, isGroup: true, groupName: groupLabel },
           }))
-        );
+        ).returning({ id: notifications.id, userId: notifications.userId });
+        for (const row of inserted) notifIdByUser.set(row.userId, row.id);
       }
 
       // Emit socket notifications
@@ -233,7 +235,13 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
         to: r.expoPushToken,
         title: titleFor(r.userId),
         body: notifBody,
-        data: { type: 'new_dm', conversationId: data.conversationId, isGroup: true, groupName: groupLabel },
+        data: {
+          type: 'new_dm',
+          conversationId: data.conversationId,
+          isGroup: true,
+          groupName: groupLabel,
+          notificationId: notifIdByUser.get(r.userId),
+        },
         sound: 'default' as const,
         badge: badgeMap.get(r.userId) ?? 0,
         channelId: 'default',
@@ -244,13 +252,13 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
     } else {
       // 1:1 DM notifications — existing behavior
       for (const p of recipients) {
-        await db.insert(notifications).values({
+        const [inserted] = await db.insert(notifications).values({
           userId: p.userId,
           type: 'new_dm',
           title: `Message from @${handle}`,
           body: content.slice(0, 100),
           data: { conversationId: data.conversationId, senderHandle: handle },
-        });
+        }).returning({ id: notifications.id });
 
         io.to(`user:${p.userId}`).emit('notification:new', {
           type: 'new_dm',
@@ -270,7 +278,7 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
             otherProfile[0]?.expoPushToken,
             `Message from @${handle}`,
             content.slice(0, 100),
-            { type: 'new_dm', conversationId: data.conversationId, senderHandle: handle },
+            { type: 'new_dm', conversationId: data.conversationId, senderHandle: handle, notificationId: inserted.id },
             p.userId,
           );
         }

@@ -145,8 +145,9 @@ async function runBeaconMatching(): Promise<void> {
             ])
             .onConflictDoNothing();
 
-          // Create in-app notifications
-          await db.insert(notifications).values([
+          // Create in-app notifications; capture ids so pushes can
+          // reference them for auto-mark-as-read on tap.
+          const insertedNotifs = await db.insert(notifications).values([
             {
               userId: a.userId,
               type: 'beacon_match',
@@ -161,7 +162,9 @@ async function runBeaconMatching(): Promise<void> {
               body: result.reason,
               data: { beaconId: b.id, matchedBeaconId: a.id, timezone },
             },
-          ]);
+          ]).returning({ id: notifications.id, userId: notifications.userId });
+          const notifA = insertedNotifs.find((n) => n.userId === a.userId)?.id;
+          const notifB = insertedNotifs.find((n) => n.userId === b.userId)?.id;
 
           // Send push notifications
           const [profileA] = await db
@@ -185,10 +188,12 @@ async function runBeaconMatching(): Promise<void> {
             sendA ? sendPushToUser(profileA?.expoPushToken, '✨ Beacon Match!', result.reason, {
               type: 'beacon_match',
               beaconId: a.id,
+              notificationId: notifA,
             }, a.userId) : Promise.resolve(),
             sendB ? sendPushToUser(profileB?.expoPushToken, '✨ Beacon Match!', result.reason, {
               type: 'beacon_match',
               beaconId: b.id,
+              notificationId: notifB,
             }, b.userId) : Promise.resolve(),
           ]);
 

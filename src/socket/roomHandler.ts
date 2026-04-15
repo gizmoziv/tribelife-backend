@@ -122,13 +122,13 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
       const isReplyTarget = notifyId === replyToSenderId && !explicitMentions.has(notifyId);
       const title = isReplyTarget ? `@${handle} replied to you` : `@${handle} mentioned you`;
 
-      await db.insert(notifications).values({
+      const [inserted] = await db.insert(notifications).values({
         userId: notifyId,
         type: 'mention',
         title,
         body: content.slice(0, 100),
         data: { messageId: msg.id, roomId: timezoneRoom, senderHandle: handle },
-      });
+      }).returning({ id: notifications.id });
 
       // Emit real-time notification if user is online
       io.to(`user:${notifyId}`).emit('notification:new', {
@@ -149,7 +149,7 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
           mentionedProfile[0]?.expoPushToken,
           title,
           content.slice(0, 100),
-          { type: 'mention', roomId: timezoneRoom },
+          { type: 'mention', roomId: timezoneRoom, notificationId: inserted.id },
           notifyId,
         );
       }
