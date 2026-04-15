@@ -65,17 +65,24 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
       })
       .returning();
 
-    // Build replyTo preview if this is a reply
+    // Build replyTo preview if this is a reply, and capture the original sender
     let replyTo: { id: number; content: string; senderHandle: string } | null = null;
+    let replyToSenderId: number | null = null;
     if (data.replyToId) {
       const [original] = await db
-        .select({ id: messages.id, content: messages.content, senderHandle: userProfiles.handle })
+        .select({
+          id: messages.id,
+          content: messages.content,
+          senderHandle: userProfiles.handle,
+          senderId: messages.senderId,
+        })
         .from(messages)
         .leftJoin(userProfiles, eq(userProfiles.userId, messages.senderId))
         .where(eq(messages.id, data.replyToId))
         .limit(1);
       if (original) {
         replyTo = { id: original.id, content: original.content ?? '', senderHandle: original.senderHandle ?? 'Unknown' };
+        replyToSenderId = original.senderId;
       }
     }
 
@@ -101,36 +108,46 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
         .catch(err => log.error({ err }, 'Room image check failed'));
     }
 
-    // Notify mentioned users
-    for (const mentionedId of mentionedUserIds) {
-      if (mentionedId === userId) continue;
+    // Build the full set of users to notify: explicit @mentions + the reply target
+    const notifyUserIds = new Set<number>(mentionedUserIds);
+    if (replyToSenderId && replyToSenderId !== userId) {
+      notifyUserIds.add(replyToSenderId);
+    }
+    const explicitMentions = new Set(mentionedUserIds);
+
+    // Notify each user — title differs for reply vs mention
+    for (const notifyId of notifyUserIds) {
+      if (notifyId === userId) continue;
+
+      const isReplyTarget = notifyId === replyToSenderId && !explicitMentions.has(notifyId);
+      const title = isReplyTarget ? `@${handle} replied to you` : `@${handle} mentioned you`;
 
       await db.insert(notifications).values({
-        userId: mentionedId,
+        userId: notifyId,
         type: 'mention',
-        title: `@${handle} mentioned you`,
+        title,
         body: content.slice(0, 100),
         data: { messageId: msg.id, roomId: timezoneRoom, senderHandle: handle },
       });
 
       // Emit real-time notification if user is online
-      io.to(`user:${mentionedId}`).emit('notification:new', {
+      io.to(`user:${notifyId}`).emit('notification:new', {
         type: 'mention',
-        title: `@${handle} mentioned you`,
+        title,
         body: content.slice(0, 100),
       });
 
-      // Push notification if not in this room
+      // Push notification (respects mentions preference)
       const mentionedProfile = await db
         .select({ expoPushToken: userProfiles.expoPushToken })
         .from(userProfiles)
-        .where(eq(userProfiles.userId, mentionedId))
+        .where(eq(userProfiles.userId, notifyId))
         .limit(1);
 
-      if (await shouldSendPush(mentionedId, 'mention')) {
+      if (await shouldSendPush(notifyId, 'mention')) {
         await sendPushToUser(
           mentionedProfile[0]?.expoPushToken,
-          `@${handle} mentioned you`,
+          title,
           content.slice(0, 100),
           { type: 'mention', roomId: timezoneRoom }
         );
@@ -192,13 +209,14 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
           blockedSet.add(b.userId === userId ? b.blockedUserId : b.userId);
         }
 
-        const mentionedSet = new Set(mentionedUserIds);
+        // Skip both @mentions AND reply targets — they already got a mention push
+        const alreadyNotified = notifyUserIds;
 
         // Build push batch
         const pushBatch = candidates
           .filter((c) => {
             if (blockedSet.has(c.userId)) return false;
-            if (mentionedSet.has(c.userId)) return false; // already got mention push
+            if (alreadyNotified.has(c.userId)) return false; // already got mention push
             // Default to true if no preference row exists
             const allowed = prefMap.has(c.userId) ? prefMap.get(c.userId) : true;
             return allowed && !!c.expoPushToken;

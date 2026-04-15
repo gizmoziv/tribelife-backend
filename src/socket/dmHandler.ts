@@ -118,17 +118,24 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
       .set({ hiddenAt: null })
       .where(eq(conversationParticipants.conversationId, data.conversationId));
 
-    // Build replyTo preview if this is a reply
+    // Build replyTo preview if this is a reply, and capture the original sender
     let replyTo: { id: number; content: string; senderHandle: string } | null = null;
+    let replyToSenderId: number | null = null;
     if (data.replyToId) {
       const [original] = await db
-        .select({ id: messages.id, content: messages.content, senderHandle: userProfiles.handle })
+        .select({
+          id: messages.id,
+          content: messages.content,
+          senderHandle: userProfiles.handle,
+          senderId: messages.senderId,
+        })
         .from(messages)
         .leftJoin(userProfiles, eq(userProfiles.userId, messages.senderId))
         .where(eq(messages.id, data.replyToId))
         .limit(1);
       if (original) {
         replyTo = { id: original.id, content: original.content ?? '', senderHandle: original.senderHandle ?? 'Unknown' };
+        replyToSenderId = original.senderId;
       }
     }
 
@@ -167,8 +174,14 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
     const recipients = otherParticipants.filter((p) => p.userId !== userId);
 
     if (isGroup) {
-      const notifTitle = `@${handle} in ${convo.groupName ?? 'Group'}`;
+      const groupLabel = convo.groupName ?? 'Group';
+      const defaultTitle = `@${handle} in ${groupLabel}`;
+      const replyTitle = `@${handle} replied to you`;
       const notifBody = content.slice(0, 100);
+
+      // Helper: is this recipient the reply target?
+      const isReplyTarget = (id: number) => replyToSenderId !== null && id === replyToSenderId;
+      const titleFor = (id: number) => isReplyTarget(id) ? replyTitle : defaultTitle;
 
       // Batch insert notifications
       if (recipients.length > 0) {
@@ -176,9 +189,9 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
           recipients.map((p) => ({
             userId: p.userId,
             type: 'new_dm' as const,
-            title: notifTitle,
+            title: titleFor(p.userId),
             body: notifBody,
-            data: { conversationId: data.conversationId, senderHandle: handle, isGroup: true, groupName: convo.groupName ?? '' },
+            data: { conversationId: data.conversationId, senderHandle: handle, isGroup: true, groupName: groupLabel },
           }))
         );
       }
@@ -187,18 +200,21 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
       for (const p of recipients) {
         io.to(`user:${p.userId}`).emit('notification:new', {
           type: 'new_dm',
-          title: notifTitle,
+          title: titleFor(p.userId),
           body: notifBody,
           conversationId: data.conversationId,
           isGroup: true,
-          groupName: convo.groupName ?? '',
+          groupName: groupLabel,
         });
       }
 
       // Batch push notifications
+      // Reply target uses 'mention' preference so they get notified even if
+      // they've turned off group DM push (since they were directly addressed).
       const pushMessages: { to: string; title: string; body: string; data: Record<string, unknown>; sound: 'default'; channelId: string }[] = [];
       for (const p of recipients) {
-        if (await shouldSendPush(p.userId, 'dm')) {
+        const prefType = isReplyTarget(p.userId) ? 'mention' : 'dm';
+        if (await shouldSendPush(p.userId, prefType)) {
           const [profile] = await db
             .select({ expoPushToken: userProfiles.expoPushToken })
             .from(userProfiles)
@@ -207,9 +223,9 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
           if (profile?.expoPushToken) {
             pushMessages.push({
               to: profile.expoPushToken,
-              title: notifTitle,
+              title: titleFor(p.userId),
               body: notifBody,
-              data: { type: 'new_dm', conversationId: data.conversationId, isGroup: true, groupName: convo.groupName ?? '' },
+              data: { type: 'new_dm', conversationId: data.conversationId, isGroup: true, groupName: groupLabel },
               sound: 'default',
               channelId: 'default',
             });
