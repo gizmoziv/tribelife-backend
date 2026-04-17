@@ -66,4 +66,23 @@ CREATE INDEX "news_articles_outlet_idx" ON "news_articles" USING btree ("outlet_
 CREATE INDEX "news_articles_importance_idx" ON "news_articles" USING btree ("importance");--> statement-breakpoint
 CREATE INDEX "news_outlets_enabled_idx" ON "news_outlets" USING btree ("enabled");--> statement-breakpoint
 CREATE INDEX "news_push_history_user_sent_idx" ON "news_push_history" USING btree ("user_id","sent_at");--> statement-breakpoint
-CREATE INDEX "news_reactions_article_idx" ON "news_reactions" USING btree ("article_id");
+CREATE INDEX "news_reactions_article_idx" ON "news_reactions" USING btree ("article_id");--> statement-breakpoint
+-- D-09: news_config seed defaults
+INSERT INTO "news_config" ("key", "value") VALUES
+  ('cron_interval_minutes',    '60'::jsonb),
+  ('max_article_age_hours',    '48'::jsonb),
+  ('daily_push_quota',         '3'::jsonb),
+  ('push_cooldown_minutes',    '45'::jsonb),
+  ('quiet_hours_start',        '22'::jsonb),
+  ('quiet_hours_end',          '7'::jsonb);
+--> statement-breakpoint
+-- D-01/D-02/D-04 + A-01/A-02 amendments: news_outlets seed — 6 launch outlets with political balance.
+-- feed_url values for WNA outlets are bare domains empirically verified in 01-00-WNA-PROBE.md
+-- (short slugs like 'ynet'/'i24' are silently treated as text keywords by WNA, not source filters — must use bare domains).
+INSERT INTO "news_outlets" ("slug", "name", "feed_url", "breaking_feed_url", "political_lean", "ingest_method") VALUES
+  ('arutz-sheva', 'Arutz Sheva',    'https://www.israelnationalnews.com/Rss.aspx', NULL, 'right',        'rss'),
+  ('c14',         'C14',            'https://www.c14.co.il/feed/',                 NULL, 'center-right', 'rss'),
+  ('jpost',       'Jerusalem Post', 'jpost.com',                                   NULL, 'center',       'world_news_api'),
+  ('ynet',        'Ynet',           'ynetnews.com',                                NULL, 'center-left', 'world_news_api'),
+  ('i24',         'i24NEWS',        'i24news.tv',                                  NULL, 'center',      'world_news_api'),
+  ('haaretz',     'Haaretz',        'haaretz.com',                                 NULL, 'left',        'world_news_api');
