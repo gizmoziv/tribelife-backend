@@ -25,6 +25,7 @@ import groupsRouter from './routes/groups';
 import wellKnownRouter from './routes/wellKnown';
 import deepLinkFallbackRouter from './routes/deepLinkFallback';
 import { startBeaconMatcherCron } from './jobs/beaconMatcher';
+import { startNewsIngesterCron } from './jobs/newsIngester';
 import { createSocketServer } from './socket';
 
 const app = express();
@@ -132,6 +133,7 @@ const PORT = process.env.PORT ?? 4000;
 httpServer.listen(PORT, () => {
   log.info({ port: PORT }, 'TribeLife backend running');
   startBeaconMatcherCron();
+  startNewsIngesterCron();
 });
 
 export { io };
