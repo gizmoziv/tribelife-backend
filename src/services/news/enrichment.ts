@@ -286,6 +286,25 @@ export async function enrichUnenriched(parentLog: Logger): Promise<EnrichmentSta
 
     const parsed = zodResult.data;
 
+    // Length sanity guard — rephrased titles shorter than 30% of original length
+    // are almost certainly truncated (e.g. nested-quote artifacts in Hebrew
+    // headlines pre-2026-04-17 prompt fix, or future prompt regressions).
+    // Treat as a failure: leave rephrased_title NULL so ENRICH-05's DB-derived
+    // cache re-picks the row on the next sweep. Same branch semantics as any
+    // other failure per D-03 (zero retry) / D-09 (NULL on failure).
+    if (parsed.rephrasedTitle.length < article.title.length * 0.3) {
+      articleLog.warn(
+        {
+          original_len: article.title.length,
+          rephrased_len: parsed.rephrasedTitle.length,
+          rephrased: parsed.rephrasedTitle,
+        },
+        'Rephrased title suspiciously short — treating as failure'
+      );
+      failed++;
+      continue;
+    }
+
     // D-08 drop routine
     if (parsed.importance === 'routine') {
       await db.delete(newsArticles).where(eq(newsArticles.id, article.id));
