@@ -207,7 +207,7 @@ export async function enrichUnenriched(parentLog: Logger): Promise<EnrichmentSta
         response_format: { type: 'json_object' },
         messages: [
           { role: 'system', content: systemPrompt },
-          { role: 'user', content: `Headline: "${article.title}"` },
+          { role: 'user', content: `Headline to process:\n${article.title}` },
         ],
       });
     } catch (err) {
