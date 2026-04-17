@@ -123,5 +123,203 @@ Example output:
 {"rephrasedTitle": "Netanyahu meets Biden to discuss Gaza ceasefire", "importance": "major", "originalLanguage": "en"}`;
 }
 
-// ── Main export: enrichUnenriched (implemented in Task 2) ────────────────
-// (Task 2 will append the `export async function enrichUnenriched(parentLog: Logger) { ... }` here.)
+// ── Main export: enrichUnenriched ────────────────────────────
+export type EnrichmentStats = {
+  enriched: number;        // successfully rephrased + classified as breaking|major
+  failed: number;          // LLM/network/parse/Zod error — rephrasedTitle stays NULL (D-09)
+  droppedRoutine: number;  // LLM classified as routine → DELETEd (D-08)
+  breakerSkipped: number;  // breaker tripped → raw title + importance='major' (D-16)
+  costCents: number;       // total cost accrued this sweep (for run-complete log)
+};
+
+export async function enrichUnenriched(parentLog: Logger): Promise<EnrichmentStats> {
+  const enrichmentLog = parentLog.child({ module: 'news-enrichment' });
+
+  // Pitfall 5: guard missing OPENAI_API_KEY
+  if (!process.env.OPENAI_API_KEY) {
+    enrichmentLog.warn('OPENAI_API_KEY not set, skipping enrichment sweep');
+    return { enriched: 0, failed: 0, droppedRoutine: 0, breakerSkipped: 0, costCents: 0 };
+  }
+
+  // Read config (cached 60s — preserved_terms + cap rarely change)
+  const preservedTerms = await getConfig<string[]>('preserved_terms', []);
+  const capUsd = await getConfig<number>('enrichment_daily_cap_usd', 0.50);
+  const capCents = Math.round(capUsd * 100);
+
+  // Read usage state DIRECTLY (uncached — mid-sweep flip must be visible)
+  let usage = await loadUsageState();
+
+  // SELECT unenriched rows (DB-derived cache per ENRICH-05 / D-02)
+  const rows = await db
+    .select({
+      id: newsArticles.id,
+      title: newsArticles.title,
+      outletId: newsArticles.outletId,
+      outletSlug: newsOutlets.slug,
+    })
+    .from(newsArticles)
+    .innerJoin(newsOutlets, eq(newsOutlets.id, newsArticles.outletId))
+    .where(isNull(newsArticles.rephrasedTitle))
+    .orderBy(asc(newsArticles.createdAt))
+    .limit(SWEEP_BATCH_LIMIT);
+
+  enrichmentLog.info({ unenriched_count: rows.length }, 'Starting enrichment sweep');
+
+  if (rows.length === 0) {
+    return { enriched: 0, failed: 0, droppedRoutine: 0, breakerSkipped: 0, costCents: 0 };
+  }
+
+  const systemPrompt = buildSystemPrompt(preservedTerms);
+  const startCents = usage.cents_spent;
+  let enriched = 0;
+  let failed = 0;
+  let droppedRoutine = 0;
+  let breakerSkipped = 0;
+
+  for (const article of rows) {
+    const articleLog = enrichmentLog.child({
+      article_id: article.id,
+      outlet_slug: article.outletSlug,
+    });
+
+    // D-16 breaker-tripped branch: raw title + major, skip LLM
+    if (usage.breaker_tripped) {
+      await db
+        .update(newsArticles)
+        .set({
+          rephrasedTitle: article.title,
+          importance: 'major',
+          originalLanguage: null,
+        })
+        .where(eq(newsArticles.id, article.id));
+      breakerSkipped++;
+      articleLog.debug('Breaker active — using raw title');
+      continue;
+    }
+
+    // LLM call — D-03 zero retry, log+skip+continue on error
+    let response;
+    try {
+      response = await client.chat.completions.create({
+        model: MODEL,
+        temperature: LLM_TEMPERATURE,
+        max_tokens: LLM_MAX_TOKENS,
+        response_format: { type: 'json_object' },
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: `Headline: "${article.title}"` },
+        ],
+      });
+    } catch (err) {
+      articleLog.warn({ err }, 'OpenAI call failed');
+      failed++;
+      continue;  // rephrasedTitle stays NULL → hidden from feed (ENRICH-04)
+    }
+
+    // ── Cost accounting (Pitfall 3: integer micro-cents to avoid float drift) ──
+    //
+    // Unit system:
+    //   1 micro-cent = 10⁻⁶ cent
+    //   GPT-4o-mini: $0.15/1M input tokens → 15 micro-cents/token (input)
+    //                $0.60/1M output tokens → 60 micro-cents/token (output)
+    //
+    // Conversion: microcents / 1_000_000 = cents  (NOT /1_000 — that would be
+    // off by 1000× and would trip the breaker after ~7 articles instead of
+    // ~6,600 at the 0.50-USD default cap, breaking ENRICH-01 at runtime).
+    //
+    // Worked example — typical 350-token call (300 input + 50 output):
+    //   microCents = 300 × 15 + 50 × 60 = 4500 + 3000 = 7500
+    //   callCents  = 7500 / 1_000_000   = 0.0075 cents
+    //   (matches RESEARCH.md §Key Findings: ~$0.000075 per article)
+    const promptTokens = response.usage?.prompt_tokens ?? 0;
+    const completionTokens = response.usage?.completion_tokens ?? 0;
+    const microCents =
+      promptTokens * PRICE_INPUT_MICROCENTS_PER_TOKEN +
+      completionTokens * PRICE_OUTPUT_MICROCENTS_PER_TOKEN;
+    // micro-cents (10⁻⁶ cents) → cents: divide by 1_000_000
+    const callCents = microCents / 1_000_000;
+    usage.cents_spent += callCents;
+
+    // Log the worked example on every call so operators can eyeball unit correctness.
+    articleLog.debug(
+      {
+        prompt_tokens: promptTokens,
+        completion_tokens: completionTokens,
+        micro_cents: microCents,
+        call_cents: callCents,
+      },
+      'Cost accounting (microCents / 1_000_000 = cents)'
+    );
+
+    // D-17 inclusive-at-cap trip
+    if (!usage.breaker_tripped && usage.cents_spent >= capCents) {
+      usage.breaker_tripped = true;
+      enrichmentLog.warn(
+        { cents_spent: usage.cents_spent, cap_cents: capCents },
+        'Enrichment breaker tripped'
+      );
+    }
+
+    // Persist usage on EVERY call (atomic JSONB overwrite per §Pattern H)
+    await persistUsageState(usage);
+
+    // Parse LLM JSON
+    const rawContent = response.choices[0]?.message?.content ?? '{}';
+    let parsedJson: unknown;
+    try {
+      parsedJson = JSON.parse(rawContent);
+    } catch {
+      articleLog.warn({ raw: rawContent.slice(0, 200) }, 'LLM response not valid JSON');
+      failed++;
+      continue;
+    }
+
+    const zodResult = EnrichmentResponse.safeParse(parsedJson);
+    if (!zodResult.success) {
+      articleLog.warn(
+        { raw: rawContent.slice(0, 200), zod_err: zodResult.error.flatten() },
+        'LLM response failed Zod validation'
+      );
+      failed++;
+      continue;
+    }
+
+    const parsed = zodResult.data;
+
+    // D-08 drop routine
+    if (parsed.importance === 'routine') {
+      await db.delete(newsArticles).where(eq(newsArticles.id, article.id));
+      droppedRoutine++;
+      articleLog.debug('Dropped routine article');
+      continue;
+    }
+
+    // Success: write three enrichment fields
+    await db
+      .update(newsArticles)
+      .set({
+        rephrasedTitle: parsed.rephrasedTitle,
+        importance: parsed.importance,
+        originalLanguage: parsed.originalLanguage,
+      })
+      .where(eq(newsArticles.id, article.id));
+    enriched++;
+    articleLog.debug({ importance: parsed.importance }, 'Article enriched');
+  }
+
+  const costCents = usage.cents_spent - startCents;
+
+  enrichmentLog.info(
+    {
+      enriched,
+      failed,
+      dropped_routine: droppedRoutine,
+      breaker_skipped: breakerSkipped,
+      cost_cents: costCents,
+      breaker_tripped: usage.breaker_tripped,
+    },
+    'Enrichment sweep complete'
+  );
+
+  return { enriched, failed, droppedRoutine, breakerSkipped, costCents };
+}
