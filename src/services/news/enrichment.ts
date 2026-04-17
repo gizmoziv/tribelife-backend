@@ -2,15 +2,20 @@
  * News article enrichment service.
  *
  * For each news_articles row with rephrased_title IS NULL, makes one
- * GPT-4o-mini call (JSON mode, temperature 0) that returns a 3-field JSON
- * object: { rephrasedTitle, importance, originalLanguage }. Validates
- * with Zod, then either UPDATEs the row (breaking/major) or DELETEs it
- * (routine per D-08 / ENRICH-03).
+ * GPT-4o-mini call (JSON mode, temperature 0) that returns a 4-field JSON
+ * object: { rephrasedTitle, importance, originalLanguage, translatedTitle }.
+ * Validates with Zod (including a superRefine cross-field check that
+ * non-English articles carry a non-empty translatedTitle), then either
+ * UPDATEs the row (breaking/major) or DELETEs it (routine per D-08 / ENRICH-03).
+ *
+ * translatedTitle is populated only for non-English articles (D-04 Path A —
+ * merged single LLM call). English articles receive translatedTitle: null.
+ * The Zod superRefine enforces this at parse time.
  *
  * A USD cost meter in news_config.enrichment_usage_today tracks daily
  * spend; once cents_spent >= enrichment_daily_cap_usd * 100, the breaker
  * trips and subsequent articles receive raw title + importance='major'
- * (ENRICH-07 graceful degrade per D-16).
+ * + translatedTitle=null (ENRICH-07 graceful degrade per D-16).
  *
  * Decisions: D-01, D-02, D-03, D-04, D-05, D-06, D-07, D-08, D-09,
  *            D-11, D-13, D-14, D-15, D-16, D-17.
@@ -56,6 +61,23 @@ const EnrichmentResponse = z.object({
   // ISO 639-1 two-letter code, optional -<REGION> suffix (e.g. "en", "he", "zh-CN").
   // Pitfall 1: reject "Hebrew", "iw", "hebrew-il".
   originalLanguage: z.string().regex(/^[a-z]{2}(-[A-Z]{2})?$/),
+  // D-04 Path A: null for English articles; non-empty English string for non-English.
+  // Use .nullable() (not .optional()) so the LLM must explicitly emit null for English
+  // articles — prevents ambiguity where "missing" could mean "forgot to translate."
+  translatedTitle: z.string().min(1).nullable(),
+}).superRefine((data, ctx) => {
+  // Cross-field rule: non-English articles MUST carry a non-empty English translation.
+  // The plain .nullable() alone accepts null for any language, which would allow
+  // the LLM (or an adversarial response) to skip the translation on a Hebrew/Arabic/etc.
+  // article. This refinement closes that gap at parse time — failing safeParse
+  // routes the article down the existing failed++ + continue path.
+  if (data.originalLanguage !== 'en' && (data.translatedTitle === null || data.translatedTitle.length === 0)) {
+    ctx.addIssue({
+      code: 'custom',
+      message: 'translatedTitle required for non-English articles',
+      path: ['translatedTitle'],
+    });
+  }
 });
 type EnrichmentResponseT = z.infer<typeof EnrichmentResponse>;
 
@@ -104,7 +126,7 @@ async function persistUsageState(usage: UsageToday): Promise<void> {
 
 // ── Prompt assembly ────────────────────────────
 function buildSystemPrompt(preservedTerms: string[]): string {
-  return `You are an editor for a neutral news feed. For each article headline, you return a JSON object with three fields: rephrasedTitle, importance, and originalLanguage.
+  return `You are an editor for a neutral news feed. For each article headline, you return a JSON object with four fields: rephrasedTitle, importance, originalLanguage, and translatedTitle.
 
 RULES:
 1. rephrasedTitle: Rewrite the headline in a neutral, factual tone. Remove clickbait, emotional adjectives, ideological framing, and question-mark teasers. Keep it roughly the same length as the original. CRITICAL: write the rephrased headline in the SAME LANGUAGE as the original headline. Do NOT translate.
@@ -113,14 +135,18 @@ RULES:
    - "major": Significant daily news (policy announcements, diplomatic moves, economic shifts, named public figures)
    - "routine": Trivial or non-news content (sports scores, weather, gossip, lifestyle, opinion pieces, obituaries of non-public figures)
 3. originalLanguage: The ISO 639-1 two-letter code of the original headline's language (e.g., "en", "he", "fr", "ar", "ru", "es", "de").
+4. translatedTitle: IF originalLanguage !== "en", translate rephrasedTitle into English, preserving the PRESERVED TERMS above unchanged. IF originalLanguage === "en", return null (JSON literal null) for this field. Never return an empty string.
 
-PRESERVED TERMS (keep these exact strings unchanged in rephrasedTitle; do not translate, synonym-swap, or paraphrase them):
+PRESERVED TERMS (keep these exact strings unchanged in rephrasedTitle and translatedTitle; do not translate, synonym-swap, or paraphrase them):
 ${preservedTerms.join(', ')}
 
 Respond with ONLY a valid JSON object. No prose, no markdown, no explanation.
 
-Example output:
-{"rephrasedTitle": "Netanyahu meets Biden to discuss Gaza ceasefire", "importance": "major", "originalLanguage": "en"}`;
+Example output (Hebrew input):
+{"rephrasedTitle": "נתניהו נפגש עם ביידן לדיון על הפסקת אש בעזה", "importance": "major", "originalLanguage": "he", "translatedTitle": "Netanyahu meets Biden to discuss Gaza ceasefire"}
+
+Example output (English input):
+{"rephrasedTitle": "Netanyahu meets Biden to discuss Gaza ceasefire", "importance": "major", "originalLanguage": "en", "translatedTitle": null}`;
 }
 
 // ── Main export: enrichUnenriched ────────────────────────────
@@ -183,6 +209,7 @@ export async function enrichUnenriched(parentLog: Logger): Promise<EnrichmentSta
     });
 
     // D-16 breaker-tripped branch: raw title + major, skip LLM
+    // translatedTitle set to null (English-safe fallback, no translation cost).
     if (usage.breaker_tripped) {
       await db
         .update(newsArticles)
@@ -190,6 +217,7 @@ export async function enrichUnenriched(parentLog: Logger): Promise<EnrichmentSta
           rephrasedTitle: article.title,
           importance: 'major',
           originalLanguage: null,
+          translatedTitle: null,
         })
         .where(eq(newsArticles.id, article.id));
       breakerSkipped++;
@@ -313,13 +341,16 @@ export async function enrichUnenriched(parentLog: Logger): Promise<EnrichmentSta
       continue;
     }
 
-    // Success: write three enrichment fields
+    // Success: write four enrichment fields atomically (D-04 Path A — single LLM call).
+    // translatedTitle is guaranteed non-null for non-English articles (superRefine enforces this)
+    // and null for English articles (explicit JSON null from LLM, validated by Zod .nullable()).
     await db
       .update(newsArticles)
       .set({
         rephrasedTitle: parsed.rephrasedTitle,
         importance: parsed.importance,
         originalLanguage: parsed.originalLanguage,
+        translatedTitle: parsed.translatedTitle,
       })
       .where(eq(newsArticles.id, article.id));
     enriched++;
