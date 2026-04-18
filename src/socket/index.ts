@@ -5,8 +5,11 @@ import { eq } from 'drizzle-orm';
 import { db } from '../db';
 import { userProfiles } from '../db/schema';
 import logger from '../lib/logger';
+import { createClient } from 'redis';
+import { createAdapter } from '@socket.io/redis-adapter';
 
 const log = logger.child({ module: 'socket' });
+const redisLog = logger.child({ module: 'socket.redis' });
 import { registerRoomHandlers } from './roomHandler';
 import { registerDmHandlers } from './dmHandler';
 import { registerGlobeHandlers } from './globeHandler';
@@ -22,7 +25,21 @@ if (!allowedOrigins || allowedOrigins.length === 0) {
   log.warn('ALLOWED_ORIGINS not set -- allowing all origins (dev mode)');
 }
 
-export function createSocketServer(httpServer: HttpServer): SocketServer {
+// ── Redis Adapter Configuration ──────────────────────────────────────────
+const redisUrl = process.env.REDIS_URL;
+
+if (!redisUrl) {
+  if (process.env.NODE_ENV === 'production') {
+    redisLog.fatal({ event: 'redis_url_missing' }, 'REDIS_URL not set in production');
+    process.exit(1);
+  }
+  redisLog.warn({ event: 'redis_adapter_disabled' }, 'Redis adapter disabled — dev mode, single-instance only');
+} else if (process.env.NODE_ENV === 'production' && !redisUrl.startsWith('rediss://')) {
+  redisLog.fatal({ event: 'redis_url_insecure' }, 'Production requires rediss:// URL for TLS');
+  process.exit(1);
+}
+
+export async function createSocketServer(httpServer: HttpServer): Promise<SocketServer> {
   const io = new SocketServer(httpServer, {
     cors: {
       origin: allowedOrigins && allowedOrigins.length > 0
@@ -34,9 +51,72 @@ export function createSocketServer(httpServer: HttpServer): SocketServer {
         : true as any,
       credentials: true,
     },
+    transports: ['websocket'],   // D-11: websocket-only, eliminates sticky-session requirement
     pingTimeout: 30_000,
     pingInterval: 10_000,
   });
+
+  // ── Redis adapter ─────────────────────────────────────────────────────
+  if (redisUrl) {
+    function redactRedisUrl(url: string): string {
+      try {
+        const u = new URL(url);
+        u.password = '***';
+        return u.toString();
+      } catch {
+        return '[invalid-url]';
+      }
+    }
+
+    const pub = createClient({
+      url: redisUrl,
+      socket: {
+        reconnectStrategy: (retries: number) => {
+          if (retries > 10) {
+            return new Error('Redis reconnect limit exceeded');
+          }
+          return Math.min(Math.pow(2, retries) * 50, 2000);
+        },
+      },
+    });
+    const sub = pub.duplicate();
+
+    // MANDATORY: register error listeners BEFORE connect() — unlistened
+    // errors crash Node.js. duplicate() does NOT copy listeners — register
+    // on both clients independently.
+    pub.on('error', (err: Error) => {
+      if (!pub.isOpen) {
+        redisLog.fatal({ err, event: 'redis_terminal_failure' }, 'Redis connection failed');
+        process.exit(1);
+      }
+      redisLog.error({ err, event: 'redis_pub_error' }, 'Redis pub client error');
+    });
+    sub.on('error', (err: Error) => {
+      if (!sub.isOpen) {
+        redisLog.fatal({ err, event: 'redis_terminal_failure' }, 'Redis connection failed');
+        process.exit(1);
+      }
+      redisLog.error({ err, event: 'redis_sub_error' }, 'Redis sub client error');
+    });
+    pub.on('reconnecting', () => redisLog.warn({ event: 'redis_pub_reconnecting' }, 'Redis pub reconnecting'));
+    sub.on('reconnecting', () => redisLog.warn({ event: 'redis_sub_reconnecting' }, 'Redis sub reconnecting'));
+    pub.on('ready', () => redisLog.info({ event: 'redis_pub_ready' }, 'Redis pub ready'));
+    sub.on('ready', () => redisLog.info({ event: 'redis_sub_ready' }, 'Redis sub ready'));
+    pub.on('end', () => redisLog.warn({ event: 'redis_pub_end' }, 'Redis pub connection ended'));
+    sub.on('end', () => redisLog.warn({ event: 'redis_sub_end' }, 'Redis sub connection ended'));
+
+    await pub.connect();
+    await sub.connect();
+
+    io.adapter(createAdapter(pub, sub, {
+      key: `tribelife:${process.env.NODE_ENV ?? 'development'}:socket`,
+    }));
+
+    redisLog.info(
+      { event: 'redis_adapter_ready', url: redactRedisUrl(redisUrl) },
+      'Redis adapter ready'
+    );
+  }
 
   // Socket auth middleware — validates JWT and attaches user info
   io.use(async (socket: Socket, next: (err?: Error) => void) => {
