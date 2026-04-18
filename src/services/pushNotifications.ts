@@ -5,7 +5,7 @@
 import logger from '../lib/logger';
 import { db } from '../db';
 import { notificationPreferences, notifications } from '../db/schema';
-import { eq, and, sql } from 'drizzle-orm';
+import { eq, and, sql, inArray } from 'drizzle-orm';
 
 const log = logger.child({ module: 'push' });
 
@@ -93,7 +93,7 @@ export async function getUnreadBadgeCounts(userIds: number[]): Promise<Map<numbe
     .from(notifications)
     .where(and(
       eq(notifications.isRead, false),
-      sql`${notifications.userId} = ANY(${userIds})`,
+      inArray(notifications.userId, userIds),
     ))
     .groupBy(notifications.userId);
   const map = new Map<number, number>();
