@@ -10,6 +10,10 @@ import 'dotenv/config';
 import { db, pool } from './index';
 import { users, userProfiles, messages } from './schema';
 import { sql } from 'drizzle-orm';
+import {
+  DEFAULT_NEWS_PUSH_HISTORY_RETENTION_DAYS,
+  DEFAULT_NEWS_INGEST_CRON_SCHEDULE,
+} from '../services/news/config';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -609,6 +613,24 @@ async function main() {
     ON CONFLICT (key) DO NOTHING
   `);
   console.log('  ✓ news_config push_max_age_minutes=60 (idempotent)');
+
+  // Phase 2 D-17: retention window (days) — RETAIN-02. JSONB number literal.
+  await db.execute(sql`
+    INSERT INTO news_config (key, value, updated_at)
+    VALUES ('news_push_history_retention_days', ${DEFAULT_NEWS_PUSH_HISTORY_RETENTION_DAYS}::text::jsonb, NOW())
+    ON CONFLICT (key) DO NOTHING
+  `);
+  console.log(`  ✓ news_config news_push_history_retention_days=${DEFAULT_NEWS_PUSH_HISTORY_RETENTION_DAYS} (idempotent)`);
+
+  // Phase 2 D-17: ingest cron schedule — CONFIG-01. JSONB-quoted string.
+  // JSON.stringify wraps the schedule in double quotes so '"0 * * * *"'::jsonb parses as a JSON string.
+  // Using bare '0 * * * *'::jsonb would error: 'invalid input syntax for type json'.
+  await db.execute(sql`
+    INSERT INTO news_config (key, value, updated_at)
+    VALUES ('news_ingest_cron_schedule', ${JSON.stringify(DEFAULT_NEWS_INGEST_CRON_SCHEDULE)}::jsonb, NOW())
+    ON CONFLICT (key) DO NOTHING
+  `);
+  console.log(`  ✓ news_config news_ingest_cron_schedule=${DEFAULT_NEWS_INGEST_CRON_SCHEDULE} (idempotent)`);
 
   await pool.end();
 }
