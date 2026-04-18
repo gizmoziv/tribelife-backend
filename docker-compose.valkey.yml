@@ -1,0 +1,20 @@
+# Local Valkey for multi-pod Socket.IO adapter verification (SCALE-05 harness).
+# Valkey is a Redis-compatible fork; wire-compatible with @socket.io/redis-adapter + redis@4.
+# Usage:
+#   docker compose -f docker-compose.valkey.yml up -d
+#   REDIS_URL=redis://localhost:6379 PORT=4000 npm run dev
+#   REDIS_URL=redis://localhost:6379 PORT=4001 npm run dev   # in a second terminal
+# Cleanup:
+#   docker compose -f docker-compose.valkey.yml down -v
+services:
+  valkey:
+    image: valkey/valkey:latest
+    container_name: tribelife-valkey-dev
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
