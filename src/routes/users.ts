@@ -140,4 +140,46 @@ router.get('/search/handle', async (req: AuthRequest, res: Response): Promise<vo
   res.json({ users: filtered });
 });
 
+// ── News Push Preference ───────────────────────────────────────────────
+
+const NewsPushSchema = z.object({
+  newsPushEnabled: z.boolean(),
+});
+
+// GET /api/users/me/news-push → { newsPushEnabled: boolean }
+router.get('/me/news-push', async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.user!.id;
+    const [profile] = await db
+      .select({ newsPushEnabled: userProfiles.newsPushEnabled })
+      .from(userProfiles)
+      .where(eq(userProfiles.userId, userId))
+      .limit(1);
+    res.json({ newsPushEnabled: profile?.newsPushEnabled ?? true });
+  } catch (err) {
+    console.error('[users/news-push GET]', err);
+    res.status(500).json({ error: 'Failed to fetch news push preference' });
+  }
+});
+
+// PUT /api/users/me/news-push → { ok: true }
+router.put('/me/news-push', async (req: AuthRequest, res: Response): Promise<void> => {
+  const userId = req.user!.id;
+  const parse = NewsPushSchema.safeParse(req.body);
+  if (!parse.success) {
+    res.status(400).json({ error: parse.error.errors[0].message });
+    return;
+  }
+  try {
+    await db
+      .update(userProfiles)
+      .set({ newsPushEnabled: parse.data.newsPushEnabled, updatedAt: new Date() })
+      .where(eq(userProfiles.userId, userId));
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[users/news-push PUT]', err);
+    res.status(500).json({ error: 'Failed to update news push preference' });
+  }
+});
+
 export default router;
