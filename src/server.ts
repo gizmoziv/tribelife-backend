@@ -27,6 +27,7 @@ import wellKnownRouter from './routes/wellKnown';
 import deepLinkFallbackRouter from './routes/deepLinkFallback';
 import { startBeaconMatcherCron } from './jobs/beaconMatcher';
 import { startNewsIngesterCron } from './jobs/newsIngester';
+import { startNewsPushRetentionCron } from './jobs/newsPushRetention';
 import { createSocketServer } from './socket';
 
 const app = express();
@@ -135,6 +136,7 @@ async function bootstrap(): Promise<void> {
     log.info({ port: PORT }, 'TribeLife backend running');
     startBeaconMatcherCron();
     startNewsIngesterCron();
+    startNewsPushRetentionCron();
   });
 }
 
