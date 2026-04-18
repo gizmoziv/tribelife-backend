@@ -125,18 +125,20 @@ app.get('*', (_req, res, next) => {
   res.sendFile(path.join(resolvedPublicDir, 'index.html'));
 });
 
-// ── Socket.io ─────────────────────────────────────────────────────────────
-const io = createSocketServer(httpServer);
-app.set('io', io);
+// ── Boot ───────────────────────────────────────────────────────────────────
+async function bootstrap(): Promise<void> {
+  const io = await createSocketServer(httpServer);
+  app.set('io', io);
 
-// ── Start ──────────────────────────────────────────────────────────────────
-const PORT = process.env.PORT ?? 4000;
+  const PORT = process.env.PORT ?? 4000;
+  httpServer.listen(PORT, () => {
+    log.info({ port: PORT }, 'TribeLife backend running');
+    startBeaconMatcherCron();
+    startNewsIngesterCron();
+  });
+}
 
-httpServer.listen(PORT, () => {
-  log.info({ port: PORT }, 'TribeLife backend running');
-  startBeaconMatcherCron();
-  startNewsIngesterCron();
+bootstrap().catch((err) => {
+  log.fatal({ err }, 'Redis connection failed');
+  process.exit(1);
 });
-
-export { io };
-export { logger };
