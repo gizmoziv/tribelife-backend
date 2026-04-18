@@ -167,8 +167,135 @@ export async function dispatchBreakingPushes(
 
   stats.eligible = eligibleUsers.length * articles.length;
 
-  // (Task 2 plugs the per-user gating loop + batch send here.)
+  // ── Pre-fetch badge counts (Pitfall 6 — batched, not per-user) ────
+  const userIds = eligibleUsers.map((u) => u.userId);
+  const badgeMap = userIds.length > 0
+    ? await getUnreadBadgeCounts(userIds)
+    : new Map<number, number>();
 
-  pushLog.info({ ...stats }, 'Push dispatch sweep complete');
+  // Collect envelopes across all (user, article) pairs that pass all gates;
+  // batch-send at the end. Fresh object literal per iteration guards T-04-02.
+  const envelopes: Array<{
+    to: string;
+    title: string;
+    body: string;
+    sound: 'default';
+    channelId: string;
+    data: { type: 'news_breaking'; articleId: number };
+    badge: number;
+  }> = [];
+
+  for (const article of articles) {
+    const articleLog = pushLog.child({ article_id: article.id });
+
+    // D-11 null guard — if both titles are NULL the envelope body is
+    // meaningless; count as stale for every eligible user so the aggregate
+    // reflects the wasted candidates.
+    const headline = article.translatedTitle ?? article.rephrasedTitle;
+    if (!headline) {
+      stats.skippedStale += eligibleUsers.length;
+      articleLog.warn({}, 'article has no headline — skipping all users');
+      continue;
+    }
+
+    for (const user of eligibleUsers) {
+      try {
+        // 1. Quiet hours (D-09) — silent skip, NO history row.
+        if (isWithinQuietHours(user.timezone!, quietStart, quietEnd)) {
+          stats.skippedQuiet++;
+          continue;
+        }
+
+        // 2. Quota (D-06) — rolling 24h window, NO history row on overflow.
+        const [quotaRow] = await db
+          .select({ cnt24h: sql<number>`COUNT(*)::int` })
+          .from(newsPushHistory)
+          .where(
+            and(
+              eq(newsPushHistory.userId, user.userId),
+              gt(newsPushHistory.sentAt, sql.raw(`NOW() - INTERVAL '24 hours'`)),
+            ),
+          );
+        if ((quotaRow?.cnt24h ?? 0) >= dailyPushQuota) {
+          stats.skippedQuota++;
+          continue;
+        }
+
+        // 3. Cooldown (D-10) — unbounded MAX (not restricted to 24h so a
+        //    user who hit quota yesterday still cools for 45m today).
+        //    NO history row on active cooldown.
+        const [cooldownRow] = await db
+          .select({ lastSent: max(newsPushHistory.sentAt) })
+          .from(newsPushHistory)
+          .where(eq(newsPushHistory.userId, user.userId));
+        const lastSent = cooldownRow?.lastSent;
+        if (lastSent !== null && lastSent !== undefined) {
+          const msSinceLast = Date.now() - new Date(lastSent).getTime();
+          if (msSinceLast < cooldownMinutes * 60_000) {
+            stats.skippedCooldown++;
+            continue;
+          }
+        }
+
+        // 4. INSERT news_push_history BEFORE the Expo send (D-03).
+        //    UNIQUE(userId, articleId) + onConflictDoNothing() is the
+        //    idempotency guard against overlapping sweeps (T-04-04).
+        await db
+          .insert(newsPushHistory)
+          .values({ userId: user.userId, articleId: article.id })
+          .onConflictDoNothing();
+
+        // 5. Build envelope (D-12). Fresh literal per iteration — T-04-02.
+        envelopes.push({
+          to: user.expoPushToken!,
+          title: 'Breaking',
+          body: `${headline} — ${article.outletName}`,
+          sound: 'default',
+          channelId: 'news',
+          data: { type: 'news_breaking', articleId: article.id },
+          badge: badgeMap.get(user.userId) ?? 0,
+        });
+      } catch (err) {
+        articleLog.warn(
+          { err, user_id: user.userId },
+          'user dispatch failed — skipping',
+        );
+        // continue to next user
+      }
+    }
+  }
+
+  // ── Batch Expo send, 100 at a time, sequential (D-04) ────────────
+  for (let i = 0; i < envelopes.length; i += 100) {
+    const chunk = envelopes.slice(i, i + 100);
+    try {
+      await sendPushNotifications(chunk);
+      stats.sent += chunk.length;
+      pushLog.info(
+        { batch_size: chunk.length, batch_index: i },
+        'batch sent',
+      );
+    } catch (err) {
+      // T-04-05: internal error log only; no propagation to caller.
+      pushLog.error(
+        { err, batch_index: i, batch_size: chunk.length },
+        'batch send failed — continuing',
+      );
+      stats.expoErrors++;
+    }
+  }
+
+  pushLog.info(
+    {
+      eligible: stats.eligible,
+      sent: stats.sent,
+      skipped_quiet: stats.skippedQuiet,
+      skipped_cooldown: stats.skippedCooldown,
+      skipped_quota: stats.skippedQuota,
+      skipped_stale: stats.skippedStale,
+      expo_errors: stats.expoErrors,
+    },
+    'Push dispatch sweep complete',
+  );
   return stats;
 }
