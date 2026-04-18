@@ -12,7 +12,7 @@ import {
 import { eq, and, isNull } from 'drizzle-orm';
 import { moderateMessage } from '../services/claude';
 import { moderateMessageImages } from '../services/imageModeration';
-import { sendPushToUser, sendPushNotifications, shouldSendPush } from '../services/pushNotifications';
+import { sendPushToUser, sendPushNotifications, shouldSendPush, getUnreadBadgeCounts } from '../services/pushNotifications';
 
 const log = logger.child({ module: 'socket:dm' });
 
@@ -118,17 +118,24 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
       .set({ hiddenAt: null })
       .where(eq(conversationParticipants.conversationId, data.conversationId));
 
-    // Build replyTo preview if this is a reply
+    // Build replyTo preview if this is a reply, and capture the original sender
     let replyTo: { id: number; content: string; senderHandle: string } | null = null;
+    let replyToSenderId: number | null = null;
     if (data.replyToId) {
       const [original] = await db
-        .select({ id: messages.id, content: messages.content, senderHandle: userProfiles.handle })
+        .select({
+          id: messages.id,
+          content: messages.content,
+          senderHandle: userProfiles.handle,
+          senderId: messages.senderId,
+        })
         .from(messages)
         .leftJoin(userProfiles, eq(userProfiles.userId, messages.senderId))
         .where(eq(messages.id, data.replyToId))
         .limit(1);
       if (original) {
         replyTo = { id: original.id, content: original.content ?? '', senderHandle: original.senderHandle ?? 'Unknown' };
+        replyToSenderId = original.senderId;
       }
     }
 
@@ -167,68 +174,91 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
     const recipients = otherParticipants.filter((p) => p.userId !== userId);
 
     if (isGroup) {
-      const notifTitle = `@${handle} in ${convo.groupName ?? 'Group'}`;
+      const groupLabel = convo.groupName ?? 'Group';
+      const defaultTitle = `@${handle} in ${groupLabel}`;
+      const replyTitle = `@${handle} replied to you`;
       const notifBody = content.slice(0, 100);
 
-      // Batch insert notifications
+      // Helper: is this recipient the reply target?
+      const isReplyTarget = (id: number) => replyToSenderId !== null && id === replyToSenderId;
+      const titleFor = (id: number) => isReplyTarget(id) ? replyTitle : defaultTitle;
+
+      // Batch insert notifications; capture IDs so we can attach them to pushes
+      const notifIdByUser = new Map<number, number>();
       if (recipients.length > 0) {
-        await db.insert(notifications).values(
+        const inserted = await db.insert(notifications).values(
           recipients.map((p) => ({
             userId: p.userId,
             type: 'new_dm' as const,
-            title: notifTitle,
+            title: titleFor(p.userId),
             body: notifBody,
-            data: { conversationId: data.conversationId, senderHandle: handle, isGroup: true, groupName: convo.groupName ?? '' },
+            data: { conversationId: data.conversationId, senderHandle: handle, isGroup: true, groupName: groupLabel },
           }))
-        );
+        ).returning({ id: notifications.id, userId: notifications.userId });
+        for (const row of inserted) notifIdByUser.set(row.userId, row.id);
       }
 
       // Emit socket notifications
       for (const p of recipients) {
         io.to(`user:${p.userId}`).emit('notification:new', {
           type: 'new_dm',
-          title: notifTitle,
+          title: titleFor(p.userId),
           body: notifBody,
           conversationId: data.conversationId,
           isGroup: true,
-          groupName: convo.groupName ?? '',
+          groupName: groupLabel,
         });
       }
 
       // Batch push notifications
-      const pushMessages: { to: string; title: string; body: string; data: Record<string, unknown>; sound: 'default'; channelId: string }[] = [];
+      // Reply target uses 'mention' preference so they get notified even if
+      // they've turned off group DM push (since they were directly addressed).
+      const eligibleRecipients: { userId: number; expoPushToken: string }[] = [];
       for (const p of recipients) {
-        if (await shouldSendPush(p.userId, 'dm')) {
+        const prefType = isReplyTarget(p.userId) ? 'mention' : 'dm';
+        if (await shouldSendPush(p.userId, prefType)) {
           const [profile] = await db
             .select({ expoPushToken: userProfiles.expoPushToken })
             .from(userProfiles)
             .where(eq(userProfiles.userId, p.userId))
             .limit(1);
           if (profile?.expoPushToken) {
-            pushMessages.push({
-              to: profile.expoPushToken,
-              title: notifTitle,
-              body: notifBody,
-              data: { type: 'new_dm', conversationId: data.conversationId, isGroup: true, groupName: convo.groupName ?? '' },
-              sound: 'default',
-              channelId: 'default',
-            });
+            eligibleRecipients.push({ userId: p.userId, expoPushToken: profile.expoPushToken });
           }
         }
       }
+
+      // Fetch unread badge counts for all eligible users in a single query
+      const badgeMap = await getUnreadBadgeCounts(eligibleRecipients.map((r) => r.userId));
+
+      const pushMessages = eligibleRecipients.map((r) => ({
+        to: r.expoPushToken,
+        title: titleFor(r.userId),
+        body: notifBody,
+        data: {
+          type: 'new_dm',
+          conversationId: data.conversationId,
+          isGroup: true,
+          groupName: groupLabel,
+          notificationId: notifIdByUser.get(r.userId),
+        },
+        sound: 'default' as const,
+        badge: badgeMap.get(r.userId) ?? 0,
+        channelId: 'default',
+      }));
       if (pushMessages.length > 0) {
         sendPushNotifications(pushMessages).catch((err) => log.error({ err }, 'Group push failed'));
       }
     } else {
       // 1:1 DM notifications — existing behavior
       for (const p of recipients) {
-        await db.insert(notifications).values({
+        const [inserted] = await db.insert(notifications).values({
           userId: p.userId,
           type: 'new_dm',
           title: `Message from @${handle}`,
           body: content.slice(0, 100),
           data: { conversationId: data.conversationId, senderHandle: handle },
-        });
+        }).returning({ id: notifications.id });
 
         io.to(`user:${p.userId}`).emit('notification:new', {
           type: 'new_dm',
@@ -248,7 +278,8 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
             otherProfile[0]?.expoPushToken,
             `Message from @${handle}`,
             content.slice(0, 100),
-            { type: 'new_dm', conversationId: data.conversationId, senderHandle: handle }
+            { type: 'new_dm', conversationId: data.conversationId, senderHandle: handle, notificationId: inserted.id },
+            p.userId,
           );
         }
       }

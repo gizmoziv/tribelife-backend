@@ -10,6 +10,7 @@ import {
   numeric,
   unique,
   index,
+  pgEnum,
 } from 'drizzle-orm/pg-core';
 import { relations } from 'drizzle-orm';
 
@@ -38,6 +39,7 @@ export const userProfiles = pgTable('user_profiles', {
   premiumExpiresAt: timestamp('premium_expires_at'),
   revenuecatCustomerId: text('revenuecat_customer_id'),
   expoPushToken: text('expo_push_token'),                        // for push notifications
+  newsPushEnabled: boolean('news_push_enabled').notNull().default(false),
   createdAt: timestamp('created_at').defaultNow(),
   updatedAt: timestamp('updated_at').defaultNow(),
 }, (t) => ({
@@ -318,4 +320,105 @@ export const contentReportsRelations = relations(contentReports, ({ one }) => ({
 
 export const globeReadPositionsRelations = relations(globeReadPositions, ({ one }) => ({
   user: one(users, { fields: [globeReadPositions.userId], references: [users.id] }),
+}));
+
+// ─────────────────────────────────────────────
+// NEWS — Outlets, Articles, Reactions, Push History, Config (Phase 1 Sprint 4)
+// ─────────────────────────────────────────────
+
+// Enum for article importance (Phase 2 populates; Phase 1 leaves NULL)
+export const newsImportanceEnum = pgEnum('news_importance', ['breaking', 'major', 'routine']);
+
+// Enum for ingest method (supersedes original INGEST-03 "scrape-only"; D-03 dropped scraping)
+export const newsIngestMethodEnum = pgEnum('news_ingest_method', ['rss', 'world_news_api']);
+
+export const newsOutlets = pgTable('news_outlets', {
+  id: serial('id').primaryKey(),
+  slug: varchar('slug', { length: 50 }).notNull().unique(),
+  name: varchar('name', { length: 100 }).notNull(),
+  feedUrl: text('feed_url').notNull(),
+  breakingFeedUrl: text('breaking_feed_url'),          // INGEST-06: optional priority feed
+  politicalLean: varchar('political_lean', { length: 20 }).notNull(),
+  ingestMethod: newsIngestMethodEnum('ingest_method').notNull(),
+  enabled: boolean('enabled').notNull().default(true),
+  createdAt: timestamp('created_at').defaultNow(),
+  updatedAt: timestamp('updated_at').defaultNow(),
+}, (t) => ({
+  enabledIdx: index('news_outlets_enabled_idx').on(t.enabled),
+}));
+
+export const newsArticles = pgTable('news_articles', {
+  id: serial('id').primaryKey(),
+  outletId: integer('outlet_id').references(() => newsOutlets.id, { onDelete: 'cascade' }).notNull(),
+
+  // D-05 core fields
+  title: text('title').notNull(),
+  sourceUrl: text('source_url').notNull(),
+  urlHash: varchar('url_hash', { length: 64 }).notNull().unique(),  // D-07 SHA-256 hex
+  publishedAt: timestamp('published_at').notNull(),
+  imageUrl: text('image_url'),
+  summary: text('summary'),
+  author: varchar('author', { length: 255 }),
+
+  // D-06 Phase 2 placeholder columns (all nullable)
+  rephrasedTitle: text('rephrased_title'),
+  importance: newsImportanceEnum('importance'),
+  originalLanguage: varchar('original_language', { length: 10 }),
+  translatedTitle: text('translated_title'),
+
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+}, (t) => ({
+  publishedAtIdx: index('news_articles_published_at_idx').on(t.publishedAt),
+  outletIdx: index('news_articles_outlet_idx').on(t.outletId),
+  importanceIdx: index('news_articles_importance_idx').on(t.importance),
+}));
+
+export const newsReactions = pgTable('news_reactions', {
+  id: serial('id').primaryKey(),
+  articleId: integer('article_id').references(() => newsArticles.id, { onDelete: 'cascade' }).notNull(),
+  userId: integer('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
+  emoji: varchar('emoji', { length: 20 }).notNull(),
+  createdAt: timestamp('created_at').defaultNow(),
+}, (t) => ({
+  articleIdx: index('news_reactions_article_idx').on(t.articleId),
+  uniqReaction: unique().on(t.articleId, t.userId, t.emoji),
+}));
+
+export const newsPushHistory = pgTable('news_push_history', {
+  id: serial('id').primaryKey(),
+  userId: integer('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
+  articleId: integer('article_id').references(() => newsArticles.id, { onDelete: 'cascade' }).notNull(),
+  sentAt: timestamp('sent_at').notNull().defaultNow(),
+}, (t) => ({
+  userSentIdx: index('news_push_history_user_sent_idx').on(t.userId, t.sentAt),
+  uniqPush: unique().on(t.userId, t.articleId),
+}));
+
+export const newsConfig = pgTable('news_config', {
+  key: varchar('key', { length: 100 }).primaryKey(),
+  value: jsonb('value').notNull(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
+});
+
+// ─────────────────────────────────────────────
+// NEWS — Relations
+// ─────────────────────────────────────────────
+export const newsOutletsRelations = relations(newsOutlets, ({ many }) => ({
+  articles: many(newsArticles),
+}));
+
+export const newsArticlesRelations = relations(newsArticles, ({ one, many }) => ({
+  outlet: one(newsOutlets, { fields: [newsArticles.outletId], references: [newsOutlets.id] }),
+  reactions: many(newsReactions),
+  pushHistory: many(newsPushHistory),
+}));
+
+export const newsReactionsRelations = relations(newsReactions, ({ one }) => ({
+  article: one(newsArticles, { fields: [newsReactions.articleId], references: [newsArticles.id] }),
+  user: one(users, { fields: [newsReactions.userId], references: [users.id] }),
+}));
+
+export const newsPushHistoryRelations = relations(newsPushHistory, ({ one }) => ({
+  user: one(users, { fields: [newsPushHistory.userId], references: [users.id] }),
+  article: one(newsArticles, { fields: [newsPushHistory.articleId], references: [newsArticles.id] }),
 }));

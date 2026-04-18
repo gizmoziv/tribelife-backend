@@ -19,12 +19,14 @@ import revenuecatRouter from './routes/revenuecat';
 import moderationRouter from './routes/moderation';
 import uploadRouter from './routes/upload';
 import globeRouter from './routes/globe';
+import newsRouter from './routes/news';
 import reactionsRouter from './routes/reactions';
 import referralsRouter from './routes/referrals';
 import groupsRouter from './routes/groups';
 import wellKnownRouter from './routes/wellKnown';
 import deepLinkFallbackRouter from './routes/deepLinkFallback';
 import { startBeaconMatcherCron } from './jobs/beaconMatcher';
+import { startNewsIngesterCron } from './jobs/newsIngester';
 import { createSocketServer } from './socket';
 
 const app = express();
@@ -79,6 +81,7 @@ app.use('/api/revenuecat', revenuecatRouter);
 app.use('/api/moderation', moderationRouter);
 app.use('/api/upload', uploadRouter);
 app.use('/api/globe', globeRouter);
+app.use('/api/news', newsRouter);
 app.use('/api/reactions', reactionsRouter);
 app.use('/api/referrals', referralsRouter);
 app.use('/api/chat/groups', groupsRouter);
@@ -132,6 +135,7 @@ const PORT = process.env.PORT ?? 4000;
 httpServer.listen(PORT, () => {
   log.info({ port: PORT }, 'TribeLife backend running');
   startBeaconMatcherCron();
+  startNewsIngesterCron();
 });
 
 export { io };
