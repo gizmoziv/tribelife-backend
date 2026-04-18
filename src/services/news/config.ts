@@ -22,6 +22,14 @@ const log = logger.child({ module: 'news-config' });
 
 const CACHE_TTL_MS = 60_000;
 
+// ── Phase 2 defaults (news_config fallbacks) ───────────────────────────────
+// Consumed as the `defaultValue` arg to getConfig() in src/jobs/newsPushRetention.ts
+// (Plan 02, RETAIN-02) and src/jobs/newsIngester.ts (Plan 03, CONFIG-01).
+// Also referenced by src/db/seed.ts to seed the dev DB idempotently (D-17).
+// Change the value here and everywhere picks it up — single source of truth.
+export const DEFAULT_NEWS_PUSH_HISTORY_RETENTION_DAYS = 30;
+export const DEFAULT_NEWS_INGEST_CRON_SCHEDULE = '0 * * * *';
+
 type CacheEntry = { value: unknown; expiresAt: number };
 const cache = new Map<string, CacheEntry>();
 
