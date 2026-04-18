@@ -595,6 +595,21 @@ async function main() {
   }
 
   console.log(`\n🎉  Done! Seeded ${totalMessages} messages across ${TIMEZONE_DATA.length - skipped} rooms (${skipped} skipped).`);
+
+  // ── news_config seeds (idempotent) ─────────────────────────────────────────
+  // Phase 4 D-08: push_max_age_minutes controls the freshness window used by
+  // the breaking-news push dispatch sweep (skip push if publishedAt > N min old).
+  // Baseline Phase 1 D-09 + Phase 2 ENRICH-06/07 defaults live in the drizzle
+  // migrations (0006_secret_blade.sql, 0007_enrichment_seeds.sql); this INSERT
+  // mirrors that style so operators who re-run `npm run db:seed` get the full
+  // config set even on environments where the migrations were skipped.
+  await db.execute(sql`
+    INSERT INTO news_config (key, value, updated_at)
+    VALUES ('push_max_age_minutes', '60'::jsonb, NOW())
+    ON CONFLICT (key) DO NOTHING
+  `);
+  console.log('  ✓ news_config push_max_age_minutes=60 (idempotent)');
+
   await pool.end();
 }
 
