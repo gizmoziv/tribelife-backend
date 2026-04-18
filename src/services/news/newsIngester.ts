@@ -18,6 +18,7 @@ import * as rssAdapter from './rssAdapter';
 import * as worldNewsAdapter from './worldNewsAdapter';
 import * as articleStore from './articleStore';
 import { enrichUnenriched } from './enrichment';
+import { dispatchBreakingPushes } from './pushDispatcher';
 import type { OutletRow } from './types';
 
 const log = logger.child({ module: 'news-ingester' });
@@ -89,6 +90,9 @@ export async function runNewsIngestion(): Promise<void> {
   // ── Phase 2: enrichment sweep (all outlets done, now enrich NULL rows) ──
   const enrichResult = await enrichUnenriched(runLog);
 
+  // ── Phase 4: push dispatch sweep ──
+  const pushResult = await dispatchBreakingPushes(runLog);
+
   runLog.info({
     total_outlets: outlets.length,
     successful_outlets: succeededCount,
@@ -102,6 +106,14 @@ export async function runNewsIngestion(): Promise<void> {
     enrichment_dropped_routine: enrichResult.droppedRoutine,
     enrichment_breaker_skipped: enrichResult.breakerSkipped,
     enrichment_cost_cents: enrichResult.costCents,
+    // Phase 4 push dispatch aggregates:
+    push_eligible: pushResult.eligible,
+    push_sent: pushResult.sent,
+    push_skipped_quiet: pushResult.skippedQuiet,
+    push_skipped_cooldown: pushResult.skippedCooldown,
+    push_skipped_quota: pushResult.skippedQuota,
+    push_skipped_stale: pushResult.skippedStale,
+    push_expo_errors: pushResult.expoErrors,
     run_duration_ms: Date.now() - runStart,
   }, 'Run complete');
 }
