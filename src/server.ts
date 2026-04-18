@@ -131,11 +131,16 @@ async function bootstrap(): Promise<void> {
   const io = await createSocketServer(httpServer);
   app.set('io', io);
 
+  // News-ingester cron schedule is DB-configurable (Phase 2 CONFIG-01) —
+  // read news_config.news_ingest_cron_schedule and validate before listen()
+  // so an invalid prod value fails fast inside bootstrap().catch below,
+  // not after we've started accepting traffic. See D-13.
+  await startNewsIngesterCron();
+
   const PORT = process.env.PORT ?? 4000;
   httpServer.listen(PORT, () => {
     log.info({ port: PORT }, 'TribeLife backend running');
     startBeaconMatcherCron();
-    startNewsIngesterCron();
     startNewsPushRetentionCron();
   });
 }
