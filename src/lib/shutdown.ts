@@ -25,8 +25,11 @@ export interface ShutdownOptions {
  *   4. httpServer.closeIdleConnections() — Node 18.2+, drop idle keep-alive.
  *   5. task.stop() per cron         — stop future triggers; let in-flight finish.
  *   6. io.emit('server:shutdown', { reason: 'rolling_deploy' }) + wait 5s (D-15).
- *   7. httpServer.closeAllConnections() — force-close lingering HTTP.
- *   8. io.close()                   — close remaining sockets.
+ *   7. io.close()                   — close Socket.IO first so it can send
+ *                                     proper disconnect frames on live TCP
+ *                                     sockets (before HTTP force-close).
+ *   8. httpServer.closeAllConnections() — force-close any lingering HTTP
+ *                                     keep-alive sockets that outlasted io.
  *   9. pool.end()                   — drain in-flight Postgres queries.
  *  10. process.exit(0).
  *
@@ -85,13 +88,18 @@ export function registerShutdownSignals(opts: ShutdownOptions): void {
     log.info({ event: 'shutdown_step_notified_clients' }, 'Clients notified');
     await new Promise<void>((resolve) => setTimeout(resolve, 5_000));
 
-    // Step 7: force-close lingering HTTP (Node 18.2+).
-    opts.httpServer.closeAllConnections();
-    log.info({ event: 'shutdown_step_http_closed' }, 'HTTP connections closed');
-
-    // Step 8: close Socket.IO. io.close() is callback-style — wrap in Promise.
+    // Step 7: close Socket.IO first so it can send proper disconnect frames
+    // on still-live TCP sockets. io.close() is callback-style — wrap in
+    // Promise. Doing this BEFORE httpServer.closeAllConnections() avoids
+    // racing io.close() against already-destroyed upgraded WebSocket sockets,
+    // since Socket.IO shares the underlying HTTP server's connection pool.
     await new Promise<void>((resolve) => opts.io.close(() => resolve()));
     log.info({ event: 'shutdown_step_io_closed' }, 'Socket.IO closed');
+
+    // Step 8: force-close any lingering HTTP keep-alive sockets that
+    // outlasted io.close() (Node 18.2+).
+    opts.httpServer.closeAllConnections();
+    log.info({ event: 'shutdown_step_http_closed' }, 'HTTP connections closed');
 
     // Step 9: drain Postgres pool (awaits in-flight queries including any
     // cron jobs still finishing).
