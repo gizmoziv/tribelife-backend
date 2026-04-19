@@ -90,6 +90,7 @@ app.use(pinoHttp({
     return id;
   },
   customProps: (req, _res) => ({
+    reqId: req.id,
     userId: (req as AuthRequest).user?.id ?? null,
     userAgent: req.headers['user-agent'] ?? null,
   }),
