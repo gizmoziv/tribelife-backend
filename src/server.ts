@@ -9,7 +9,7 @@ import { createServer } from 'http';
 import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
-import pinoHttp from 'pino-http';
+import pinoHttp, { type Options as PinoHttpOptions } from 'pino-http';
 import crypto from 'crypto';
 import type { AuthRequest } from './middleware/auth';
 import errorHandler from './middleware/errorHandler';
@@ -87,7 +87,10 @@ app.use(pinoHttp({
   // ('info' | 'error' | 'warn' | ...), but our root logger is typed as
   // Logger<string>. The runtime behavior is identical (same pino instance,
   // same level set) — the cast only satisfies the TS type-checker.
-  logger: logger.child({ module: 'http' }) as never,
+  // Use the narrowing `PinoHttpOptions['logger']` rather than `as never` so
+  // the type-checker still flags future shape mismatches on pino/pino-http
+  // upgrades instead of silently succeeding (WR-05).
+  logger: logger.child({ module: 'http' }) as PinoHttpOptions['logger'],
   genReqId: (req, res) => {
     const id = (req.headers['x-request-id'] as string) ?? crypto.randomUUID();
     res.setHeader('x-request-id', id);
