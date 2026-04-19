@@ -22,17 +22,26 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
 
   // ── Send a direct message ─────────────────────────────────────────────
   socket.on('dm:message', async (data: { conversationId: number; content: string; replyToId?: number; mediaUrls?: string[] }) => {
+    log.info({ event: 'dm_received', userId, handle, conversationId: data?.conversationId, contentLen: data?.content?.length ?? 0, mediaCount: Array.isArray(data?.mediaUrls) ? data.mediaUrls.length : 0, hasReply: !!data?.replyToId }, 'dm:message received');
+
     const content = data.content?.trim() ?? '';
     const mediaUrls = Array.isArray(data.mediaUrls)
       ? data.mediaUrls.filter((u): u is string => typeof u === 'string').slice(0, 4)
       : [];
-    if (!content && mediaUrls.length === 0) return;
-    if (content.length > 2000) return;
+    if (!content && mediaUrls.length === 0) {
+      log.warn({ event: 'dm_dropped_empty', userId, conversationId: data?.conversationId }, 'dm:message dropped — empty content + no media');
+      return;
+    }
+    if (content.length > 2000) {
+      log.warn({ event: 'dm_dropped_too_long', userId, conversationId: data?.conversationId, contentLen: content.length }, 'dm:message dropped — content > 2000 chars');
+      return;
+    }
 
     // Content moderation check (skip for image-only messages)
     if (content) {
       const dmModResult = moderateMessage(content);
       if (!dmModResult.isAllowed) {
+        log.warn({ event: 'dm_moderation_rejected', userId, conversationId: data?.conversationId, reason: dmModResult.reason }, 'dm:message rejected by moderation');
         socket.emit('message:rejected', { reason: dmModResult.reason });
         return;
       }
@@ -51,7 +60,10 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
       )
       .limit(1);
 
-    if (participation.length === 0) return;
+    if (participation.length === 0) {
+      log.warn({ event: 'dm_dropped_not_participant', userId, conversationId: data?.conversationId }, 'dm:message dropped — sender is not an active participant');
+      return;
+    }
 
     // Fetch conversation to determine if group
     const [convo] = await db
@@ -60,7 +72,10 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
       .where(eq(conversations.id, data.conversationId))
       .limit(1);
 
-    if (!convo) return;
+    if (!convo) {
+      log.warn({ event: 'dm_dropped_no_convo', userId, conversationId: data?.conversationId }, 'dm:message dropped — conversation not found');
+      return;
+    }
 
     const isGroup = convo.isGroup === true;
 
@@ -153,6 +168,7 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
 
     // Emit to conversation room
     io.to(`conversation:${data.conversationId}`).emit('dm:message', msgPayload);
+    log.info({ event: 'dm_saved_emitted', userId, conversationId: data.conversationId, messageId: msg.id, isGroup }, 'dm:message persisted + broadcast');
 
     // Fire-and-forget image moderation
     if (mediaUrls.length > 0) {
