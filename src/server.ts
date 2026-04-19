@@ -225,6 +225,6 @@ async function bootstrap(): Promise<void> {
 }
 
 bootstrap().catch((err) => {
-  log.fatal({ err }, 'Redis connection failed');
+  log.fatal({ err }, 'Bootstrap failed');
   process.exit(1);
 });
