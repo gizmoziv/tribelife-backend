@@ -74,7 +74,11 @@ export async function createSocketServer(
           : (true as any),
       credentials: true,
     },
-    transports: ['websocket'], // D-11: websocket-only, eliminates sticky-session requirement
+    // TEMPORARY: allow polling fallback so pre-Feb-28 mobile builds can connect.
+    // Revert to ['websocket'] once v1.4 mobile (with websocket-only client) is
+    // the minimum deployed version. Polling-only clients require sticky sessions
+    // for horizontal scaling; safe while instance_count=1.
+    transports: ['polling', 'websocket'],
     pingTimeout: 30_000,
     pingInterval: 10_000,
   });
