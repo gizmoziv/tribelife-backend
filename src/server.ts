@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import 'express-async-errors';
 import path from 'path';
 import express from 'express';
 import logger from './lib/logger';
@@ -11,6 +12,7 @@ import rateLimit from 'express-rate-limit';
 import pinoHttp from 'pino-http';
 import crypto from 'crypto';
 import type { AuthRequest } from './middleware/auth';
+import errorHandler from './middleware/errorHandler';
 
 import authRouter from './routes/auth';
 import chatRouter from './routes/chat';
@@ -182,6 +184,13 @@ app.get('*', (_req, res, next) => {
   }
   res.sendFile(path.join(resolvedPublicDir, 'index.html'));
 });
+
+// ── Global error handler (HARDEN-01) ─────────────────────────────────────
+// 4-arg Express error middleware — MUST be the final app.use() call. Catches
+// uncaught errors from sync AND async route handlers (express-async-errors
+// loaded on line 2 propagates async rejections to next(err)). Logs full
+// error via pino + returns { error: string } with appropriate status.
+app.use(errorHandler);
 
 // ── Boot ───────────────────────────────────────────────────────────────────
 async function bootstrap(): Promise<void> {
