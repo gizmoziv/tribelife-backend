@@ -7,6 +7,7 @@
  * 3. Record new matches (score >= 0.65) and send push notifications
  */
 import cron from 'node-cron';
+import type { ScheduledTask } from 'node-cron';
 import { eq, and, isNull, isNotNull, or, lt, sql } from 'drizzle-orm';
 import logger from '../lib/logger';
 
@@ -210,9 +211,9 @@ async function runBeaconMatching(): Promise<void> {
   log.info({ comparisons: totalComparisons, matches: totalMatches }, 'Run complete');
 }
 
-export function startBeaconMatcherCron(): void {
+export function startBeaconMatcherCron(): ScheduledTask {
   // Run daily at 6:00 AM UTC
-  cron.schedule('0 6 * * *', async () => {
+  const task = cron.schedule('0 6 * * *', async () => {
     try {
       await runBeaconMatching();
     } catch (err) {
@@ -221,6 +222,7 @@ export function startBeaconMatcherCron(): void {
   });
 
   log.info('Cron scheduled: daily at 06:00 UTC');
+  return task;
 }
 
 // Export for manual trigger (e.g. admin endpoint or testing)

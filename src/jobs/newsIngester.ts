@@ -21,6 +21,7 @@
  * errors are handled inside runNewsIngestion itself (D-10 ingest).
  */
 import cron from 'node-cron';
+import type { ScheduledTask } from 'node-cron';
 import logger from '../lib/logger';
 import { runNewsIngestion } from '../services/news/newsIngester';
 import {
@@ -30,7 +31,7 @@ import {
 
 const log = logger.child({ module: 'news-ingester-cron' });
 
-export async function startNewsIngesterCron(): Promise<void> {
+export async function startNewsIngesterCron(): Promise<ScheduledTask> {
   const raw = await getConfig<string>(
     'news_ingest_cron_schedule',
     DEFAULT_NEWS_INGEST_CRON_SCHEDULE,
@@ -57,7 +58,7 @@ export async function startNewsIngesterCron(): Promise<void> {
     schedule = DEFAULT_NEWS_INGEST_CRON_SCHEDULE;
   }
 
-  cron.schedule(
+  const task = cron.schedule(
     schedule,
     async () => {
       try {
@@ -73,6 +74,7 @@ export async function startNewsIngesterCron(): Promise<void> {
     { event: 'news_ingest_schedule_loaded', schedule },
     'Cron scheduled',
   );
+  return task;
 }
 
 // Named export for manual trigger (e.g., admin endpoint or ad-hoc test script)

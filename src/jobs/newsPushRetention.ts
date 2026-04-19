@@ -21,6 +21,7 @@
  *     throw bubbles up to the outer catch, never crashes the Node process.
  */
 import cron from 'node-cron';
+import type { ScheduledTask } from 'node-cron';
 import { lt } from 'drizzle-orm';
 import logger from '../lib/logger';
 import { db } from '../db';
@@ -63,10 +64,10 @@ export async function runNewsPushRetention(): Promise<{ deleted: number }> {
   return { deleted };
 }
 
-export function startNewsPushRetentionCron(): void {
+export function startNewsPushRetentionCron(): ScheduledTask {
   // Daily at 03:00 UTC — off-peak globally, no collision with the
   // hourly news-ingester tick at :00 or the beacon matcher at 06:00 UTC.
-  cron.schedule(
+  const task = cron.schedule(
     '0 3 * * *',
     async () => {
       try {
@@ -82,4 +83,5 @@ export function startNewsPushRetentionCron(): void {
     { event: 'news_push_retention_scheduled', schedule: '0 3 * * *' },
     'Cron scheduled',
   );
+  return task;
 }
