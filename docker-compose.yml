@@ -10,6 +10,16 @@ services:
       POSTGRES_DB: tribelife
     volumes:
       - pgdata:/var/lib/postgresql/data
-
+  valkey:
+    image: valkey/valkey:latest
+    container_name: tribelife-valkey-dev
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: [ "CMD", "valkey-cli", "ping" ]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
 volumes:
   pgdata:
