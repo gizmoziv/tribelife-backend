@@ -8,6 +8,9 @@ import { createServer } from 'http';
 import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
+import pinoHttp from 'pino-http';
+import crypto from 'crypto';
+import type { AuthRequest } from './middleware/auth';
 
 import authRouter from './routes/auth';
 import chatRouter from './routes/chat';
@@ -67,6 +70,59 @@ app.use(cors({
   credentials: true,
 }));
 app.use(express.json({ limit: '100kb' }));
+
+// ── HTTP request logging (HARDEN-03) ─────────────────────────────────────
+// One structured pino line per HTTP request with method, path, status,
+// duration_ms, userId (if authed), ip, userAgent, reqId. Reuses the root
+// pino logger via a child to keep output unified (D-21). genReqId honors
+// upstream x-request-id if present; echoes the id in the response header
+// for support-ticket correlation (D-26). customProps reads AuthUser.id
+// from req.user — AuthUser has field `id`, NOT `userId` (auth.ts:13).
+app.use(pinoHttp({
+  // Cast: pino-http's Options.logger type narrows to the default pino levels
+  // ('info' | 'error' | 'warn' | ...), but our root logger is typed as
+  // Logger<string>. The runtime behavior is identical (same pino instance,
+  // same level set) — the cast only satisfies the TS type-checker.
+  logger: logger.child({ module: 'http' }) as never,
+  genReqId: (req, res) => {
+    const id = (req.headers['x-request-id'] as string) ?? crypto.randomUUID();
+    res.setHeader('x-request-id', id);
+    return id;
+  },
+  customProps: (req, _res) => ({
+    userId: (req as AuthRequest).user?.id ?? null,
+    userAgent: req.headers['user-agent'] ?? null,
+  }),
+  // HARDEN-03 literal field-name spec: rename pino-http's default response-time
+  // key `responseTime` → `duration_ms`. This is REQUIRED (not optional / not
+  // contingent on runtime inspection) — the HARDEN-03 spec fixes the field
+  // name, and Task 3 strictly asserts `"duration_ms"` presence + `"responseTime"`
+  // absence. The `url`/`statusCode`/`remoteAddress` renames are also done below
+  // in `serializers` to match the same literal spec (`path`, `status`, `ip`).
+  customAttributeKeys: {
+    responseTime: 'duration_ms',
+    reqId: 'reqId',
+  },
+  customLogLevel: (_req, res, err) =>
+    err || res.statusCode >= 500 ? 'error'
+    : res.statusCode >= 400 ? 'warn'
+    : 'info',
+  autoLogging: {
+    ignore: (req) =>
+      req.url === '/health' ||
+      /\.(js|css|png|svg|ico|woff2?|jpg|jpeg|gif|webp)$/i.test(req.url ?? ''),
+  },
+  serializers: {
+    req: (req) => ({
+      method: req.method,
+      path: req.url,
+      ip: req.remoteAddress,
+    }),
+    res: (res) => ({
+      status: res.statusCode,
+    }),
+  },
+}));
 
 const limiter = rateLimit({ windowMs: 60_000, max: 120 });
 app.use('/api', limiter);
