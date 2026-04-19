@@ -105,8 +105,14 @@ app.use(pinoHttp({
   // key `responseTime` → `duration_ms`. This is REQUIRED (not optional / not
   // contingent on runtime inspection) — the HARDEN-03 spec fixes the field
   // name, and Task 3 strictly asserts `"duration_ms"` presence + `"responseTime"`
-  // absence. The `url`/`statusCode`/`remoteAddress` renames are also done below
-  // in `serializers` to match the same literal spec (`path`, `status`, `ip`).
+  // absence. Note: customAttributeKeys only renames TOP-LEVEL attribute names
+  // on the log record (e.g. `responseTime` → `duration_ms`); it does NOT rename
+  // the inner fields produced by `serializers.req` / `serializers.res` below.
+  // The serializers emit the nested shape `{ req: { method, path, ip },
+  // res: { status }, duration_ms }` — assertions that target top-level `path`,
+  // `status`, `ip` would fail. Assertions against `req.path` / `res.status` /
+  // `req.ip` (nested) will pass. If future work needs top-level flat fields,
+  // lift them via `customProps` and drop the serializers (see HARDEN-03 notes).
   customAttributeKeys: {
     responseTime: 'duration_ms',
     reqId: 'reqId',
