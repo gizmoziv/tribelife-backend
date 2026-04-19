@@ -94,6 +94,7 @@ export async function createSocketServer(
     const pub = createClient({
       url: redisUrl,
       socket: {
+        keepAlive: 30_000,
         reconnectStrategy: (retries: number) => {
           if (retries > 10) {
             return new Error('Redis reconnect limit exceeded');
