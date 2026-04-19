@@ -22,9 +22,19 @@ const log = logger.child({ module: 'error-handler' });
  *     Symmetric in dev and prod — never leak stack to the client.
  * The full error (with stack) is always logged to pino at level=error.
  *
- * If a route partially wrote the response (res.headersSent === true),
- * we cannot safely JSON-write; delegate to Express default handler
- * which closes the connection (D-04).
+ * Stack-leak safety (D-04):
+ *   - Non-headers-sent path: we NEVER touch err.stack. The client either
+ *     sees the semantic 4xx message (when err.expose === true) or a fixed
+ *     'Internal server error' string; stack frames cannot leak through
+ *     res.json() because they are simply never included.
+ *   - Headers-sent path: the response has already been partially written,
+ *     so we cannot safely JSON-write. Delegating via next(err) hands control
+ *     to Express's finalhandler, which in this state calls res.destroy()
+ *     (it cannot write further headers/body on an already-flushed stream)
+ *     so no stack can be written to the wire. For a belt-and-suspenders
+ *     guarantee against upstream middleware altering Express defaults,
+ *     req.socket.destroy() could be called instead — kept as next(err)
+ *     for now to stay on Express's intended error-finalization path.
  */
 export default function errorHandler(
   err: Error & { statusCode?: number; status?: number; expose?: boolean },
