@@ -34,6 +34,8 @@ import { startBeaconMatcherCron } from './jobs/beaconMatcher';
 import { startNewsIngesterCron } from './jobs/newsIngester';
 import { startNewsPushRetentionCron } from './jobs/newsPushRetention';
 import { createSocketServer } from './socket';
+import { pool } from './db';
+import { registerShutdownSignals } from './lib/shutdown';
 
 const app = express();
 const httpServer = createServer(app);
@@ -201,13 +203,24 @@ async function bootstrap(): Promise<void> {
   // read news_config.news_ingest_cron_schedule and validate before listen()
   // so an invalid prod value fails fast inside bootstrap().catch below,
   // not after we've started accepting traffic. See D-13.
-  await startNewsIngesterCron();
+  const newsIngesterTask = await startNewsIngesterCron();
 
   const PORT = process.env.PORT ?? 4000;
   httpServer.listen(PORT, () => {
     log.info({ port: PORT }, 'TribeLife backend running');
-    startBeaconMatcherCron();
-    startNewsPushRetentionCron();
+    const beaconMatcherTask = startBeaconMatcherCron();
+    const newsPushRetentionTask = startNewsPushRetentionCron();
+
+    // HARDEN-02: register SIGTERM/SIGINT graceful shutdown.
+    // MUST be inside the listen() callback — at this moment all resources
+    // (io, crons, HTTP accepting) are live. Registering earlier would mean
+    // httpServer.close() in the handler runs on a server not yet bound.
+    registerShutdownSignals({
+      httpServer,
+      io,
+      pool,
+      cronTasks: [newsIngesterTask, beaconMatcherTask, newsPushRetentionTask],
+    });
   });
 }
 
