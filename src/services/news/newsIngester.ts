@@ -19,6 +19,7 @@ import * as worldNewsAdapter from './worldNewsAdapter';
 import * as articleStore from './articleStore';
 import { enrichUnenriched } from './enrichment';
 import { dispatchBreakingPushes } from './pushDispatcher';
+import { getIO } from '../../lib/socketRegistry';
 import type { OutletRow } from './types';
 
 const log = logger.child({ module: 'news-ingester' });
@@ -89,6 +90,14 @@ export async function runNewsIngestion(): Promise<void> {
 
   // ── Phase 2: enrichment sweep (all outlets done, now enrich NULL rows) ──
   const enrichResult = await enrichUnenriched(runLog);
+
+  // ── Phase 3: realtime fan-out — wake any open News tabs so they show the
+  // "new articles available" banner instead of needing the OS push (which
+  // simulators can't receive). Foreground OS pushes are still suppressed by
+  // the mobile pushNotifications handler when the user is on the News tab.
+  if (enrichResult.enriched > 0) {
+    getIO()?.emit('news:new', { count: enrichResult.enriched });
+  }
 
   // ── Phase 4: push dispatch sweep ──
   const pushResult = await dispatchBreakingPushes(runLog);

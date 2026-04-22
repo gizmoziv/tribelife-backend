@@ -9,32 +9,10 @@ import { GLOBE_ROOMS } from '../config/globeRooms';
 const router = Router();
 router.use(requireAuth);
 
-// ── Get a user's public profile ────────────────────────────────────────────
-router.get('/:handle', async (req: AuthRequest, res: Response): Promise<void> => {
-  const handle = (req.params.handle as string).toLowerCase();
-
-  const result = await db
-    .select({
-      id: users.id,
-      name: users.name,
-      handle: userProfiles.handle,
-      avatarUrl: userProfiles.avatarUrl,
-      timezone: userProfiles.timezone,
-      isPremium: userProfiles.isPremium,
-      createdAt: users.createdAt,
-    })
-    .from(userProfiles)
-    .innerJoin(users, eq(users.id, userProfiles.userId))
-    .where(eq(userProfiles.handle, handle))
-    .limit(1);
-
-  if (result.length === 0) {
-    res.status(404).json({ error: 'User not found' });
-    return;
-  }
-
-  res.json({ user: result[0] });
-});
+// ⚠️ Route ordering matters here. The `/:handle` route below is greedy and
+// matches any single-segment path. All static single-segment routes
+// (e.g. /suggest) MUST be registered BEFORE it, or Express will match them
+// against /:handle and 404 on a missing user.
 
 // ── Mention autocomplete (scoped by chat context) ────────────────────────
 const suggestSchema = z.object({
@@ -66,11 +44,17 @@ router.get('/suggest', async (req: AuthRequest, res: Response): Promise<void> =>
     baseWhere.push(eq(userProfiles.timezone, contextId));
   } else if (scope === 'globe') {
     const room = GLOBE_ROOMS.find((r) => r.slug === contextId);
-    if (!room || room.timezones.length === 0) {
+    if (!room) {
       res.json({ users: [] });
       return;
     }
-    baseWhere.push(inArray(userProfiles.timezone, room.timezones));
+    if (room.timezones.length > 0) {
+      // Region-bound globe room — restrict to users in those timezones.
+      baseWhere.push(inArray(userProfiles.timezone, room.timezones));
+    }
+    // Global room (e.g. town-square): no timezone filter — fall through with
+    // the baseWhere filters (excludes self + temp handles + optional prefix).
+    // Bounded by limit(8) below.
   } else if (scope === 'group') {
     const convId = parseInt(contextId, 10);
     if (isNaN(convId)) {
@@ -180,6 +164,35 @@ router.put('/me/news-push', async (req: AuthRequest, res: Response): Promise<voi
     console.error('[users/news-push PUT]', err);
     res.status(500).json({ error: 'Failed to update news push preference' });
   }
+});
+
+// ── Get a user's public profile ──────────────────────────────────────────
+// MUST stay last in the file — `/:handle` is greedy and would otherwise
+// shadow any single-segment route registered after it.
+router.get('/:handle', async (req: AuthRequest, res: Response): Promise<void> => {
+  const handle = (req.params.handle as string).toLowerCase();
+
+  const result = await db
+    .select({
+      id: users.id,
+      name: users.name,
+      handle: userProfiles.handle,
+      avatarUrl: userProfiles.avatarUrl,
+      timezone: userProfiles.timezone,
+      isPremium: userProfiles.isPremium,
+      createdAt: users.createdAt,
+    })
+    .from(userProfiles)
+    .innerJoin(users, eq(users.id, userProfiles.userId))
+    .where(eq(userProfiles.handle, handle))
+    .limit(1);
+
+  if (result.length === 0) {
+    res.status(404).json({ error: 'User not found' });
+    return;
+  }
+
+  res.json({ user: result[0] });
 });
 
 export default router;

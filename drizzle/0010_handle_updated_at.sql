@@ -1,0 +1,1 @@
+ALTER TABLE "user_profiles" ADD COLUMN IF NOT EXISTS "handle_updated_at" timestamp;

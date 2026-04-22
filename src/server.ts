@@ -36,6 +36,7 @@ import { startNewsPushRetentionCron } from './jobs/newsPushRetention';
 import { createSocketServer } from './socket';
 import { pool } from './db';
 import { registerShutdownSignals } from './lib/shutdown';
+import { setIO } from './lib/socketRegistry';
 
 const app = express();
 const httpServer = createServer(app);
@@ -207,6 +208,7 @@ app.use(errorHandler);
 async function bootstrap(): Promise<void> {
   const io = await createSocketServer(httpServer);
   app.set('io', io);
+  setIO(io);
 
   // News-ingester cron schedule is DB-configurable (Phase 2 CONFIG-01) —
   // read news_config.news_ingest_cron_schedule and validate before listen()

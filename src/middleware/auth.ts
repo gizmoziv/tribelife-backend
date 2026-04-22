@@ -17,6 +17,18 @@ export interface AuthUser {
   avatarUrl: string | null;
   isPremium: boolean;
   timezone: string | null;
+  acceptedTermsAt: Date | null;
+  handleUpdatedAt: Date | null;
+}
+
+export const HANDLE_COOLDOWN_DAYS = 30;
+export const HANDLE_COOLDOWN_MS = HANDLE_COOLDOWN_DAYS * 24 * 60 * 60 * 1000;
+
+export function needsOnboarding(user: Pick<AuthUser, 'handle' | 'acceptedTermsAt'>): boolean {
+  if (!user.handle) return true;
+  if (user.handle.startsWith('_temp_')) return true;
+  if (!user.acceptedTermsAt) return true;
+  return false;
 }
 
 export interface AuthRequest extends Request {
@@ -49,6 +61,8 @@ export async function requireAuth(
         avatarUrl: userProfiles.avatarUrl,
         isPremium: userProfiles.isPremium,
         timezone: userProfiles.timezone,
+        acceptedTermsAt: userProfiles.acceptedTermsAt,
+        handleUpdatedAt: userProfiles.handleUpdatedAt,
       })
       .from(users)
       .leftJoin(userProfiles, eq(users.id, userProfiles.userId))

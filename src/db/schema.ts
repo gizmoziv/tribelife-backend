@@ -40,6 +40,8 @@ export const userProfiles = pgTable('user_profiles', {
   revenuecatCustomerId: text('revenuecat_customer_id'),
   expoPushToken: text('expo_push_token'),                        // for push notifications
   newsPushEnabled: boolean('news_push_enabled').notNull().default(false),
+  acceptedTermsAt: timestamp('accepted_terms_at'),               // null = onboarding not complete
+  handleUpdatedAt: timestamp('handle_updated_at'),               // null = handle never changed since onboarding (no cooldown active)
   createdAt: timestamp('created_at').defaultNow(),
   updatedAt: timestamp('updated_at').defaultNow(),
 }, (t) => ({

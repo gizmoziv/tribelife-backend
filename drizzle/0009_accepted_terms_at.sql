@@ -1,0 +1,1 @@
+ALTER TABLE "user_profiles" ADD COLUMN IF NOT EXISTS "accepted_terms_at" timestamp;

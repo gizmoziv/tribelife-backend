@@ -8,7 +8,7 @@ import { eq, count } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '../db';
 import { users, userProfiles, referrals } from '../db/schema';
-import { signToken, requireAuth, AuthRequest } from '../middleware/auth';
+import { signToken, requireAuth, needsOnboarding, HANDLE_COOLDOWN_DAYS, HANDLE_COOLDOWN_MS, AuthRequest } from '../middleware/auth';
 
 const router = Router();
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
@@ -124,7 +124,7 @@ router.post('/google', async (req: Request, res: Response): Promise<void> => {
     }
 
     const token = signToken(user.users.id);
-    const needsOnboarding = !user.user_profiles?.handle || user.user_profiles.handle.startsWith('_temp_');
+    const profile = user.user_profiles;
 
     res.json({
       token,
@@ -132,12 +132,17 @@ router.post('/google', async (req: Request, res: Response): Promise<void> => {
         id: user.users.id,
         email: user.users.email,
         name: user.users.name,
-        handle: user.user_profiles?.handle ?? null,
-        avatarUrl: user.user_profiles?.avatarUrl ?? null,
-        isPremium: user.user_profiles?.isPremium ?? false,
-        timezone: user.user_profiles?.timezone ?? null,
+        handle: profile?.handle ?? null,
+        avatarUrl: profile?.avatarUrl ?? null,
+        isPremium: profile?.isPremium ?? false,
+        timezone: profile?.timezone ?? null,
+        acceptedTermsAt: profile?.acceptedTermsAt ?? null,
+        handleUpdatedAt: profile?.handleUpdatedAt ?? null,
       },
-      needsOnboarding,
+      needsOnboarding: needsOnboarding({
+        handle: profile?.handle ?? null,
+        acceptedTermsAt: profile?.acceptedTermsAt ?? null,
+      }),
       isNewUser,
     });
   } catch (err) {
@@ -260,7 +265,7 @@ router.post('/apple', async (req: Request, res: Response): Promise<void> => {
     }
 
     const token = signToken(user.users.id);
-    const needsOnboarding = !user.user_profiles?.handle || user.user_profiles.handle.startsWith('_temp_');
+    const profile = user.user_profiles;
 
     res.json({
       token,
@@ -268,12 +273,17 @@ router.post('/apple', async (req: Request, res: Response): Promise<void> => {
         id: user.users.id,
         email: user.users.email,
         name: user.users.name,
-        handle: user.user_profiles?.handle ?? null,
-        avatarUrl: user.user_profiles?.avatarUrl ?? null,
-        isPremium: user.user_profiles?.isPremium ?? false,
-        timezone: user.user_profiles?.timezone ?? null,
+        handle: profile?.handle ?? null,
+        avatarUrl: profile?.avatarUrl ?? null,
+        isPremium: profile?.isPremium ?? false,
+        timezone: profile?.timezone ?? null,
+        acceptedTermsAt: profile?.acceptedTermsAt ?? null,
+        handleUpdatedAt: profile?.handleUpdatedAt ?? null,
       },
-      needsOnboarding,
+      needsOnboarding: needsOnboarding({
+        handle: profile?.handle ?? null,
+        acceptedTermsAt: profile?.acceptedTermsAt ?? null,
+      }),
       isNewUser,
     });
   } catch (err) {
@@ -319,7 +329,9 @@ router.post('/onboarding', requireAuth, async (req: AuthRequest, res: Response):
     return;
   }
 
-  // Create or update profile
+  // Create or update profile — acceptedTermsAt is stamped here because the
+  // mobile onboarding form requires the terms checkbox before it calls this.
+  const acceptedTermsAt = new Date();
   const [profile] = await db
     .insert(userProfiles)
     .values({
@@ -327,10 +339,16 @@ router.post('/onboarding', requireAuth, async (req: AuthRequest, res: Response):
       handle: handle.toLowerCase(),
       timezone,
       avatarUrl,
+      acceptedTermsAt,
     })
     .onConflictDoUpdate({
       target: userProfiles.userId,
-      set: { handle: handle.toLowerCase(), timezone, updatedAt: new Date() },
+      set: {
+        handle: handle.toLowerCase(),
+        timezone,
+        acceptedTermsAt,
+        updatedAt: new Date(),
+      },
     })
     .returning();
 
@@ -394,6 +412,73 @@ router.get('/handle-check/:handle', requireAuth, async (req: AuthRequest, res: R
   res.json({ available: existing.length === 0 });
 });
 
+// ── Update handle (rate-limited: once every 30 days) ──────────────────────
+const updateHandleSchema = z.object({
+  handle: z
+    .string()
+    .min(3)
+    .max(30)
+    .regex(/^[a-zA-Z0-9_]+$/, 'Handle can only contain letters, numbers, and underscores'),
+});
+
+router.put('/handle', requireAuth, async (req: AuthRequest, res: Response): Promise<void> => {
+  const parse = updateHandleSchema.safeParse(req.body);
+  if (!parse.success) {
+    res.status(400).json({ error: parse.error.errors[0].message });
+    return;
+  }
+
+  const userId = req.user!.id;
+  const newHandle = parse.data.handle.toLowerCase();
+  const now = new Date();
+
+  // Cooldown check — only enforced if the user has changed it before.
+  // The initial handle set during onboarding does NOT start the clock; the
+  // first edit is free.
+  const lastChangedAt = req.user!.handleUpdatedAt;
+  if (lastChangedAt) {
+    const elapsed = now.getTime() - new Date(lastChangedAt).getTime();
+    if (elapsed < HANDLE_COOLDOWN_MS) {
+      const nextChangeAt = new Date(new Date(lastChangedAt).getTime() + HANDLE_COOLDOWN_MS);
+      res.status(429).json({
+        error: `You can only change your handle once every ${HANDLE_COOLDOWN_DAYS} days.`,
+        nextChangeAt: nextChangeAt.toISOString(),
+      });
+      return;
+    }
+  }
+
+  // No-op if the handle hasn't actually changed.
+  if (newHandle === req.user!.handle) {
+    res.status(400).json({ error: 'New handle is the same as your current handle.' });
+    return;
+  }
+
+  // Uniqueness check (excluding the user's own row to be safe).
+  const existing = await db
+    .select({ userId: userProfiles.userId })
+    .from(userProfiles)
+    .where(eq(userProfiles.handle, newHandle))
+    .limit(1);
+
+  if (existing[0] && existing[0].userId !== userId) {
+    res.status(409).json({ error: 'That handle is already taken' });
+    return;
+  }
+
+  await db
+    .update(userProfiles)
+    .set({ handle: newHandle, handleUpdatedAt: now, updatedAt: now })
+    .where(eq(userProfiles.userId, userId));
+
+  const nextChangeAt = new Date(now.getTime() + HANDLE_COOLDOWN_MS);
+  res.json({
+    handle: newHandle,
+    handleUpdatedAt: now.toISOString(),
+    nextChangeAt: nextChangeAt.toISOString(),
+  });
+});
+
 // ── Get current user (also refreshes timezone if provided) ────────────────
 router.get('/me', requireAuth, async (req: AuthRequest, res: Response): Promise<void> => {
   const timezone = req.query.timezone as string | undefined;
@@ -407,7 +492,10 @@ router.get('/me', requireAuth, async (req: AuthRequest, res: Response): Promise<
     req.user!.timezone = timezone;
   }
 
-  res.json({ user: req.user });
+  res.json({
+    user: req.user,
+    needsOnboarding: needsOnboarding(req.user!),
+  });
 });
 
 // ── Delete account ────────────────────────────────────────────────────────
