@@ -1,14 +1,12 @@
 import { Router, Request, Response } from 'express';
 import logger from '../lib/logger';
-
-const log = logger.child({ module: 'support' });
-import sgMail from '@sendgrid/mail';
 import { z } from 'zod';
 import { requireAuth, AuthRequest } from '../middleware/auth';
+import { sendEmail } from '../services/email';
+
+const log = logger.child({ module: 'support' });
 
 const router = Router();
-
-sgMail.setApiKey(process.env.SENDGRID_API_KEY!);
 
 const supportSchema = z.object({
   subject: z.string().min(1).max(200),
@@ -20,6 +18,15 @@ const publicSupportSchema = z.object({
   message: z.string().min(1).max(5000),
   email: z.string().email().max(320),
 });
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
 
 router.post(
   '/',
@@ -35,23 +42,23 @@ router.post(
     const user = req.user!;
 
     try {
-      await sgMail.send({
+      await sendEmail({
         to: 'info@tribelife.app',
-        from: process.env.SENDGRID_FROM_EMAIL!,
         replyTo: user.email,
         subject: `[TribeLife Support] ${subject}`,
         text: `From: ${user.name} (${user.email})\nHandle: @${user.handle}\n\n${message}`,
         html: `
-        <p><strong>From:</strong> ${user.name} (${user.email})</p>
-        <p><strong>Handle:</strong> @${user.handle}</p>
-        <hr />
-        <p>${message.replace(/\n/g, '<br />')}</p>
-      `,
+          <p><strong>From:</strong> ${escapeHtml(user.name ?? '')} (${escapeHtml(user.email)})</p>
+          <p><strong>Handle:</strong> @${escapeHtml(user.handle ?? '')}</p>
+          <hr />
+          <p>${escapeHtml(message).replace(/\n/g, '<br />')}</p>
+        `,
+        category: 'support',
       });
 
       res.json({ success: true });
     } catch (err) {
-      log.error({ err }, 'Failed to send email');
+      log.error({ err }, 'Failed to send support email');
       res.status(500).json({ error: 'Failed to send support email' });
     }
   },
@@ -68,22 +75,22 @@ router.post('/public', async (req: Request, res: Response): Promise<void> => {
   const { subject, message, email } = parse.data;
 
   try {
-    await sgMail.send({
+    await sendEmail({
       to: 'info@tribelife.app',
-      from: process.env.SENDGRID_FROM_EMAIL!,
       replyTo: email,
       subject: `[TribeLife Support] ${subject}`,
       text: `From: ${email}\n\n${message}`,
       html: `
-        <p><strong>From:</strong> ${email}</p>
+        <p><strong>From:</strong> ${escapeHtml(email)}</p>
         <hr />
-        <p>${message.replace(/\n/g, '<br />')}</p>
+        <p>${escapeHtml(message).replace(/\n/g, '<br />')}</p>
       `,
+      category: 'support-public',
     });
 
     res.json({ success: true });
   } catch (err) {
-    log.error({ err }, 'Failed to send email');
+    log.error({ err }, 'Failed to send support email');
     res.status(500).json({ error: 'Failed to send support email' });
   }
 });

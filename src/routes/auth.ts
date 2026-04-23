@@ -9,6 +9,7 @@ import { z } from 'zod';
 import { db } from '../db';
 import { users, userProfiles, referrals } from '../db/schema';
 import { signToken, requireAuth, needsOnboarding, HANDLE_COOLDOWN_DAYS, HANDLE_COOLDOWN_MS, AuthRequest } from '../middleware/auth';
+import { sendWelcomeEmail } from '../services/email';
 
 const router = Router();
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
@@ -329,6 +330,18 @@ router.post('/onboarding', requireAuth, async (req: AuthRequest, res: Response):
     return;
   }
 
+  // Detect first-time onboarding vs handle change. On signup we create a
+  // skeleton profile with handle "_temp_<id>" so FKs work, then flip it to
+  // the real handle on the first /onboarding call. Any subsequent call to
+  // this endpoint (should be rare — mobile guards it via needsOnboarding)
+  // won't trigger a second welcome email.
+  const [priorProfile] = await db
+    .select({ handle: userProfiles.handle })
+    .from(userProfiles)
+    .where(eq(userProfiles.userId, userId))
+    .limit(1);
+  const isFirstOnboarding = !priorProfile || priorProfile.handle.startsWith('_temp_');
+
   // Create or update profile — acceptedTermsAt is stamped here because the
   // mobile onboarding form requires the terms checkbox before it calls this.
   const acceptedTermsAt = new Date();
@@ -389,6 +402,17 @@ router.post('/onboarding', requireAuth, async (req: AuthRequest, res: Response):
           .where(eq(userProfiles.userId, referrer.userId));
       }
     }
+  }
+
+  // Fire-and-forget welcome email. We intentionally do not await — email
+  // delivery is not on the critical path of onboarding, and a SendGrid
+  // outage must never block a user from finishing signup.
+  if (isFirstOnboarding && req.user!.email) {
+    sendWelcomeEmail({
+      toEmail: req.user!.email,
+      name: req.user!.name ?? '',
+      handle: handle.toLowerCase(),
+    }).catch((err) => log.error({ err: err?.message, userId }, 'welcome email failed'));
   }
 
   res.json({ profile });

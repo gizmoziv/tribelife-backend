@@ -115,6 +115,28 @@ router.get('/rooms/:slug/messages', async (req: AuthRequest, res: Response): Pro
   res.json({ messages: withReplies.reverse(), hasMore: rows.length === limit });
 });
 
+// ── Mark all Globe rooms as read ──────────────────────────────────────────
+// Used by the bell's Mentions tab "Mark read" action so clearing mention
+// notifications also clears the corresponding Globe tab unread signal.
+router.put('/rooms/mark-all-read', async (req: AuthRequest, res: Response): Promise<void> => {
+  const userId = req.user!.id;
+  const now = new Date();
+
+  await Promise.all(
+    GLOBE_ROOMS.map((room) =>
+      db
+        .insert(globeReadPositions)
+        .values({ userId, roomSlug: room.slug, lastReadAt: now })
+        .onConflictDoUpdate({
+          target: [globeReadPositions.userId, globeReadPositions.roomSlug],
+          set: { lastReadAt: now },
+        }),
+    ),
+  );
+
+  res.json({ ok: true });
+});
+
 // ── Mark a Globe room as read ──────────────────────────────────────────────
 router.put('/rooms/:slug/read', async (req: AuthRequest, res: Response): Promise<void> => {
   const slug = req.params.slug as string;

@@ -1,12 +1,13 @@
 import { Server, Socket } from 'socket.io';
 import logger from '../lib/logger';
 import { db } from '../db';
-import { messages, userProfiles } from '../db/schema';
-import { eq } from 'drizzle-orm';
+import { messages, userProfiles, notifications } from '../db/schema';
+import { eq, inArray } from 'drizzle-orm';
 import { checkRateLimit } from './rateLimit';
 import { isValidGlobeRoom, AGE_GATE_HOURS } from '../config/globeRooms';
 import { moderateMessage } from '../services/claude';
 import { moderateMessageImages } from '../services/imageModeration';
+import { sendPushToUser, shouldSendPush } from '../services/pushNotifications';
 
 // ── Globe Room Event Handlers ───────────────────────────────────────────────
 // Events: globe:join, globe:leave, globe:message, globe:typing
@@ -82,6 +83,19 @@ export function registerGlobeHandlers(io: Server, socket: Socket): void {
       }
     }
 
+    // Parse @mentions so we can store them on the message and notify targets
+    const mentionedHandles = [...content.matchAll(/@([a-zA-Z0-9_]+)/g)].map(
+      (m) => m[1].toLowerCase(),
+    );
+    let mentionedUserIds: number[] = [];
+    if (mentionedHandles.length > 0) {
+      const mentionedProfiles = await db
+        .select({ userId: userProfiles.userId })
+        .from(userProfiles)
+        .where(inArray(userProfiles.handle, mentionedHandles));
+      mentionedUserIds = mentionedProfiles.map((p) => p.userId);
+    }
+
     // Persist message
     const [msg] = await db
       .insert(messages)
@@ -89,22 +103,30 @@ export function registerGlobeHandlers(io: Server, socket: Socket): void {
         content,
         senderId: userId,
         roomId,
+        mentions: mentionedUserIds,
         replyToId: data.replyToId ?? null,
         mediaUrls: mediaUrls.length > 0 ? mediaUrls : null,
       })
       .returning();
 
-    // Build replyTo preview if this is a reply
+    // Build replyTo preview if this is a reply; capture original sender for notifications
     let replyTo: { id: number; content: string; senderHandle: string } | null = null;
+    let replyToSenderId: number | null = null;
     if (data.replyToId) {
       const [original] = await db
-        .select({ id: messages.id, content: messages.content, senderHandle: userProfiles.handle })
+        .select({
+          id: messages.id,
+          content: messages.content,
+          senderHandle: userProfiles.handle,
+          senderId: messages.senderId,
+        })
         .from(messages)
         .leftJoin(userProfiles, eq(userProfiles.userId, messages.senderId))
         .where(eq(messages.id, data.replyToId))
         .limit(1);
       if (original) {
         replyTo = { id: original.id, content: original.content ?? '', senderHandle: original.senderHandle ?? 'Unknown' };
+        replyToSenderId = original.senderId;
       }
     }
 
@@ -118,10 +140,66 @@ export function registerGlobeHandlers(io: Server, socket: Socket): void {
       roomId,
       slug: data.slug,
       createdAt: msg.createdAt,
+      mentions: mentionedUserIds,
       replyToId: data.replyToId ?? null,
       replyTo,
       mediaUrls: mediaUrls.length > 0 ? mediaUrls : undefined,
     });
+
+    // Fan-out a lightweight unread signal to everyone. Users who never joined
+    // this globe room (e.g. still looking at the Beacons tab) would otherwise
+    // never learn there's a new message, so their Globe tab badge would stay
+    // stale until they opened the room. The 'globe-signals' room is joined by
+    // every connected socket in index.ts.
+    io.to('globe-signals').emit('globe:unread-signal', {
+      slug: data.slug,
+      roomId,
+      senderId: userId,
+    });
+
+    // Build the full set of users to notify: explicit @mentions + reply target
+    const notifyUserIds = new Set<number>(mentionedUserIds);
+    if (replyToSenderId && replyToSenderId !== userId) {
+      notifyUserIds.add(replyToSenderId);
+    }
+    const explicitMentions = new Set(mentionedUserIds);
+
+    for (const notifyId of notifyUserIds) {
+      if (notifyId === userId) continue;
+
+      const isReplyTarget = notifyId === replyToSenderId && !explicitMentions.has(notifyId);
+      const title = isReplyTarget ? `@${handle} replied to you` : `@${handle} mentioned you`;
+
+      const [inserted] = await db.insert(notifications).values({
+        userId: notifyId,
+        type: 'mention',
+        title,
+        body: content.slice(0, 100),
+        data: { messageId: msg.id, roomId, globeSlug: data.slug, senderHandle: handle },
+      }).returning({ id: notifications.id });
+
+      io.to(`user:${notifyId}`).emit('notification:new', {
+        type: 'mention',
+        title,
+        body: content.slice(0, 100),
+      });
+
+      const [targetProfile] = await db
+        .select({ expoPushToken: userProfiles.expoPushToken })
+        .from(userProfiles)
+        .where(eq(userProfiles.userId, notifyId))
+        .limit(1);
+
+      if (await shouldSendPush(notifyId, 'mention')) {
+        await sendPushToUser(
+          targetProfile?.expoPushToken,
+          title,
+          content.slice(0, 100),
+          { type: 'mention', roomId, globeSlug: data.slug, notificationId: inserted.id },
+          notifyId,
+        );
+      }
+    }
 
     // Fire-and-forget image moderation
     if (mediaUrls.length > 0) {

@@ -1,5 +1,5 @@
 import { Router, Response } from 'express';
-import { eq, and, inArray, desc, lt, sql, notInArray, isNull } from 'drizzle-orm';
+import { eq, and, inArray, desc, lt, sql, notInArray, isNull, ne, gt, or } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '../db';
 import {
@@ -41,6 +41,41 @@ router.get('/conversations', async (req: AuthRequest, res: Response): Promise<vo
   }
 
   const convIds = participations.map((p) => p.conversationId);
+
+  // Compute unread counts in a single aggregate query. For each conversation
+  // the user participates in, count messages sent by OTHERS after the user's
+  // last_read_at (or all messages if last_read_at is null). Own sent messages
+  // never count as unread.
+  const unreadRows = await db
+    .select({
+      conversationId: messages.conversationId,
+      unread: sql<number>`count(*)::int`,
+    })
+    .from(messages)
+    .innerJoin(
+      conversationParticipants,
+      and(
+        eq(conversationParticipants.conversationId, messages.conversationId),
+        eq(conversationParticipants.userId, userId),
+      ),
+    )
+    .where(
+      and(
+        inArray(messages.conversationId, convIds),
+        ne(messages.senderId, userId),
+        or(
+          isNull(conversationParticipants.lastReadAt),
+          gt(messages.createdAt, conversationParticipants.lastReadAt),
+        ),
+      ),
+    )
+    .groupBy(messages.conversationId);
+
+  const unreadMap = new Map<number, number>(
+    unreadRows
+      .filter((r) => r.conversationId !== null)
+      .map((r) => [r.conversationId as number, Number(r.unread)]),
+  );
 
   // Get blocked user IDs so we can exclude their DM conversations
   const blockedRows = await db
@@ -123,7 +158,12 @@ router.get('/conversations', async (req: AuthRequest, res: Response): Promise<vo
         .orderBy(desc(messages.createdAt))
         .limit(1);
 
-      return { ...row, lastMessage: lastMsg ?? null, isGroup: false as const };
+      return {
+        ...row,
+        lastMessage: lastMsg ?? null,
+        isGroup: false as const,
+        unreadCount: unreadMap.get(row.conversationId) ?? 0,
+      };
     })
   );
 
@@ -147,6 +187,7 @@ router.get('/conversations', async (req: AuthRequest, res: Response): Promise<vo
         lastReadAt: groupLastReadMap.get(row.conversationId) ?? null,
         lastMessage: lastMsg ?? null,
         isGroup: true as const,
+        unreadCount: unreadMap.get(row.conversationId) ?? 0,
       };
     })
   );
@@ -203,6 +244,18 @@ router.post('/conversations', async (req: AuthRequest, res: Response): Promise<v
   ]);
 
   res.json({ conversationId: convo.id, isNew: true });
+});
+
+// ── Mark all DM + group conversations as read ─────────────────────────────
+// Used by the bell's DMs tab "Mark read" action so clearing DM notifications
+// also clears the Chat tab's aggregate unread state.
+router.put('/conversations/mark-all-read', async (req: AuthRequest, res: Response): Promise<void> => {
+  const userId = req.user!.id;
+  await db
+    .update(conversationParticipants)
+    .set({ lastReadAt: new Date() })
+    .where(eq(conversationParticipants.userId, userId));
+  res.json({ ok: true });
 });
 
 // ── Get messages in a DM conversation ─────────────────────────────────────

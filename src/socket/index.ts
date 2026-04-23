@@ -220,6 +220,7 @@ export async function createSocketServer(
     const handle: string = socket.data.handle;
 
     socket.join(`user:${userId}`); // personal room for targeted events
+    socket.join('globe-signals'); // fan-out room for globe unread signals — every connected user joins so they can increment tab badges for rooms they haven't explicitly entered
 
     log.info(
       { userId, handle, timezone: socket.data.timezone },
