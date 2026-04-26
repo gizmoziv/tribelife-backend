@@ -27,7 +27,7 @@ const PrivacyCallout = () => {
     >
       <div className="container mx-auto px-6">
         <div className="gradient-border rounded-2xl p-6 md:p-8">
-          <div className="flex flex-col md:flex-row items-center justify-center gap-6 md:gap-12">
+          <div className="flex flex-col md:flex-row items-start md:items-center justify-center gap-4 md:gap-12 max-w-sm md:max-w-none mx-auto">
             {commitments.map((item) => (
               <div
                 key={item.text}

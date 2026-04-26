@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion';
-import { Apple, Play } from 'lucide-react';
+import { AppStoreBadge, GooglePlayBadge } from './StoreBadge';
 import heroBg from '@/assets/hero-bg.jpg';
 import { trackDownloadClick } from '@/lib/analytics';
 
@@ -46,10 +46,10 @@ const HeroSection = () => {
           initial={{ opacity: 0, y: 30 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.7, delay: 0.35 }}
-          className="text-5xl md:text-7xl font-bold leading-tight mb-6"
+          className="text-4xl sm:text-5xl md:text-7xl font-bold leading-tight mb-6 text-balance"
         >
           Our People Are Here.{' '}
-          <span className="gradient-text whitespace-nowrap">
+          <span className="gradient-text">
             Just Say What You Need.
           </span>
         </motion.h1>
@@ -71,26 +71,14 @@ const HeroSection = () => {
           transition={{ duration: 0.7, delay: 0.65 }}
           className="flex flex-col sm:flex-row items-center justify-center gap-4"
         >
-          <a
+          <AppStoreBadge
             href={APP_STORE_URL}
-            target="_blank"
-            rel="noopener noreferrer"
             onClick={() => trackDownloadClick('ios', 'hero_top')}
-            className="gradient-bg gradient-bg-hover text-primary-foreground flex items-center gap-3 px-7 py-4 rounded-2xl font-semibold text-base transition-all glow-shadow hover:scale-105 w-full sm:w-auto justify-center"
-          >
-            <Apple className="w-5 h-5" />
-            Download for iOS — Free
-          </a>
-          <a
+          />
+          <GooglePlayBadge
             href={PLAY_STORE_URL}
-            target="_blank"
-            rel="noopener noreferrer"
             onClick={() => trackDownloadClick('android', 'hero_top')}
-            className="bg-card border border-border text-foreground flex items-center gap-3 px-7 py-4 rounded-2xl font-semibold text-base transition-all hover:bg-muted hover:scale-105 w-full sm:w-auto justify-center"
-          >
-            <Play className="w-5 h-5" />
-            Get it on Google Play
-          </a>
+          />
         </motion.div>
 
       </div>

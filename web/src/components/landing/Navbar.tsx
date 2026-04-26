@@ -41,7 +41,7 @@ const Navbar = () => {
           <img
             src={logo}
             alt="TribeLife - Local Community Matching App"
-            className="h-20"
+            className="h-12 md:h-20"
           />
         </a>
 
@@ -70,7 +70,7 @@ const Navbar = () => {
                 href={downloadUrl}
                 {...(isExternal ? { target: "_blank", rel: "noopener noreferrer" } : {})}
                 onClick={() => trackDownloadClick(getDownloadPlatform(), 'header')}
-                className="gradient-bg gradient-bg-hover text-primary-foreground px-5 py-2.5 rounded-full text-sm font-semibold transition-all glow-shadow hover:scale-105"
+                className="gradient-bg gradient-bg-hover text-primary-foreground px-4 py-2 md:px-5 md:py-2.5 rounded-full text-sm font-semibold whitespace-nowrap transition-all glow-shadow hover:scale-105"
               >
                 Download App
               </a>

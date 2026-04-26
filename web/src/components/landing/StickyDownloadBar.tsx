@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Apple, Play } from 'lucide-react';
+import { AppStoreBadge, GooglePlayBadge } from './StoreBadge';
 import { trackDownloadClick } from '@/lib/analytics';
 
 const APP_STORE_URL = 'https://apps.apple.com/us/app/tribelife-app/id6759845843';
@@ -28,32 +28,16 @@ const StickyDownloadBar = () => {
     >
       <div className="bg-background/95 backdrop-blur-xl border-t border-border/50 px-4 py-3 flex flex-col gap-2">
         {(isIOS || showBoth) && (
-          <a
+          <AppStoreBadge
             href={APP_STORE_URL}
-            target="_blank"
-            rel="noopener noreferrer"
             onClick={() => trackDownloadClick('ios', 'hero_bottom')}
-            className="gradient-bg gradient-bg-hover text-primary-foreground flex items-center justify-center gap-2 px-4 py-3 rounded-xl font-semibold text-sm transition-all"
-          >
-            <Apple className="w-4 h-4" />
-            Download for iOS — Free
-          </a>
+          />
         )}
         {(isAndroid || showBoth) && (
-          <a
+          <GooglePlayBadge
             href={ANDROID_URL}
-            target="_blank"
-            rel="noopener noreferrer"
             onClick={() => trackDownloadClick('android', 'hero_bottom')}
-            className={`flex items-center justify-center gap-2 px-4 rounded-xl font-semibold text-sm transition-all ${
-              isAndroid
-                ? 'gradient-bg gradient-bg-hover text-primary-foreground py-3'
-                : 'bg-card border border-border text-foreground py-2.5 hover:bg-muted'
-            }`}
-          >
-            <Play className="w-4 h-4" />
-            Get it on Google Play
-          </a>
+          />
         )}
       </div>
     </div>

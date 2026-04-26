@@ -28,7 +28,10 @@ const Footer = () => {
             </p>
           </div>
 
-          <div className="flex items-center gap-6 text-sm text-muted-foreground">
+          <nav
+            aria-label="Footer"
+            className="grid grid-cols-2 gap-x-8 gap-y-3 text-sm text-muted-foreground text-center md:flex md:items-center md:gap-6 md:text-left"
+          >
             <Link
               to="/terms"
               className="hover:text-foreground transition-colors"
@@ -56,7 +59,7 @@ const Footer = () => {
             >
               Support
             </Link>
-          </div>
+          </nav>
         </div>
 
         <div className="mt-8 pt-8 border-t border-border text-center text-xs text-muted-foreground">
