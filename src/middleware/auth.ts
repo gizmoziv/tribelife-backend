@@ -16,6 +16,7 @@ export interface AuthUser {
   handle: string | null;
   avatarUrl: string | null;
   isPremium: boolean;
+  premiumExpiresAt: Date | null;
   timezone: string | null;
   acceptedTermsAt: Date | null;
   handleUpdatedAt: Date | null;
@@ -60,6 +61,7 @@ export async function requireAuth(
         handle: userProfiles.handle,
         avatarUrl: userProfiles.avatarUrl,
         isPremium: userProfiles.isPremium,
+        premiumExpiresAt: userProfiles.premiumExpiresAt,
         timezone: userProfiles.timezone,
         acceptedTermsAt: userProfiles.acceptedTermsAt,
         handleUpdatedAt: userProfiles.handleUpdatedAt,

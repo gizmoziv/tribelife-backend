@@ -98,6 +98,7 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
       replyToId: data.replyToId ?? null,
       replyTo,
       mediaUrls: mediaUrls.length > 0 ? mediaUrls : undefined,
+      kind: 'user' as const,
     };
 
     io.to(timezoneRoom).emit('room:message', payload);

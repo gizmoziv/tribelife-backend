@@ -111,6 +111,7 @@ export const messages = pgTable('messages', {
   replyToId: integer('reply_to_id'),                        // SCHM-01: nullable self-ref FK (added via migration)
   mediaUrls: jsonb('media_urls').$type<string[]>(),         // SCHM-02: nullable JSON array of URLs
   translatedContent: text('translated_content'),
+  kind: varchar('kind', { length: 20 }).default('user'),    // 'user' | 'system' (e.g. join announcement)
 }, (t) => ({
   roomIdx: index('messages_room_idx').on(t.roomId),
   convIdx: index('messages_conv_idx').on(t.conversationId),

@@ -1,0 +1,1 @@
+ALTER TABLE "messages" ADD COLUMN "kind" varchar(20) DEFAULT 'user';

@@ -7,9 +7,11 @@ import { createRemoteJWKSet, jwtVerify } from 'jose';
 import { eq, count } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '../db';
-import { users, userProfiles, referrals } from '../db/schema';
+import { users, userProfiles, referrals, messages } from '../db/schema';
 import { signToken, requireAuth, needsOnboarding, HANDLE_COOLDOWN_DAYS, HANDLE_COOLDOWN_MS, AuthRequest } from '../middleware/auth';
+import { computeCapabilities } from '../services/capabilities';
 import { sendWelcomeEmail } from '../services/email';
+import { getIO } from '../lib/socketRegistry';
 
 const router = Router();
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
@@ -127,6 +129,11 @@ router.post('/google', async (req: Request, res: Response): Promise<void> => {
     const token = signToken(user.users.id);
     const profile = user.user_profiles;
 
+    const capabilities = computeCapabilities({
+      isPremium: profile?.isPremium ?? false,
+      premiumExpiresAt: profile?.premiumExpiresAt ?? null,
+    });
+
     res.json({
       token,
       user: {
@@ -145,6 +152,7 @@ router.post('/google', async (req: Request, res: Response): Promise<void> => {
         acceptedTermsAt: profile?.acceptedTermsAt ?? null,
       }),
       isNewUser,
+      capabilities,
     });
   } catch (err) {
     log.error({ err }, 'Google authentication failed');
@@ -268,6 +276,11 @@ router.post('/apple', async (req: Request, res: Response): Promise<void> => {
     const token = signToken(user.users.id);
     const profile = user.user_profiles;
 
+    const capabilities = computeCapabilities({
+      isPremium: profile?.isPremium ?? false,
+      premiumExpiresAt: profile?.premiumExpiresAt ?? null,
+    });
+
     res.json({
       token,
       user: {
@@ -286,6 +299,7 @@ router.post('/apple', async (req: Request, res: Response): Promise<void> => {
         acceptedTermsAt: profile?.acceptedTermsAt ?? null,
       }),
       isNewUser,
+      capabilities,
     });
   } catch (err) {
     log.error({ err }, 'Apple authentication failed');
@@ -415,6 +429,50 @@ router.post('/onboarding', requireAuth, async (req: AuthRequest, res: Response):
     }).catch((err) => log.error({ err: err?.message, userId }, 'welcome email failed'));
   }
 
+  // Announce the new user in their timezone room. Persisted with kind='system'
+  // so it shows up in scrollback for users who weren't connected at the moment
+  // of onboarding (WhatsApp/Slack pattern). senderId is the new user so the
+  // existing leftJoin in chat.ts hydrates handle+avatar, and the literal
+  // "@handle" in the body keeps the link tappable via mention parsing on the
+  // mobile bubble even if the account is later deleted.
+  if (isFirstOnboarding) {
+    try {
+      const timezoneRoom = `timezone:${timezone}`;
+      const lowerHandle = handle.toLowerCase();
+      const announcementContent = `@${lowerHandle} joined the chat`;
+
+      const [systemMsg] = await db
+        .insert(messages)
+        .values({
+          content: announcementContent,
+          senderId: userId,
+          roomId: timezoneRoom,
+          kind: 'system',
+          mentions: [userId],
+        })
+        .returning();
+
+      const io = getIO();
+      if (io) {
+        io.to(timezoneRoom).emit('room:message', {
+          id: systemMsg.id,
+          content: announcementContent,
+          senderId: userId,
+          senderHandle: lowerHandle,
+          senderAvatar: profile?.avatarUrl ?? null,
+          roomId: timezoneRoom,
+          createdAt: systemMsg.createdAt,
+          kind: 'system',
+          mentions: [userId],
+          replyToId: null,
+          replyTo: null,
+        });
+      }
+    } catch (err) {
+      log.error({ err, userId }, 'system join-message broadcast failed');
+    }
+  }
+
   res.json({ profile });
 });
 
@@ -516,10 +574,25 @@ router.get('/me', requireAuth, async (req: AuthRequest, res: Response): Promise<
     req.user!.timezone = timezone;
   }
 
+  const capabilities = computeCapabilities({
+    isPremium: req.user!.isPremium,
+    premiumExpiresAt: req.user!.premiumExpiresAt,
+  });
+
   res.json({
     user: req.user,
     needsOnboarding: needsOnboarding(req.user!),
+    capabilities,
   });
+});
+
+// ── Get current capabilities (foreground refresh) ─────────────────────
+router.get('/capabilities', requireAuth, async (req: AuthRequest, res: Response): Promise<void> => {
+  const capabilities = computeCapabilities({
+    isPremium: req.user!.isPremium,
+    premiumExpiresAt: req.user!.premiumExpiresAt,
+  });
+  res.json({ capabilities });
 });
 
 // ── Delete account ────────────────────────────────────────────────────────
