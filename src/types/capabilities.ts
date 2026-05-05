@@ -18,6 +18,7 @@ export interface CapabilityLimits {
   maxBeacons: number;
   maxGroupsOwned: number;
   maxGroupMembers: number;
+  maxOrgsOwned: number;
 }
 
 export interface CapabilityFeatures {

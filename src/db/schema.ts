@@ -10,9 +10,11 @@ import {
   numeric,
   unique,
   index,
+  uniqueIndex,
+  check,
   pgEnum,
 } from 'drizzle-orm/pg-core';
-import { relations } from 'drizzle-orm';
+import { relations, sql } from 'drizzle-orm';
 
 // ─────────────────────────────────────────────
 // USERS (mirrors + extends webapp users table)
@@ -260,6 +262,63 @@ export const referrals = pgTable('referrals', {
 ]);
 
 // ─────────────────────────────────────────────
+// ORGANIZATIONS
+// ─────────────────────────────────────────────
+export const organizations = pgTable('organizations', {
+  id: serial('id').primaryKey(),
+  slug: text('slug').notNull().unique(),
+  name: text('name').notNull(),
+  description: text('description'),
+  type: text('type').$type<'jcc' | 'non_profit' | 'creator' | 'community' | 'business'>().notNull(),
+  iconUrl: text('icon_url'),
+  createdBy: integer('created_by').references(() => users.id, { onDelete: 'set null' }),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  deletedAt: timestamp('deleted_at'),
+}, (table) => ({
+  typeIdx: index('organizations_type_idx').on(table.type),
+  createdByIdx: index('organizations_created_by_idx').on(table.createdBy),
+  typeCheck: check(
+    'organizations_type_check',
+    sql`${table.type} IN ('jcc', 'non_profit', 'creator', 'community', 'business')`,
+  ),
+}));
+
+export const organizationMemberships = pgTable('organization_memberships', {
+  id: serial('id').primaryKey(),
+  orgId: integer('org_id').references(() => organizations.id, { onDelete: 'cascade' }).notNull(),
+  userId: integer('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
+  role: text('role').$type<'admin' | 'moderator' | 'member'>().notNull(),
+  joinedAt: timestamp('joined_at').defaultNow().notNull(),
+}, (table) => ({
+  orgUserUnique: uniqueIndex('organization_memberships_org_user_unique').on(table.orgId, table.userId),
+  userIdx: index('organization_memberships_user_idx').on(table.userId),
+  orgRoleIdx: index('organization_memberships_org_role_idx').on(table.orgId, table.role),
+  roleCheck: check(
+    'organization_memberships_role_check',
+    sql`${table.role} IN ('admin', 'moderator', 'member')`,
+  ),
+}));
+
+export const organizationInvites = pgTable('organization_invites', {
+  id: serial('id').primaryKey(),
+  orgId: integer('org_id').references(() => organizations.id, { onDelete: 'cascade' }).notNull(),
+  inviterId: integer('inviter_id').references(() => users.id, { onDelete: 'set null' }),
+  invitedUserId: integer('invited_user_id').references(() => users.id, { onDelete: 'cascade' }),
+  token: text('token').notNull().unique(),
+  role: text('role').$type<'admin' | 'moderator' | 'member'>().default('member').notNull(),
+  expiresAt: timestamp('expires_at').notNull(),
+  acceptedAt: timestamp('accepted_at'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+}, (table) => ({
+  orgInvitedIdx: index('organization_invites_org_invited_idx').on(table.orgId, table.invitedUserId),
+  roleCheck: check(
+    'organization_invites_role_check',
+    sql`${table.role} IN ('admin', 'moderator', 'member')`,
+  ),
+}));
+
+// ─────────────────────────────────────────────
 // RELATIONS
 // ─────────────────────────────────────────────
 export const usersRelations = relations(users, ({ one, many }) => ({
@@ -424,4 +483,42 @@ export const newsReactionsRelations = relations(newsReactions, ({ one }) => ({
 export const newsPushHistoryRelations = relations(newsPushHistory, ({ one }) => ({
   user: one(users, { fields: [newsPushHistory.userId], references: [users.id] }),
   article: one(newsArticles, { fields: [newsPushHistory.articleId], references: [newsArticles.id] }),
+}));
+
+// ─────────────────────────────────────────────
+// ORGANIZATION — Relations
+// ─────────────────────────────────────────────
+export const organizationsRelations = relations(organizations, ({ one, many }) => ({
+  creator: one(users, {
+    fields: [organizations.createdBy],
+    references: [users.id],
+  }),
+  memberships: many(organizationMemberships),
+  invites: many(organizationInvites),
+}));
+
+export const organizationMembershipsRelations = relations(organizationMemberships, ({ one }) => ({
+  organization: one(organizations, {
+    fields: [organizationMemberships.orgId],
+    references: [organizations.id],
+  }),
+  user: one(users, {
+    fields: [organizationMemberships.userId],
+    references: [users.id],
+  }),
+}));
+
+export const organizationInvitesRelations = relations(organizationInvites, ({ one }) => ({
+  organization: one(organizations, {
+    fields: [organizationInvites.orgId],
+    references: [organizations.id],
+  }),
+  inviter: one(users, {
+    fields: [organizationInvites.inviterId],
+    references: [users.id],
+  }),
+  invitedUser: one(users, {
+    fields: [organizationInvites.invitedUserId],
+    references: [users.id],
+  }),
 }));

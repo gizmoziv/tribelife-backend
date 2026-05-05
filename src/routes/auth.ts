@@ -10,6 +10,7 @@ import { db } from '../db';
 import { users, userProfiles, referrals, messages } from '../db/schema';
 import { signToken, requireAuth, needsOnboarding, HANDLE_COOLDOWN_DAYS, HANDLE_COOLDOWN_MS, AuthRequest } from '../middleware/auth';
 import { computeCapabilities } from '../services/capabilities';
+import { getOrgMembershipsForUser } from '../services/orgMemberships';
 import { sendWelcomeEmail } from '../services/email';
 import { getIO } from '../lib/socketRegistry';
 
@@ -129,9 +130,11 @@ router.post('/google', async (req: Request, res: Response): Promise<void> => {
     const token = signToken(user.users.id);
     const profile = user.user_profiles;
 
+    const orgMemberships = await getOrgMembershipsForUser(user.users.id);
     const capabilities = computeCapabilities({
       isPremium: profile?.isPremium ?? false,
       premiumExpiresAt: profile?.premiumExpiresAt ?? null,
+      orgMemberships,
     });
 
     res.json({
@@ -276,9 +279,11 @@ router.post('/apple', async (req: Request, res: Response): Promise<void> => {
     const token = signToken(user.users.id);
     const profile = user.user_profiles;
 
+    const orgMemberships = await getOrgMembershipsForUser(user.users.id);
     const capabilities = computeCapabilities({
       isPremium: profile?.isPremium ?? false,
       premiumExpiresAt: profile?.premiumExpiresAt ?? null,
+      orgMemberships,
     });
 
     res.json({
@@ -574,9 +579,11 @@ router.get('/me', requireAuth, async (req: AuthRequest, res: Response): Promise<
     req.user!.timezone = timezone;
   }
 
+  const orgMemberships = await getOrgMembershipsForUser(req.user!.id);
   const capabilities = computeCapabilities({
     isPremium: req.user!.isPremium,
     premiumExpiresAt: req.user!.premiumExpiresAt,
+    orgMemberships,
   });
 
   res.json({
@@ -588,9 +595,11 @@ router.get('/me', requireAuth, async (req: AuthRequest, res: Response): Promise<
 
 // ── Get current capabilities (foreground refresh) ─────────────────────
 router.get('/capabilities', requireAuth, async (req: AuthRequest, res: Response): Promise<void> => {
+  const orgMemberships = await getOrgMembershipsForUser(req.user!.id);
   const capabilities = computeCapabilities({
     isPremium: req.user!.isPremium,
     premiumExpiresAt: req.user!.premiumExpiresAt,
+    orgMemberships,
   });
   res.json({ capabilities });
 });

@@ -28,6 +28,7 @@ import newsRouter from './routes/news';
 import reactionsRouter from './routes/reactions';
 import referralsRouter from './routes/referrals';
 import groupsRouter from './routes/groups';
+import orgsRouter from './routes/orgs';
 import wellKnownRouter from './routes/wellKnown';
 import deepLinkFallbackRouter from './routes/deepLinkFallback';
 import { startBeaconMatcherCron } from './jobs/beaconMatcher';
@@ -145,6 +146,7 @@ app.use('/api', limiter);
 // ── REST Routes ────────────────────────────────────────────────────────────
 app.use('/api/auth', authRouter);
 app.use('/api/chat', chatRouter);
+app.use('/api/orgs', orgsRouter);
 app.use('/api/beacons', beaconsRouter);
 app.use('/api/notifications', notificationsRouter);
 app.use('/api/users', usersRouter);
