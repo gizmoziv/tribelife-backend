@@ -9,6 +9,7 @@ import {
   userProfiles,
 } from '../db/schema';
 import { requireAuth, AuthRequest } from '../middleware/auth';
+import { requireCapability } from '../middleware/capabilities';
 import logger from '../lib/logger';
 
 const log = logger.child({ module: 'groups' });
@@ -64,13 +65,11 @@ const createGroupSchema = z.object({
   slug: z.string().min(1).max(50).optional(),
 });
 
-router.post('/', async (req: AuthRequest, res: Response): Promise<void> => {
+router.post(
+  '/',
+  requireCapability('canCreatePrivateGroup', 'Premium subscription required to create groups'),
+  async (req: AuthRequest, res: Response): Promise<void> => {
   const userId = req.user!.id;
-
-  if (!req.user!.isPremium) {
-    res.status(403).json({ error: 'Premium subscription required to create groups' });
-    return;
-  }
 
   const parse = createGroupSchema.safeParse(req.body);
   if (!parse.success) {
@@ -146,7 +145,8 @@ router.post('/', async (req: AuthRequest, res: Response): Promise<void> => {
     log.error({ err }, 'Failed to create group');
     res.status(500).json({ error: 'Failed to create group' });
   }
-});
+  }
+);
 
 // ── Get Group Info (invite preview) ─────────────────────────────────────────
 router.get('/:slug', async (req: AuthRequest, res: Response): Promise<void> => {
