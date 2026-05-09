@@ -131,8 +131,11 @@ router.post('/google', async (req: Request, res: Response): Promise<void> => {
     const profile = user.user_profiles;
 
     const orgMemberships = await getOrgMembershipsForUser(user.users.id);
+    // isPremium removed from response payload (TIER-03); the field below is the
+    // backend-internal input to computeCapabilities — not a response field.
+    const premiumFlag = profile?.isPremium ?? false;
     const capabilities = computeCapabilities({
-      isPremium: profile?.isPremium ?? false,
+      isPremium: premiumFlag,
       premiumExpiresAt: profile?.premiumExpiresAt ?? null,
       orgMemberships,
     });
@@ -145,7 +148,7 @@ router.post('/google', async (req: Request, res: Response): Promise<void> => {
         name: user.users.name,
         handle: profile?.handle ?? null,
         avatarUrl: profile?.avatarUrl ?? null,
-        isPremium: profile?.isPremium ?? false,
+        // isPremium removed (TIER-03) — consumers read capabilities.isPremium
         timezone: profile?.timezone ?? null,
         acceptedTermsAt: profile?.acceptedTermsAt ?? null,
         handleUpdatedAt: profile?.handleUpdatedAt ?? null,
@@ -280,8 +283,11 @@ router.post('/apple', async (req: Request, res: Response): Promise<void> => {
     const profile = user.user_profiles;
 
     const orgMemberships = await getOrgMembershipsForUser(user.users.id);
+    // isPremium removed from response payload (TIER-03); the field below is the
+    // backend-internal input to computeCapabilities — not a response field.
+    const premiumFlag = profile?.isPremium ?? false;
     const capabilities = computeCapabilities({
-      isPremium: profile?.isPremium ?? false,
+      isPremium: premiumFlag,
       premiumExpiresAt: profile?.premiumExpiresAt ?? null,
       orgMemberships,
     });
@@ -294,7 +300,7 @@ router.post('/apple', async (req: Request, res: Response): Promise<void> => {
         name: user.users.name,
         handle: profile?.handle ?? null,
         avatarUrl: profile?.avatarUrl ?? null,
-        isPremium: profile?.isPremium ?? false,
+        // isPremium removed (TIER-03) — consumers read capabilities.isPremium
         timezone: profile?.timezone ?? null,
         acceptedTermsAt: profile?.acceptedTermsAt ?? null,
         handleUpdatedAt: profile?.handleUpdatedAt ?? null,
@@ -580,14 +586,25 @@ router.get('/me', requireAuth, async (req: AuthRequest, res: Response): Promise<
   }
 
   const orgMemberships = await getOrgMembershipsForUser(req.user!.id);
+  const userPremium = req.user!.isPremium;
   const capabilities = computeCapabilities({
-    isPremium: req.user!.isPremium,
+    isPremium: userPremium,
     premiumExpiresAt: req.user!.premiumExpiresAt,
     orgMemberships,
   });
 
   res.json({
-    user: req.user,
+    user: {
+      id: req.user!.id,
+      email: req.user!.email,
+      name: req.user!.name,
+      handle: req.user!.handle,
+      avatarUrl: req.user!.avatarUrl,
+      // isPremium deliberately omitted (TIER-03) — consumers read capabilities.isPremium
+      timezone: req.user!.timezone,
+      acceptedTermsAt: req.user!.acceptedTermsAt,
+      handleUpdatedAt: req.user!.handleUpdatedAt,
+    },
     needsOnboarding: needsOnboarding(req.user!),
     capabilities,
   });
@@ -596,8 +613,9 @@ router.get('/me', requireAuth, async (req: AuthRequest, res: Response): Promise<
 // ── Get current capabilities (foreground refresh) ─────────────────────
 router.get('/capabilities', requireAuth, async (req: AuthRequest, res: Response): Promise<void> => {
   const orgMemberships = await getOrgMembershipsForUser(req.user!.id);
+  const userPremium = req.user!.isPremium;
   const capabilities = computeCapabilities({
-    isPremium: req.user!.isPremium,
+    isPremium: userPremium,
     premiumExpiresAt: req.user!.premiumExpiresAt,
     orgMemberships,
   });
