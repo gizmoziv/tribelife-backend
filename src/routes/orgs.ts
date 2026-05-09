@@ -10,8 +10,7 @@ import {
   userProfiles,
 } from '../db/schema';
 import { requireAuth, AuthRequest } from '../middleware/auth';
-import { computeCapabilities } from '../services/capabilities';
-import { getOrgMembershipsForUser } from '../services/orgMemberships';
+import { requireCapability } from '../middleware/capabilities';
 import logger from '../lib/logger';
 
 const log = logger.child({ module: 'orgs' });
@@ -34,7 +33,10 @@ const createOrgSchema = z.object({
   iconUrl: z.string().url().optional(),
 });
 
-router.post('/', async (req: AuthRequest, res: Response): Promise<void> => {
+router.post(
+  '/',
+  requireCapability('canCreateOrg', 'Org creation is currently a manual process — contact support'),
+  async (req: AuthRequest, res: Response): Promise<void> => {
   const parse = createOrgSchema.safeParse(req.body);
   if (!parse.success) {
     res.status(400).json({ error: parse.error.errors[0].message });
@@ -48,18 +50,6 @@ router.post('/', async (req: AuthRequest, res: Response): Promise<void> => {
   }
 
   const userId = req.user!.id;
-
-  // Capability gate (inline — Phase 3 will retrofit middleware)
-  const orgMemberships = await getOrgMembershipsForUser(userId);
-  const caps = computeCapabilities({
-    isPremium: req.user!.isPremium,
-    premiumExpiresAt: req.user!.premiumExpiresAt,
-    orgMemberships,
-  });
-  if (!caps.features.canCreateOrg) {
-    res.status(403).json({ error: 'Org creation is currently a manual process — contact support', capabilityViolation: true });
-    return;
-  }
 
   // Slug uniqueness pre-check (DB UNIQUE is final guard; this gives a clean error)
   const existing = await db
@@ -101,7 +91,8 @@ router.post('/', async (req: AuthRequest, res: Response): Promise<void> => {
     log.error({ err, userId, slug }, '[orgs] create failed');
     res.status(500).json({ error: 'Failed to create organization' });
   }
-});
+  }
+);
 
 // ── Invite member ─────────────────────────────────────────────────────────────
 const inviteSchema = z.object({
