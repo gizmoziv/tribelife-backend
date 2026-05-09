@@ -5,10 +5,10 @@ const log = logger.child({ module: 'upload' });
 import { z } from 'zod';
 import { eq } from 'drizzle-orm';
 import { db } from '../db';
-import { userProfiles, conversations, conversationParticipants } from '../db/schema';
+import { userProfiles, conversations, conversationParticipants, organizations, organizationMemberships } from '../db/schema';
 import { and, isNull } from 'drizzle-orm';
 import { requireAuth, AuthRequest } from '../middleware/auth';
-import { generateAvatarUploadUrl, generateGroupIconUploadUrl, generateMediaUploadUrls, objectExists, deleteObject, cdnUrlToKey, setPublicRead } from '../services/storage';
+import { generateAvatarUploadUrl, generateGroupIconUploadUrl, generateOrgIconUploadUrl, generateMediaUploadUrls, objectExists, deleteObject, cdnUrlToKey, setPublicRead } from '../services/storage';
 
 const router = Router();
 
@@ -280,6 +280,114 @@ router.post('/group-icon-confirm', requireAuth, async (req: AuthRequest, res: Re
     res.json({ groupIconUrl: cdnUrl });
   } catch (err) {
     log.error({ err }, 'Failed to confirm group icon');
+    res.status(500).json({ error: 'Failed to confirm upload' });
+  }
+});
+
+// ── POST /org-icon-url — Pre-signed URL for org icon (admin only) ────────────
+async function assertOrgAdmin(userId: number, orgId: number): Promise<boolean> {
+  const [m] = await db
+    .select({ role: organizationMemberships.role })
+    .from(organizationMemberships)
+    .innerJoin(organizations, eq(organizations.id, organizationMemberships.orgId))
+    .where(
+      and(
+        eq(organizationMemberships.orgId, orgId),
+        eq(organizationMemberships.userId, userId),
+        isNull(organizations.deletedAt),
+      ),
+    )
+    .limit(1);
+  return m?.role === 'admin';
+}
+
+const orgIconUrlSchema = z.object({
+  orgId: z.number().int().positive(),
+});
+
+router.post('/org-icon-url', requireAuth, async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const parse = orgIconUrlSchema.safeParse(req.body);
+    if (!parse.success) {
+      res.status(400).json({ error: 'orgId is required' });
+      return;
+    }
+
+    if (!checkUploadRateLimit(req.user!.id)) {
+      res.status(429).json({ error: 'Upload rate limit exceeded. Try again later.' });
+      return;
+    }
+
+    const isAdmin = await assertOrgAdmin(req.user!.id, parse.data.orgId);
+    if (!isAdmin) {
+      res.status(403).json({ error: 'Only org admins can upload an org icon' });
+      return;
+    }
+
+    const result = await generateOrgIconUploadUrl(parse.data.orgId);
+    res.json(result);
+  } catch (err) {
+    log.error({ err }, '[upload/org-icon-url] failed');
+    res.status(500).json({ error: 'Failed to generate upload URL' });
+  }
+});
+
+// ── POST /org-icon-confirm — Confirm upload and persist org icon CDN URL ─────
+const orgIconConfirmSchema = z.object({
+  orgId: z.number().int().positive(),
+  key: z.string().min(1),
+});
+
+router.post('/org-icon-confirm', requireAuth, async (req: AuthRequest, res: Response): Promise<void> => {
+  const parse = orgIconConfirmSchema.safeParse(req.body);
+  if (!parse.success) {
+    res.status(400).json({ error: 'orgId and key are required' });
+    return;
+  }
+
+  const { orgId, key } = parse.data;
+
+  try {
+    const isAdmin = await assertOrgAdmin(req.user!.id, orgId);
+    if (!isAdmin) {
+      res.status(403).json({ error: 'Only org admins can update the org icon' });
+      return;
+    }
+
+    const prefix = process.env.DO_SPACES_PREFIX || 'prod';
+    if (!key.startsWith(`${prefix}/org-icons/${orgId}/`)) {
+      res.status(403).json({ error: 'Key does not belong to this org' });
+      return;
+    }
+
+    const exists = await objectExists(key);
+    if (!exists) {
+      res.status(400).json({ error: 'Object not found at key' });
+      return;
+    }
+
+    await setPublicRead(key);
+
+    // Delete previous icon if present
+    const [org] = await db
+      .select({ iconUrl: organizations.iconUrl })
+      .from(organizations)
+      .where(eq(organizations.id, orgId));
+
+    if (org?.iconUrl) {
+      const oldKey = cdnUrlToKey(org.iconUrl);
+      if (oldKey) await deleteObject(oldKey);
+    }
+
+    const cdnUrl = `${process.env.DO_SPACES_CDN_URL}/${key}`;
+    await db
+      .update(organizations)
+      .set({ iconUrl: cdnUrl, updatedAt: new Date() })
+      .where(eq(organizations.id, orgId));
+
+    res.json({ iconUrl: cdnUrl });
+  } catch (err) {
+    log.error({ err }, '[upload/org-icon-confirm] failed');
     res.status(500).json({ error: 'Failed to confirm upload' });
   }
 });

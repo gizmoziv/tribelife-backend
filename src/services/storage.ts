@@ -69,6 +69,28 @@ export async function generateGroupIconUploadUrl(conversationId: number): Promis
 }
 
 /**
+ * Generate a pre-signed PUT URL for org icon upload.
+ * Key format: {env}/org-icons/{orgId}/{timestamp}.jpg
+ */
+export async function generateOrgIconUploadUrl(orgId: number): Promise<{
+  uploadUrl: string;
+  key: string;
+  cdnUrl: string;
+}> {
+  const key = `${PREFIX}/org-icons/${orgId}/${Date.now()}.jpg`;
+
+  const command = new PutObjectCommand({
+    Bucket: BUCKET,
+    Key: key,
+  });
+
+  const uploadUrl = await getSignedUrl(s3, command, { expiresIn: 300 });
+  const cdnUrl = `${CDN_URL}/${key}`;
+
+  return { uploadUrl, key, cdnUrl };
+}
+
+/**
  * Generate pre-signed PUT URLs for media uploads (up to 4 images per message).
  * Key format: {env}/media/{userId}/{uuid}/{index}.jpg
  */
