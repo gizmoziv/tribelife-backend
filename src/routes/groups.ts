@@ -10,6 +10,9 @@ import {
 } from '../db/schema';
 import { requireAuth, AuthRequest } from '../middleware/auth';
 import { requireCapability } from '../middleware/capabilities';
+import { computeCapabilities } from '../services/capabilities';
+import { getOrgMembershipsForUser } from '../services/orgMemberships';
+import { logCapabilityDenial } from '../lib/capabilityLogger';
 import logger from '../lib/logger';
 
 const log = logger.child({ module: 'groups' });
@@ -215,7 +218,7 @@ router.post('/:slug/join', async (req: AuthRequest, res: Response): Promise<void
     .select({
       id: conversations.id,
       groupName: conversations.groupName,
-      maxMembers: conversations.maxMembers,
+      createdById: conversations.createdById,
     })
     .from(conversations)
     .where(and(eq(conversations.inviteSlug, slug), eq(conversations.isGroup, true)))
@@ -263,8 +266,39 @@ router.post('/:slug/join', async (req: AuthRequest, res: Response): Promise<void
       )
     );
 
-  if (countResult.count >= (group.maxMembers ?? 200)) {
-    res.status(400).json({ error: 'Group is full' });
+  // TIER-06: enforce maxGroupMembers against the OWNER's capabilities
+  // (Phase 4 F-1). Mirror the enforceLimit pattern but compute caps for
+  // group.createdById since the joiner's caps are irrelevant.
+  const [ownerProfile] = await db
+    .select({
+      isPremium: userProfiles.isPremium,
+      premiumExpiresAt: userProfiles.premiumExpiresAt,
+    })
+    .from(userProfiles)
+    .where(eq(userProfiles.userId, group.createdById!))
+    .limit(1);
+
+  const ownerMemberships = await getOrgMembershipsForUser(group.createdById!);
+  const ownerCaps = computeCapabilities({
+    isPremium: ownerProfile!.isPremium,
+    premiumExpiresAt: ownerProfile!.premiumExpiresAt,
+    orgMemberships: ownerMemberships,
+  });
+  const memberCap = ownerCaps.limits.maxGroupMembers;
+
+  if (countResult.count >= memberCap) {
+    logCapabilityDenial({
+      req,
+      capability: 'maxGroupMembers',
+      currentTier: ownerCaps.tier,
+      reason: 'limit',
+      current: countResult.count,
+      max: memberCap,
+    });
+    res.status(403).json({
+      error: `Group is full — owner's tier allows up to ${memberCap} members`,
+      capabilityViolation: true,
+    });
     return;
   }
 
