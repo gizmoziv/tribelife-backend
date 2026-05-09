@@ -11,6 +11,7 @@ import {
   blockedUsers,
 } from '../db/schema';
 import { requireAuth, AuthRequest } from '../middleware/auth';
+import { requireCapability } from '../middleware/capabilities';
 import { attachReactions } from '../utils/attachReactions';
 import { attachReplyTo } from '../utils/attachReplyTo';
 import { translateMessage } from '../services/translation';
@@ -416,7 +417,10 @@ const translateSchema = z.object({
 });
 
 // ── Translate message ─────────────────────────────────────────────────────
-router.post('/translate/:messageId', async (req: AuthRequest, res: Response): Promise<void> => {
+router.post(
+  '/translate/:messageId',
+  requireCapability('canTranslateMessages'),
+  async (req: AuthRequest, res: Response): Promise<void> => {
   const messageId = parseInt(req.params.messageId as string);
   if (isNaN(messageId)) {
     res.status(400).json({ error: 'Invalid message ID' });
@@ -471,6 +475,7 @@ router.post('/translate/:messageId', async (req: AuthRequest, res: Response): Pr
     log.error({ err, messageId }, 'Translation failed');
     res.status(500).json({ error: 'Translation failed' });
   }
-});
+  }
+);
 
 export default router;
