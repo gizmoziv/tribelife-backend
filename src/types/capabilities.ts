@@ -12,6 +12,9 @@ export type OrgRole = 'admin' | 'moderator' | 'member';
 export interface OrgMembership {
   orgId: number;
   role: OrgRole;
+  slug: string;
+  name: string;
+  iconUrl: string | null;
 }
 
 export interface CapabilityLimits {

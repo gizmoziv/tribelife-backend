@@ -36,10 +36,38 @@ export interface AuthRequest extends Request {
   user?: AuthUser;
 }
 
+/**
+ * Load the AuthUser row by userId. Returns null when the row doesn't exist.
+ * Single source of truth for the users + user_profiles join shape — used by
+ * both requireAuth (which 401s on null) and optionalAuth (which silently
+ * no-ops on null). Adding a column to userProfiles requires updating only
+ * THIS function, not both middlewares.
+ */
+export async function loadAuthUser(userId: number): Promise<AuthUser | null> {
+  const result = await db
+    .select({
+      id: users.id,
+      email: users.email,
+      name: users.name,
+      handle: userProfiles.handle,
+      avatarUrl: userProfiles.avatarUrl,
+      isPremium: userProfiles.isPremium,
+      premiumExpiresAt: userProfiles.premiumExpiresAt,
+      timezone: userProfiles.timezone,
+      acceptedTermsAt: userProfiles.acceptedTermsAt,
+      handleUpdatedAt: userProfiles.handleUpdatedAt,
+    })
+    .from(users)
+    .leftJoin(userProfiles, eq(users.id, userProfiles.userId))
+    .where(eq(users.id, userId))
+    .limit(1);
+  return (result[0] as AuthUser | undefined) ?? null;
+}
+
 export async function requireAuth(
   req: AuthRequest,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ): Promise<void> {
   const authHeader = req.headers.authorization;
 
@@ -52,31 +80,14 @@ export async function requireAuth(
 
   try {
     const payload = jwt.verify(token, JWT_SECRET) as { userId: number };
+    const user = await loadAuthUser(payload.userId);
 
-    const result = await db
-      .select({
-        id: users.id,
-        email: users.email,
-        name: users.name,
-        handle: userProfiles.handle,
-        avatarUrl: userProfiles.avatarUrl,
-        isPremium: userProfiles.isPremium,
-        premiumExpiresAt: userProfiles.premiumExpiresAt,
-        timezone: userProfiles.timezone,
-        acceptedTermsAt: userProfiles.acceptedTermsAt,
-        handleUpdatedAt: userProfiles.handleUpdatedAt,
-      })
-      .from(users)
-      .leftJoin(userProfiles, eq(users.id, userProfiles.userId))
-      .where(eq(users.id, payload.userId))
-      .limit(1);
-
-    if (!result[0]) {
+    if (!user) {
       res.status(401).json({ error: 'User not found' });
       return;
     }
 
-    req.user = result[0] as AuthUser;
+    req.user = user;
     next();
   } catch {
     res.status(401).json({ error: 'Invalid or expired token' });

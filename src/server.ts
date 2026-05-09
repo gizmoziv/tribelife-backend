@@ -29,6 +29,7 @@ import reactionsRouter from './routes/reactions';
 import referralsRouter from './routes/referrals';
 import groupsRouter from './routes/groups';
 import orgsRouter from './routes/orgs';
+import orgsPublicRouter from './routes/orgsPublic';
 import wellKnownRouter from './routes/wellKnown';
 import deepLinkFallbackRouter from './routes/deepLinkFallback';
 import { startBeaconMatcherCron } from './jobs/beaconMatcher';
@@ -146,6 +147,7 @@ app.use('/api', limiter);
 // ── REST Routes ────────────────────────────────────────────────────────────
 app.use('/api/auth', authRouter);
 app.use('/api/chat', chatRouter);
+app.use('/api/orgs', orgsPublicRouter); // public reads first (RESEARCH.md Pitfall #1)
 app.use('/api/orgs', orgsRouter);
 app.use('/api/beacons', beaconsRouter);
 app.use('/api/notifications', notificationsRouter);
