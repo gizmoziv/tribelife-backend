@@ -2,18 +2,17 @@ import { Router, Response } from 'express';
 import logger from '../lib/logger';
 
 const log = logger.child({ module: 'beacons' });
-import { eq, and, desc, count, isNull } from 'drizzle-orm';
+import { eq, and, desc, isNull } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '../db';
 import { beacons, beaconMatches, userProfiles, users } from '../db/schema';
 import { requireAuth, AuthRequest } from '../middleware/auth';
+import { CapabilityViolationError } from '../middleware/capabilities';
+import { enforceLimit, countActiveBeacons } from '../services/limitChecks';
 import { analyzeBeacon } from '../services/claude';
 
 const router = Router();
 router.use(requireAuth);
-
-const FREE_BEACON_LIMIT = 1;
-const PREMIUM_BEACON_LIMIT = 3;
 
 // ── Create a beacon ────────────────────────────────────────────────────────
 const createBeaconSchema = z.object({
@@ -32,23 +31,22 @@ router.post('/', async (req: AuthRequest, res: Response): Promise<void> => {
   }
 
   const userId = req.user!.id;
-  const isPremium = req.user!.isPremium;
-  const limit = isPremium ? PREMIUM_BEACON_LIMIT : FREE_BEACON_LIMIT;
 
-  // Count active beacons
-  const [{ value: activeCount }] = await db
-    .select({ value: count() })
-    .from(beacons)
-    .where(and(eq(beacons.userId, userId), eq(beacons.isActive, true)));
-
-  if (Number(activeCount) >= limit) {
-    res.status(403).json({
-      error: isPremium
-        ? `Premium accounts can run up to ${PREMIUM_BEACON_LIMIT} beacons at a time`
-        : `Free accounts can run 1 beacon at a time. Upgrade to Premium for up to ${PREMIUM_BEACON_LIMIT} beacons.`,
-      upgradeRequired: !isPremium,
-    });
-    return;
+  try {
+    await enforceLimit(req, 'maxBeacons', countActiveBeacons);
+  } catch (err) {
+    if (err instanceof CapabilityViolationError) {
+      const max = err.max ?? 0;
+      res.status(403).json({
+        error: max > 1
+          ? `You can run up to ${max} beacons at a time`
+          : `Free accounts can run 1 beacon at a time. Upgrade to Premium for more.`,
+        upgradeRequired: max <= 1,
+        capabilityViolation: true,
+      });
+      return;
+    }
+    throw err;
   }
 
   // Get user's timezone from profile
