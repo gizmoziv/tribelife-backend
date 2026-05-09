@@ -180,6 +180,7 @@ router.get('/:handle', async (req: AuthRequest, res: Response): Promise<void> =>
       avatarUrl: userProfiles.avatarUrl,
       timezone: userProfiles.timezone,
       isPremium: userProfiles.isPremium,
+      premiumExpiresAt: userProfiles.premiumExpiresAt,
       createdAt: users.createdAt,
     })
     .from(userProfiles)
@@ -192,7 +193,18 @@ router.get('/:handle', async (req: AuthRequest, res: Response): Promise<void> =>
     return;
   }
 
-  res.json({ user: result[0] });
+  const profileRow = result[0];
+  const premiumActive =
+    profileRow.isPremium &&
+    (profileRow.premiumExpiresAt === null || profileRow.premiumExpiresAt > new Date());
+
+  res.json({
+    user: {
+      ...profileRow,
+      isPremium: premiumActive,        // derived (D-04) — expiry-aware
+      premiumExpiresAt: undefined,     // don't expose expiry date publicly
+    },
+  });
 });
 
 export default router;

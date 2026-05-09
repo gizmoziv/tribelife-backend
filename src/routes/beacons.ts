@@ -41,7 +41,6 @@ router.post('/', async (req: AuthRequest, res: Response): Promise<void> => {
         error: max > 1
           ? `You can run up to ${max} beacons at a time`
           : `Free accounts can run 1 beacon at a time. Upgrade to Premium for more.`,
-        upgradeRequired: max <= 1,
         capabilityViolation: true,
       });
       return;
