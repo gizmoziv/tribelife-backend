@@ -235,38 +235,62 @@ router.put(
     }
 
     try {
-      // Read current membership
-      const [current] = await db
-        .select({ role: organizationMemberships.role })
-        .from(organizationMemberships)
-        .where(and(
-          eq(organizationMemberships.orgId, orgId),
-          eq(organizationMemberships.userId, subjectId),
-        ))
-        .limit(1);
+      let current: { role: string } | undefined;
+      let updated: typeof organizationMemberships.$inferSelect | undefined;
+
+      await db.transaction(async (tx) => {
+        // Lock the memberships table for this transaction to close the
+        // TOCTOU window between the last-admin count and the UPDATE (CR-03).
+        await tx.execute(sql`LOCK TABLE organization_memberships IN EXCLUSIVE MODE`);
+
+        // Read current membership inside the transaction
+        const [row] = await tx
+          .select({ role: organizationMemberships.role })
+          .from(organizationMemberships)
+          .where(and(
+            eq(organizationMemberships.orgId, orgId),
+            eq(organizationMemberships.userId, subjectId),
+          ))
+          .limit(1);
+
+        current = row;
+        if (!row) return; // handled after transaction
+
+        // Last-admin guard: cannot demote the only admin (D-05)
+        if (row.role === 'admin') {
+          const [{ n }] = await tx
+            .select({ n: sql<number>`COUNT(*)::int` })
+            .from(organizationMemberships)
+            .where(and(
+              eq(organizationMemberships.orgId, orgId),
+              eq(organizationMemberships.role, 'admin'),
+            ));
+          if ((n ?? 0) <= 1) {
+            // Signal to outer scope via sentinel value
+            current = { role: '__last_admin__' };
+            return;
+          }
+        }
+
+        const [u] = await tx
+          .update(organizationMemberships)
+          .set({ role: parse.data.role })
+          .where(and(
+            eq(organizationMemberships.orgId, orgId),
+            eq(organizationMemberships.userId, subjectId),
+          ))
+          .returning();
+        updated = u;
+      });
 
       if (!current) {
         res.status(404).json({ error: 'Member not found' });
         return;
       }
-
-      // Last-admin guard: cannot demote the only admin (D-05)
-      if (current.role === 'admin') {
-        const adminCount = await countOrgAdmins(orgId);
-        if (adminCount <= 1) {
-          res.status(422).json({ error: 'Last admin cannot be demoted' });
-          return;
-        }
+      if (current.role === '__last_admin__') {
+        res.status(422).json({ error: 'Last admin cannot be demoted' });
+        return;
       }
-
-      const [updated] = await db
-        .update(organizationMemberships)
-        .set({ role: parse.data.role })
-        .where(and(
-          eq(organizationMemberships.orgId, orgId),
-          eq(organizationMemberships.userId, subjectId),
-        ))
-        .returning();
 
       console.log('[orgs] role-changed', {
         orgId,
@@ -306,36 +330,57 @@ router.delete(
     }
 
     try {
-      // Read current membership of the subject
-      const [current] = await db
-        .select({ role: organizationMemberships.role })
-        .from(organizationMemberships)
-        .where(and(
-          eq(organizationMemberships.orgId, orgId),
-          eq(organizationMemberships.userId, subjectId),
-        ))
-        .limit(1);
+      let memberStatus: 'not_found' | 'last_admin' | 'ok' = 'not_found';
 
-      if (!current) {
+      await db.transaction(async (tx) => {
+        // Lock the memberships table for this transaction to close the
+        // TOCTOU window between the last-admin count and the DELETE (CR-03).
+        await tx.execute(sql`LOCK TABLE organization_memberships IN EXCLUSIVE MODE`);
+
+        // Read current membership of the subject inside the transaction
+        const [current] = await tx
+          .select({ role: organizationMemberships.role })
+          .from(organizationMemberships)
+          .where(and(
+            eq(organizationMemberships.orgId, orgId),
+            eq(organizationMemberships.userId, subjectId),
+          ))
+          .limit(1);
+
+        if (!current) return; // memberStatus stays 'not_found'
+
+        // Last-admin guard: even self-leave is blocked if subject is the only admin (D-05)
+        if (current.role === 'admin') {
+          const [{ n }] = await tx
+            .select({ n: sql<number>`COUNT(*)::int` })
+            .from(organizationMemberships)
+            .where(and(
+              eq(organizationMemberships.orgId, orgId),
+              eq(organizationMemberships.role, 'admin'),
+            ));
+          if ((n ?? 0) <= 1) {
+            memberStatus = 'last_admin';
+            return;
+          }
+        }
+
+        await tx
+          .delete(organizationMemberships)
+          .where(and(
+            eq(organizationMemberships.orgId, orgId),
+            eq(organizationMemberships.userId, subjectId),
+          ));
+        memberStatus = 'ok';
+      });
+
+      if (memberStatus === 'not_found') {
         res.status(404).json({ error: 'Member not found' });
         return;
       }
-
-      // Last-admin guard: even self-leave is blocked if subject is the only admin (D-05)
-      if (current.role === 'admin') {
-        const adminCount = await countOrgAdmins(orgId);
-        if (adminCount <= 1) {
-          res.status(422).json({ error: 'Last admin cannot be demoted' });
-          return;
-        }
+      if (memberStatus === 'last_admin') {
+        res.status(422).json({ error: 'Last admin cannot be removed' });
+        return;
       }
-
-      await db
-        .delete(organizationMemberships)
-        .where(and(
-          eq(organizationMemberships.orgId, orgId),
-          eq(organizationMemberships.userId, subjectId),
-        ));
 
       console.log('[orgs] member-removed', { orgId, subjectId, by: callerId, selfLeave });
       res.json({ ok: true });
