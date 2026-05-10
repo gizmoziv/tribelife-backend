@@ -205,9 +205,9 @@ router.get(
   },
 );
 
-// ── Change member role (admin-only; member ↔ moderator only — no admin promotion per D-05) ──
+// ── Change member role (admin-only; admins can promote to admin, moderator, or member) ──
 const updateMemberSchema = z.object({
-  role: z.enum(['moderator', 'member']),
+  role: z.enum(['admin', 'moderator', 'member']),
 });
 
 router.put(
