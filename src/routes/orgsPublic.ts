@@ -16,67 +16,11 @@ const log = logger.child({ module: 'orgsPublic' });
 const SLUG_REGEX = /^[a-zA-Z0-9_-]{3,30}$/;
 const router = Router();
 
-// ── GET /:slug — public org info (works auth + anon) ─────────────────────────
-// Returns { org: { id, slug, name, description, type, iconUrl, memberCount, isMember, role } }
-// isMember = false and role = null when req.user is undefined (anonymous)
-router.get('/:slug', optionalAuth, async (req: AuthRequest, res: Response): Promise<void> => {
-  const slug = req.params.slug as string;
-  if (!slug || !SLUG_REGEX.test(slug)) {
-    res.status(400).json({ error: 'Invalid slug' });
-    return;
-  }
-
-  const [org] = await db
-    .select({
-      id: organizations.id,
-      slug: organizations.slug,
-      name: organizations.name,
-      description: organizations.description,
-      type: organizations.type,
-      iconUrl: organizations.iconUrl,
-    })
-    .from(organizations)
-    .where(and(eq(organizations.slug, slug), isNull(organizations.deletedAt)))
-    .limit(1);
-
-  if (!org) {
-    res.status(404).json({ error: 'Organization not found' });
-    return;
-  }
-
-  const [{ memberCount }] = await db
-    .select({ memberCount: sql<number>`COUNT(*)::int` })
-    .from(organizationMemberships)
-    .where(eq(organizationMemberships.orgId, org.id));
-
-  // Auth-aware fields
-  const userId = req.user?.id;
-  let isMember = false;
-  let role: 'admin' | 'moderator' | 'member' | null = null;
-  if (userId) {
-    const [m] = await db
-      .select({ role: organizationMemberships.role })
-      .from(organizationMemberships)
-      .where(
-        and(
-          eq(organizationMemberships.orgId, org.id),
-          eq(organizationMemberships.userId, userId),
-        ),
-      )
-      .limit(1);
-    if (m) {
-      isMember = true;
-      role = m.role;
-    }
-  }
-
-  log.info({ slug, userId: userId ?? null, isMember }, '[orgsPublic] org page viewed');
-  res.json({ org: { ...org, memberCount, isMember, role } });
-});
-
 // ── GET /invites/:token — preview without accepting ───────────────────────────
 // Returns { invite: { state, org, inviter, expiresAt } }
 // state: 'pending' | 'expired' | 'already_used' | 'already_member'
+// IMPORTANT: must be registered BEFORE /:slug wildcard so Express does not
+// swallow GET /api/orgs/invites/<token> with slug='invites'.
 router.get('/invites/:token', optionalAuth, async (req: AuthRequest, res: Response): Promise<void> => {
   const token = req.params.token as string;
   if (!token || token.length < 32) {
@@ -152,6 +96,65 @@ router.get('/invites/:token', optionalAuth, async (req: AuthRequest, res: Respon
       expiresAt: invite.expiresAt.toISOString(),
     },
   });
+});
+
+// ── GET /:slug — public org info (works auth + anon) ─────────────────────────
+// Returns { org: { id, slug, name, description, type, iconUrl, memberCount, isMember, role } }
+// isMember = false and role = null when req.user is undefined (anonymous)
+// NOTE: registered AFTER /invites/:token so the wildcard does not shadow it.
+router.get('/:slug', optionalAuth, async (req: AuthRequest, res: Response): Promise<void> => {
+  const slug = req.params.slug as string;
+  if (!slug || !SLUG_REGEX.test(slug)) {
+    res.status(400).json({ error: 'Invalid slug' });
+    return;
+  }
+
+  const [org] = await db
+    .select({
+      id: organizations.id,
+      slug: organizations.slug,
+      name: organizations.name,
+      description: organizations.description,
+      type: organizations.type,
+      iconUrl: organizations.iconUrl,
+    })
+    .from(organizations)
+    .where(and(eq(organizations.slug, slug), isNull(organizations.deletedAt)))
+    .limit(1);
+
+  if (!org) {
+    res.status(404).json({ error: 'Organization not found' });
+    return;
+  }
+
+  const [{ memberCount }] = await db
+    .select({ memberCount: sql<number>`COUNT(*)::int` })
+    .from(organizationMemberships)
+    .where(eq(organizationMemberships.orgId, org.id));
+
+  // Auth-aware fields
+  const userId = req.user?.id;
+  let isMember = false;
+  let role: 'admin' | 'moderator' | 'member' | null = null;
+  if (userId) {
+    const [m] = await db
+      .select({ role: organizationMemberships.role })
+      .from(organizationMemberships)
+      .where(
+        and(
+          eq(organizationMemberships.orgId, org.id),
+          eq(organizationMemberships.userId, userId),
+        ),
+      )
+      .limit(1);
+    if (m) {
+      isMember = true;
+      role = m.role;
+    }
+  }
+
+  log.info({ slug, userId: userId ?? null, isMember }, '[orgsPublic] org page viewed');
+  res.json({ org: { ...org, memberCount, isMember, role } });
 });
 
 export default router;
