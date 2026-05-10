@@ -2,7 +2,10 @@ import type { Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { loadAuthUser, type AuthRequest } from './auth';
 
-const JWT_SECRET = process.env.JWT_SECRET || '';
+if (!process.env.JWT_SECRET) {
+  throw new Error('JWT_SECRET environment variable is required');
+}
+const JWT_SECRET = process.env.JWT_SECRET;
 
 /**
  * Optional authentication. Sets req.user when a valid bearer token is provided.
