@@ -8,6 +8,7 @@ import {
   organizationMemberships,
   organizationInvites,
   userProfiles,
+  users,
   notifications,
 } from '../db/schema';
 import { requireAuth, AuthRequest } from '../middleware/auth';
@@ -187,11 +188,12 @@ router.get(
           role: organizationMemberships.role,
           joinedAt: organizationMemberships.joinedAt,
           handle: userProfiles.handle,
-          name: userProfiles.handle, // name stored on users; handle used as display fallback
+          name: users.name,
           avatarUrl: userProfiles.avatarUrl,
         })
         .from(organizationMemberships)
         .innerJoin(userProfiles, eq(userProfiles.userId, organizationMemberships.userId))
+        .innerJoin(users, eq(users.id, organizationMemberships.userId))
         .where(eq(organizationMemberships.orgId, orgId))
         .orderBy(organizationMemberships.joinedAt);
 
