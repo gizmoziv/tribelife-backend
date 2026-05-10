@@ -1,5 +1,5 @@
 import { Router, Response } from 'express';
-import { eq, and, inArray, ne, isNull, sql, asc } from 'drizzle-orm';
+import { eq, and, inArray, ne, isNull, sql, asc, ilike } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '../db';
 import { users, userProfiles, conversationParticipants } from '../db/schema';
@@ -114,14 +114,11 @@ router.get('/search/handle', async (req: AuthRequest, res: Response): Promise<vo
     })
     .from(userProfiles)
     .innerJoin(users, eq(users.id, userProfiles.userId))
+    .where(ilike(userProfiles.handle, `${query}%`))
+    .orderBy(asc(userProfiles.handle))
     .limit(10);
 
-  // Filter in JS since Drizzle doesn't support ILIKE simply in v0.44
-  const filtered = results.filter(
-    (u) => u.handle?.startsWith(query)
-  );
-
-  res.json({ users: filtered });
+  res.json({ users: results });
 });
 
 // ── News Push Preference ───────────────────────────────────────────────
