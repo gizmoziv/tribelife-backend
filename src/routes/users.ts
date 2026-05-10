@@ -2,7 +2,7 @@ import { Router, Response } from 'express';
 import { eq, and, inArray, ne, isNull, sql, asc, ilike } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '../db';
-import { users, userProfiles, conversationParticipants } from '../db/schema';
+import { users, userProfiles, conversationParticipants, organizationMemberships } from '../db/schema';
 import { requireAuth, AuthRequest } from '../middleware/auth';
 import { GLOBE_ROOMS } from '../config/globeRooms';
 
@@ -98,13 +98,50 @@ router.get('/suggest', async (req: AuthRequest, res: Response): Promise<void> =>
 
 // ── Search users by handle (for @mention suggestions) ─────────────────────
 router.get('/search/handle', async (req: AuthRequest, res: Response): Promise<void> => {
-  const query = (req.query.q as string ?? '').toLowerCase().trim();
+  const raw = (req.query.q as string ?? '').trim();
+  const query = raw.replace(/^@/, '').toLowerCase();
 
   if (query.length < 2) {
     res.json({ users: [] });
     return;
   }
 
+  const orgIdParam = req.query.orgId as string | undefined;
+  const orgId = orgIdParam ? parseInt(orgIdParam, 10) : NaN;
+  const useOrgScope = !isNaN(orgId) && orgId > 0;
+
+  if (useOrgScope) {
+    const results = await db
+      .select({
+        id: users.id,
+        name: users.name,
+        handle: userProfiles.handle,
+        avatarUrl: userProfiles.avatarUrl,
+        membershipUserId: organizationMemberships.userId,
+      })
+      .from(userProfiles)
+      .innerJoin(users, eq(users.id, userProfiles.userId))
+      .leftJoin(
+        organizationMemberships,
+        and(
+          eq(organizationMemberships.userId, userProfiles.userId),
+          eq(organizationMemberships.orgId, orgId),
+        ),
+      )
+      .where(ilike(userProfiles.handle, `${query}%`))
+      .orderBy(asc(userProfiles.handle))
+      .limit(10);
+
+    res.json({
+      users: results.map(({ membershipUserId, ...rest }) => ({
+        ...rest,
+        alreadyMember: membershipUserId !== null,
+      })),
+    });
+    return;
+  }
+
+  // Default: no org scope, no alreadyMember field
   const results = await db
     .select({
       id: users.id,
