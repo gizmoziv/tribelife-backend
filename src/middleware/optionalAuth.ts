@@ -30,8 +30,10 @@ export const optionalAuth = async (
       return next();
     }
     const token = authHeader.slice(7);
-    const decoded = jwt.verify(token, JWT_SECRET) as { userId: number };
-    if (!decoded?.userId) return next();
+    const decoded = jwt.verify(token, JWT_SECRET) as { userId?: unknown };
+    if (typeof decoded.userId !== 'number' || !Number.isFinite(decoded.userId)) {
+      return next(); // treat as unauth
+    }
 
     const user = await loadAuthUser(decoded.userId);
     if (user) {
