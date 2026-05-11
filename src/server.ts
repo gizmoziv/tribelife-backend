@@ -30,6 +30,7 @@ import referralsRouter from './routes/referrals';
 import groupsRouter from './routes/groups';
 import orgsRouter from './routes/orgs';
 import orgsPublicRouter from './routes/orgsPublic';
+import versionRouter from './routes/version';
 import wellKnownRouter from './routes/wellKnown';
 import deepLinkFallbackRouter from './routes/deepLinkFallback';
 import { startBeaconMatcherCron } from './jobs/beaconMatcher';
@@ -145,6 +146,7 @@ const limiter = rateLimit({ windowMs: 60_000, max: 120 });
 app.use('/api', limiter);
 
 // ── REST Routes ────────────────────────────────────────────────────────────
+app.use('/api/version', versionRouter);
 app.use('/api/auth', authRouter);
 app.use('/api/chat', chatRouter);
 app.use('/api/orgs', orgsPublicRouter); // public reads first (RESEARCH.md Pitfall #1)
