@@ -1,6 +1,6 @@
 import { randomBytes } from 'crypto';
 import { Router, Response } from 'express';
-import { and, eq, isNull, sql } from 'drizzle-orm';
+import { and, eq, gt, isNull, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '../db';
 import {
@@ -27,6 +27,12 @@ const SLUG_REGEX = /^[a-zA-Z0-9_-]{3,30}$/;
 const ORG_TYPES = ['jcc', 'non_profit', 'creator', 'community', 'business'] as const;
 
 const INVITE_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+
+// ── CDN host derived from DO_SPACES_CDN_URL — used to validate iconUrl ───────
+const CDN_HOST = (() => {
+  const cdn = process.env.DO_SPACES_CDN_URL ?? '';
+  try { return new URL(cdn).hostname; } catch { return ''; }
+})();
 
 // ── Count admins in an org (used by last-admin guard) ────────────────────────
 async function countOrgAdmins(orgId: number): Promise<number> {
@@ -113,8 +119,19 @@ router.post(
 // ── Edit organization (name / description / iconUrl only — slug + type read-only per D-07) ──
 const updateOrgSchema = z.object({
   name: z.string().min(1).max(80).optional(),
-  description: z.string().max(500).optional(),
-  iconUrl: z.string().url().optional(),
+  description: z.string().max(500).nullable().optional(),
+  iconUrl: z
+    .string()
+    .url()
+    .refine(
+      (u) => {
+        if (!CDN_HOST) return false; // fail-closed if CDN not configured
+        try { return new URL(u).hostname === CDN_HOST; } catch { return false; }
+      },
+      { message: 'iconUrl must come from the configured CDN' },
+    )
+    .nullable()
+    .optional(),
 }).refine(
   (data) => Object.keys(data).length > 0,
   { message: 'At least one field is required' },
@@ -395,6 +412,7 @@ router.delete(
 const inviteSchema = z.object({
   invitedHandle: z.string().regex(/^[a-zA-Z0-9_]{3,30}$/).optional(),
   role: z.enum(['admin', 'moderator', 'member']).default('member'),
+  rotate: z.boolean().optional(), // link-generate path: expire current pending link + create fresh
 });
 
 router.post('/:id/invite', async (req: AuthRequest, res: Response): Promise<void> => {
@@ -445,6 +463,61 @@ router.post('/:id/invite', async (req: AuthRequest, res: Response): Promise<void
       return;
     }
     invitedUserId = target.userId;
+  }
+
+  // ── Link-generate path (invitedUserId === null): reuse or rotate ─────────────
+  if (!parse.data.invitedHandle) {
+    const now = new Date();
+
+    if (parse.data.rotate) {
+      // Expire all currently-pending link-invites for this org
+      await db
+        .update(organizationInvites)
+        .set({ expiresAt: now })
+        .where(
+          and(
+            eq(organizationInvites.orgId, orgId),
+            isNull(organizationInvites.invitedUserId),
+            isNull(organizationInvites.acceptedAt),
+            gt(organizationInvites.expiresAt, now),
+          ),
+        );
+    } else {
+      // Return the most recent pending non-expired link-invite if one exists
+      const [existing] = await db
+        .select({
+          id: organizationInvites.id,
+          token: organizationInvites.token,
+          role: organizationInvites.role,
+          expiresAt: organizationInvites.expiresAt,
+          invitedUserId: organizationInvites.invitedUserId,
+        })
+        .from(organizationInvites)
+        .where(
+          and(
+            eq(organizationInvites.orgId, orgId),
+            isNull(organizationInvites.invitedUserId),
+            isNull(organizationInvites.acceptedAt),
+            gt(organizationInvites.expiresAt, now),
+          ),
+        )
+        .orderBy(sql`${organizationInvites.expiresAt} DESC`)
+        .limit(1);
+
+      if (existing) {
+        log.info({ userId, orgId, inviteId: existing.id }, '[orgs] invite reused (link)');
+        res.status(200).json({
+          invite: {
+            id: existing.id,
+            token: existing.token,
+            invitedUserId: null,
+            role: existing.role,
+            expiresAt: existing.expiresAt.toISOString(),
+          },
+        });
+        return;
+      }
+    }
   }
 
   const token = randomBytes(32).toString('base64url');
