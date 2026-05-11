@@ -30,7 +30,17 @@ router.get('/check', async (req: Request, res: Response): Promise<void> => {
   if (!parse.success) {
     // D-06 fail-open: malformed query → ok:true (NEVER 400 — never lock out
     // a misbehaving old client). Log so the operator can spot oddities.
-    log.warn({ query: req.query, err: parse.error.errors[0]?.message }, '[version] malformed query — fail-open');
+    // Log only the two expected fields (never raw req.query) — the endpoint is
+    // unauthenticated and arbitrary query keys/values would otherwise be
+    // persisted into structured logs verbatim (WR-04 log-stuffing vector).
+    log.warn(
+      {
+        platform: String(req.query.platform ?? '').slice(0, 16),
+        version: String(req.query.version ?? '').slice(0, 32),
+        err: parse.error.errors[0]?.message,
+      },
+      '[version] malformed query — fail-open',
+    );
     res.json({ ok: true });
     return;
   }
