@@ -383,7 +383,7 @@ router.post('/org-icon-confirm', requireAuth, async (req: AuthRequest, res: Resp
     await db
       .update(organizations)
       .set({ iconUrl: cdnUrl, updatedAt: new Date() })
-      .where(eq(organizations.id, orgId));
+      .where(and(eq(organizations.id, orgId), isNull(organizations.deletedAt)));
 
     res.json({ iconUrl: cdnUrl });
   } catch (err) {
