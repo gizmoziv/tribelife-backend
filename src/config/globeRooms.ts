@@ -10,6 +10,7 @@ export interface GlobeRoom {
   timezones: string[];
   isGlobal: boolean;
   sortOrder: number;
+  autoJoin: boolean;   // true = inserted into globe_room_memberships on signup (Phase 7, per D-05)
 }
 
 export const AGE_GATE_HOURS = parseInt(process.env.AGE_GATE_HOURS || '24', 10);
@@ -24,6 +25,7 @@ export const GLOBE_ROOMS: GlobeRoom[] = [
     timezones: [],
     isGlobal: true,
     sortOrder: 0,
+    autoJoin: true,
   },
   {
     slug: 'north-america',
@@ -38,6 +40,7 @@ export const GLOBE_ROOMS: GlobeRoom[] = [
     ],
     isGlobal: false,
     sortOrder: 1,
+    autoJoin: false,
   },
   {
     slug: 'israel',
@@ -48,6 +51,7 @@ export const GLOBE_ROOMS: GlobeRoom[] = [
     timezones: ['Asia/Jerusalem'],
     isGlobal: false,
     sortOrder: 2,
+    autoJoin: false,
   },
   {
     slug: 'europe',
@@ -64,6 +68,7 @@ export const GLOBE_ROOMS: GlobeRoom[] = [
     ],
     isGlobal: false,
     sortOrder: 3,
+    autoJoin: false,
   },
   {
     slug: 'uk-ireland',
@@ -74,6 +79,7 @@ export const GLOBE_ROOMS: GlobeRoom[] = [
     timezones: ['Europe/London', 'Europe/Dublin'],
     isGlobal: false,
     sortOrder: 4,
+    autoJoin: false,
   },
   {
     slug: 'latin-america',
@@ -87,6 +93,7 @@ export const GLOBE_ROOMS: GlobeRoom[] = [
     ],
     isGlobal: false,
     sortOrder: 5,
+    autoJoin: false,
   },
   {
     slug: 'australia-nz',
@@ -100,6 +107,7 @@ export const GLOBE_ROOMS: GlobeRoom[] = [
     ],
     isGlobal: false,
     sortOrder: 6,
+    autoJoin: false,
   },
   {
     slug: 'south-africa',
@@ -110,6 +118,7 @@ export const GLOBE_ROOMS: GlobeRoom[] = [
     timezones: ['Africa/Johannesburg'],
     isGlobal: false,
     sortOrder: 7,
+    autoJoin: false,
   },
 ];
 

@@ -94,6 +94,19 @@ export const globeReadPositions = pgTable('globe_read_positions', {
 }));
 
 // ─────────────────────────────────────────────
+// GLOBE — Room memberships (Phase 7, D-01)
+// ─────────────────────────────────────────────
+export const globeRoomMemberships = pgTable('globe_room_memberships', {
+  id: serial('id').primaryKey(),
+  userId: integer('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
+  roomSlug: varchar('room_slug', { length: 100 }).notNull(),
+  joinedAt: timestamp('joined_at').defaultNow(),
+}, (t) => ({
+  uniqUserRoom: unique().on(t.userId, t.roomSlug),
+  userIdx: index('globe_room_memberships_user_idx').on(t.userId),
+}));
+
+// ─────────────────────────────────────────────
 // CHAT — Messages (both location-based rooms and DMs)
 // ─────────────────────────────────────────────
 export const messages = pgTable('messages', {
@@ -332,6 +345,7 @@ export const usersRelations = relations(users, ({ one, many }) => ({
   reportsSubmitted: many(contentReports, { relationName: 'reportsSubmitted' }),
   reportsReceived: many(contentReports, { relationName: 'reportsReceived' }),
   globeReadPositions: many(globeReadPositions),
+  globeRoomMemberships: many(globeRoomMemberships),
   notificationPreferences: one(notificationPreferences, { fields: [users.id], references: [notificationPreferences.userId] }),
 }));
 
@@ -382,6 +396,10 @@ export const contentReportsRelations = relations(contentReports, ({ one }) => ({
 
 export const globeReadPositionsRelations = relations(globeReadPositions, ({ one }) => ({
   user: one(users, { fields: [globeReadPositions.userId], references: [users.id] }),
+}));
+
+export const globeRoomMembershipsRelations = relations(globeRoomMemberships, ({ one }) => ({
+  user: one(users, { fields: [globeRoomMemberships.userId], references: [users.id] }),
 }));
 
 // ─────────────────────────────────────────────
