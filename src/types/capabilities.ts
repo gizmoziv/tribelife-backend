@@ -42,3 +42,21 @@ export interface Capabilities {
   features: CapabilityFeatures;
   orgs: OrgMembership[];
 }
+
+// ── Phase 8: caps:invalidated event types (D-01) ───────────────────────────
+// The payload mobile receives over the socket is just `{ reason }`; the
+// mobile client then re-fetches /api/auth/capabilities. Decouples emit-site
+// from caps shape so future shape changes don't have to be mirrored in
+// five mutation routes (per CONTEXT.md D-01 rationale).
+
+export type CapsInvalidatedReason =
+  | 'revenuecat_grant'
+  | 'revenuecat_revoke'
+  | 'org_create'
+  | 'org_invite_accept'
+  | 'org_role_change'
+  | 'org_soft_delete';
+
+export interface CapsInvalidatedPayload {
+  reason: CapsInvalidatedReason;
+}
