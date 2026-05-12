@@ -14,6 +14,7 @@ import {
 import { requireAuth, AuthRequest } from '../middleware/auth';
 import { requireCapability, getCapabilities } from '../middleware/capabilities';
 import { sendPushToUser } from '../services/pushNotifications';
+import { emitCapabilityInvalidationToUser } from '../services/capabilityInvalidation';
 import { getIO } from '../lib/socketRegistry';
 import logger from '../lib/logger';
 
@@ -107,6 +108,7 @@ router.post(
       return org;
     });
 
+    emitCapabilityInvalidationToUser(userId, 'org_create');
     log.info({ userId, orgId: created.id, slug }, '[orgs] created');
     res.status(201).json({ org: created });
   } catch (err) {
@@ -309,6 +311,7 @@ router.put(
         return;
       }
 
+      emitCapabilityInvalidationToUser(subjectId, 'org_role_change');
       console.log('[orgs] role-changed', {
         orgId,
         subjectId,
@@ -399,6 +402,7 @@ router.delete(
         return;
       }
 
+      emitCapabilityInvalidationToUser(subjectId, 'org_role_change');
       console.log('[orgs] member-removed', { orgId, subjectId, by: callerId, selfLeave });
       res.json({ ok: true });
     } catch (err) {
@@ -702,6 +706,7 @@ router.post('/invites/:token/accept', async (req: AuthRequest, res: Response): P
       return m;
     });
 
+    emitCapabilityInvalidationToUser(userId, 'org_invite_accept');
     log.info({ userId, orgId: invite.orgId, inviteId: invite.id, role: invite.role }, '[orgs] invite accepted');
     res.status(201).json({ membership: result });
   } catch (err) {

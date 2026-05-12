@@ -5,6 +5,7 @@ const log = logger.child({ module: 'revenuecat' });
 import { eq } from 'drizzle-orm';
 import { db } from '../db';
 import { userProfiles } from '../db/schema';
+import { emitCapabilityInvalidationToUser } from '../services/capabilityInvalidation';
 
 const router = Router();
 
@@ -70,6 +71,7 @@ router.post('/webhook', async (req: Request, res: Response): Promise<void> => {
         })
         .where(eq(userProfiles.userId, userId));
 
+      emitCapabilityInvalidationToUser(userId, 'revenuecat_grant');
       log.info({ eventType, userId }, 'Granted premium');
     } else if (isRevoke) {
       await db
@@ -80,6 +82,7 @@ router.post('/webhook', async (req: Request, res: Response): Promise<void> => {
         })
         .where(eq(userProfiles.userId, userId));
 
+      emitCapabilityInvalidationToUser(userId, 'revenuecat_revoke');
       log.info({ eventType, userId }, 'Revoked premium');
     } else {
       // CANCELLATION, TRANSFER, etc. — log but no action needed
