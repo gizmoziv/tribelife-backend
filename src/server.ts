@@ -16,6 +16,7 @@ import errorHandler from './middleware/errorHandler';
 
 import authRouter from './routes/auth';
 import chatRouter from './routes/chat';
+import chatsRouter from './routes/chats';
 import beaconsRouter from './routes/beacons';
 import notificationsRouter from './routes/notifications';
 import usersRouter from './routes/users';
@@ -149,6 +150,7 @@ app.use('/api', limiter);
 app.use('/api/version', versionRouter);
 app.use('/api/auth', authRouter);
 app.use('/api/chat', chatRouter);
+app.use('/api/chats', chatsRouter);
 app.use('/api/orgs', orgsPublicRouter); // public reads first (RESEARCH.md Pitfall #1)
 app.use('/api/orgs', orgsRouter);
 app.use('/api/beacons', beaconsRouter);
