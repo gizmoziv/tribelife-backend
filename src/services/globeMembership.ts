@@ -1,0 +1,16 @@
+import { db } from '../db';
+import { globeRoomMemberships } from '../db/schema';
+import { GLOBE_ROOMS } from '../config/globeRooms';
+
+/**
+ * Insert globe_room_memberships rows for every autoJoin=true room.
+ * Idempotent — ON CONFLICT DO NOTHING makes re-runs safe on every signin (D-06).
+ */
+export async function bootstrapAutoJoins(userId: number): Promise<void> {
+  const autoJoinSlugs = GLOBE_ROOMS.filter(r => r.autoJoin).map(r => r.slug);
+  if (autoJoinSlugs.length === 0) return;
+  await db
+    .insert(globeRoomMemberships)
+    .values(autoJoinSlugs.map(roomSlug => ({ userId, roomSlug })))
+    .onConflictDoNothing({ target: [globeRoomMemberships.userId, globeRoomMemberships.roomSlug] });
+}
