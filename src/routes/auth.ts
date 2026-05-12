@@ -11,6 +11,7 @@ import { users, userProfiles, referrals, messages } from '../db/schema';
 import { signToken, requireAuth, needsOnboarding, HANDLE_COOLDOWN_DAYS, HANDLE_COOLDOWN_MS, AuthRequest } from '../middleware/auth';
 import { computeCapabilities } from '../services/capabilities';
 import { getOrgMembershipsForUser } from '../services/orgMemberships';
+import { bootstrapAutoJoins } from '../services/globeMembership';
 import { sendWelcomeEmail } from '../services/email';
 import { getIO } from '../lib/socketRegistry';
 
@@ -119,6 +120,7 @@ router.post('/google', async (req: Request, res: Response): Promise<void> => {
           .limit(1)
           .then((r) => r[0]);
         user = freshUser ?? ({ users: newUser, user_profiles: null } as typeof user);
+        await bootstrapAutoJoins(newUser.id);
       }
     }
 
@@ -127,6 +129,7 @@ router.post('/google', async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
+    await bootstrapAutoJoins(user.users.id);
     const token = signToken(user.users.id);
     const profile = user.user_profiles;
 
@@ -271,6 +274,7 @@ router.post('/apple', async (req: Request, res: Response): Promise<void> => {
           .limit(1)
           .then((r) => r[0]);
         user = freshUser ?? ({ users: newUser, user_profiles: null } as typeof user);
+        await bootstrapAutoJoins(newUser.id);
       }
     }
 
@@ -279,6 +283,7 @@ router.post('/apple', async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
+    await bootstrapAutoJoins(user.users.id);
     const token = signToken(user.users.id);
     const profile = user.user_profiles;
 
