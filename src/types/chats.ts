@@ -46,6 +46,18 @@ export type ChatsRow =
       memberCount: number;
       unreadCount: number;
       lastMessage: ChatsRowLastMessage | null;
+    }
+  | {
+      // Phase 11 D-04: joined non-Town-Square Globe room. roomSlug is the
+      // BARE slug (e.g. 'north-america') matching the mobile route segment
+      // /(app)/globe/[roomSlug] and the room_slug column in
+      // globe_room_memberships / globe_read_positions. Town Square stays as
+      // its own `type: 'town_square'` row at index 1 — never emitted here.
+      type: 'globe_room';
+      roomSlug: string;
+      displayName: string;
+      unreadCount: number;
+      lastMessage: ChatsRowLastMessage | null;
     };
 
 export interface ChatsListResponse {
