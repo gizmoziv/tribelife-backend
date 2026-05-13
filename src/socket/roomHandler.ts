@@ -8,6 +8,7 @@ import { and, eq, inArray, ne, isNotNull, or } from 'drizzle-orm';
 import { moderateMessage } from '../services/claude';
 import { moderateMessageImages } from '../services/imageModeration';
 import { sendPushToUser, sendPushNotifications, shouldSendPush, getUnreadBadgeCounts } from '../services/pushNotifications';
+import type { ChatNotificationPayload } from '../types/chatNotification';
 
 export function registerRoomHandlers(io: Server, socket: Socket): void {
   const userId: number = socket.data.userId;
@@ -128,15 +129,31 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
         type: 'mention',
         title,
         body: content.slice(0, 100),
-        data: { messageId: msg.id, roomId: timezoneRoom, senderHandle: handle },
+        data: {
+          messageId: msg.id,
+          roomId: timezoneRoom,
+          senderHandle: handle,
+          // Phase 10 D-01 additive (10-CONTEXT.md): source discriminator + entityId
+          // for /api/chats row identity.
+          source: 'local_chat' as const,
+          entityId: timezone,
+          timezoneIana: timezone,
+        },
       }).returning({ id: notifications.id });
 
-      // Emit real-time notification if user is online
-      io.to(`user:${notifyId}`).emit('notification:new', {
-        type: 'mention',
+      // Phase 10 D-03: chat-type notifications fan to `chat:notification`.
+      // Bell-summary refresh happens via the mobile chat:notification listener
+      // (Plan 10-03), which triggers `notificationsApi.summary()` so the bell's
+      // mention count keeps updating without a separate notification:new emit.
+      io.to(`user:${notifyId}`).emit('chat:notification', {
+        source: 'local_chat',
+        entityId: timezone,
+        timezoneIana: timezone,
+        notificationId: inserted.id,
         title,
         body: content.slice(0, 100),
-      });
+        senderHandle: handle,
+      } satisfies ChatNotificationPayload);
 
       // Push notification (respects mentions preference)
       const mentionedProfile = await db
@@ -150,7 +167,14 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
           mentionedProfile[0]?.expoPushToken,
           title,
           content.slice(0, 100),
-          { type: 'mention', roomId: timezoneRoom, notificationId: inserted.id },
+          {
+            type: 'chat',
+            source: 'local_chat',
+            entityId: timezone,
+            timezoneIana: timezone,
+            notificationId: inserted.id,
+            senderHandle: handle,
+          },
           notifyId,
         );
       }
@@ -224,11 +248,61 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
         // Fetch unread badge counts for all eligible users in a single query
         const badgeMap = await getUnreadBadgeCounts(eligible.map((c) => c.userId));
 
+        // ── Phase 10 D-02: insert notifications rows for every eligible Local
+        // Chat recipient. Today this block was push-only; the row insert closes
+        // the gap so the Chats-tab unread badge has a server source of truth.
+        // The `type` column stays 'mention' (D-01 — no migration). The `data`
+        // JSON carries `source: 'local_chat'` so the mobile tap-router can
+        // deep-link to Local Chat.
+        const notifIdByUser = new Map<number, number>();
+        if (eligible.length > 0) {
+          const insertedRows = await db.insert(notifications).values(
+            eligible.map((c) => ({
+              userId: c.userId,
+              type: 'mention' as const,
+              title: `@${handle}`,
+              body: content.slice(0, 100),
+              data: {
+                messageId: msg.id,
+                roomId: timezoneRoom,
+                senderHandle: handle,
+                source: 'local_chat' as const,
+                entityId: timezone,
+                timezoneIana: timezone,
+              },
+            })),
+          ).returning({ id: notifications.id, userId: notifications.userId });
+          for (const row of insertedRows) notifIdByUser.set(row.userId, row.id);
+        }
+
+        // Phase 10 D-03: emit chat:notification per eligible recipient.
+        for (const c of eligible) {
+          const notifId = notifIdByUser.get(c.userId);
+          if (notifId === undefined) continue;
+          io.to(`user:${c.userId}`).emit('chat:notification', {
+            source: 'local_chat',
+            entityId: timezone,
+            timezoneIana: timezone,
+            notificationId: notifId,
+            title: `@${handle}`,
+            body: content.slice(0, 100),
+            senderHandle: handle,
+          } satisfies ChatNotificationPayload);
+        }
+
+        // Phase 10 D-04: push payload mirrors the socket payload exactly.
         const pushBatch = eligible.map((c) => ({
           to: c.expoPushToken as string,
           title: `@${handle}`,
           body: content.slice(0, 100),
-          data: { type: 'timezone_chat', roomId: timezoneRoom },
+          data: {
+            type: 'chat' as const,
+            source: 'local_chat' as const,
+            entityId: timezone,
+            timezoneIana: timezone,
+            notificationId: notifIdByUser.get(c.userId)!,
+            senderHandle: handle,
+          },
           sound: 'default' as const,
           badge: badgeMap.get(c.userId) ?? 0,
           channelId: 'default',

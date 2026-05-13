@@ -13,6 +13,7 @@ import { eq, and, isNull } from 'drizzle-orm';
 import { moderateMessage } from '../services/claude';
 import { moderateMessageImages } from '../services/imageModeration';
 import { sendPushToUser, sendPushNotifications, shouldSendPush, getUnreadBadgeCounts } from '../services/pushNotifications';
+import type { ChatNotificationPayload } from '../types/chatNotification';
 
 const log = logger.child({ module: 'socket:dm' });
 
@@ -208,22 +209,32 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
             type: 'new_dm' as const,
             title: titleFor(p.userId),
             body: notifBody,
-            data: { conversationId: data.conversationId, senderHandle: handle, isGroup: true, groupName: groupLabel },
+            data: {
+              conversationId: data.conversationId,
+              senderHandle: handle,
+              isGroup: true,
+              groupName: groupLabel,
+              // Phase 10 D-01 additive (10-CONTEXT.md):
+              source: 'group' as const,
+              entityId: data.conversationId,
+            },
           }))
         ).returning({ id: notifications.id, userId: notifications.userId });
         for (const row of inserted) notifIdByUser.set(row.userId, row.id);
       }
 
-      // Emit socket notifications
+      // Phase 10 D-03: chat-type notifications fan to `chat:notification`.
       for (const p of recipients) {
-        io.to(`user:${p.userId}`).emit('notification:new', {
-          type: 'new_dm',
+        io.to(`user:${p.userId}`).emit('chat:notification', {
+          source: 'group',
+          entityId: data.conversationId,
+          conversationId: data.conversationId,
+          groupName: groupLabel,
+          notificationId: notifIdByUser.get(p.userId)!,
           title: titleFor(p.userId),
           body: notifBody,
-          conversationId: data.conversationId,
-          isGroup: true,
-          groupName: groupLabel,
-        });
+          senderHandle: handle,
+        } satisfies ChatNotificationPayload);
       }
 
       // Batch push notifications
@@ -252,11 +263,13 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
         title: titleFor(r.userId),
         body: notifBody,
         data: {
-          type: 'new_dm',
+          type: 'chat' as const,
+          source: 'group' as const,
+          entityId: data.conversationId,
           conversationId: data.conversationId,
-          isGroup: true,
           groupName: groupLabel,
-          notificationId: notifIdByUser.get(r.userId),
+          notificationId: notifIdByUser.get(r.userId)!,
+          senderHandle: handle,
         },
         sound: 'default' as const,
         badge: badgeMap.get(r.userId) ?? 0,
@@ -273,15 +286,25 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
           type: 'new_dm',
           title: `Message from @${handle}`,
           body: content.slice(0, 100),
-          data: { conversationId: data.conversationId, senderHandle: handle },
+          data: {
+            conversationId: data.conversationId,
+            senderHandle: handle,
+            // Phase 10 D-01 additive (10-CONTEXT.md):
+            source: 'dm' as const,
+            entityId: data.conversationId,
+          },
         }).returning({ id: notifications.id });
 
-        io.to(`user:${p.userId}`).emit('notification:new', {
-          type: 'new_dm',
+        // Phase 10 D-03: chat-type notifications fan to `chat:notification`.
+        io.to(`user:${p.userId}`).emit('chat:notification', {
+          source: 'dm',
+          entityId: data.conversationId,
+          conversationId: data.conversationId,
+          notificationId: inserted.id,
           title: `Message from @${handle}`,
           body: content.slice(0, 100),
-          conversationId: data.conversationId,
-        });
+          senderHandle: handle,
+        } satisfies ChatNotificationPayload);
 
         const otherProfile = await db
           .select({ expoPushToken: userProfiles.expoPushToken })
@@ -294,7 +317,14 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
             otherProfile[0]?.expoPushToken,
             `Message from @${handle}`,
             content.slice(0, 100),
-            { type: 'new_dm', conversationId: data.conversationId, senderHandle: handle, notificationId: inserted.id },
+            {
+              type: 'chat',
+              source: 'dm',
+              entityId: data.conversationId,
+              conversationId: data.conversationId,
+              notificationId: inserted.id,
+              senderHandle: handle,
+            },
             p.userId,
           );
         }

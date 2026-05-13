@@ -8,6 +8,7 @@ import { isValidGlobeRoom, AGE_GATE_HOURS } from '../config/globeRooms';
 import { moderateMessage } from '../services/claude';
 import { moderateMessageImages } from '../services/imageModeration';
 import { sendPushToUser, shouldSendPush } from '../services/pushNotifications';
+import type { ChatNotificationPayload } from '../types/chatNotification';
 
 // ── Globe Room Event Handlers ───────────────────────────────────────────────
 // Events: globe:join, globe:leave, globe:message, globe:typing
@@ -175,14 +176,28 @@ export function registerGlobeHandlers(io: Server, socket: Socket): void {
         type: 'mention',
         title,
         body: content.slice(0, 100),
-        data: { messageId: msg.id, roomId, globeSlug: data.slug, senderHandle: handle },
+        data: {
+          messageId: msg.id,
+          roomId,
+          globeSlug: data.slug,
+          senderHandle: handle,
+          // Phase 10 D-01 additive (10-CONTEXT.md):
+          source: 'globe_room' as const,
+          entityId: data.slug,
+          roomSlug: data.slug,
+        },
       }).returning({ id: notifications.id });
 
-      io.to(`user:${notifyId}`).emit('notification:new', {
-        type: 'mention',
+      // Phase 10 D-03: chat-type notifications fan to `chat:notification`.
+      io.to(`user:${notifyId}`).emit('chat:notification', {
+        source: 'globe_room',
+        entityId: data.slug,
+        roomSlug: data.slug,
+        notificationId: inserted.id,
         title,
         body: content.slice(0, 100),
-      });
+        senderHandle: handle,
+      } satisfies ChatNotificationPayload);
 
       const [targetProfile] = await db
         .select({ expoPushToken: userProfiles.expoPushToken })
@@ -195,7 +210,14 @@ export function registerGlobeHandlers(io: Server, socket: Socket): void {
           targetProfile?.expoPushToken,
           title,
           content.slice(0, 100),
-          { type: 'mention', roomId, globeSlug: data.slug, notificationId: inserted.id },
+          {
+            type: 'chat',
+            source: 'globe_room',
+            entityId: data.slug,
+            roomSlug: data.slug,
+            notificationId: inserted.id,
+            senderHandle: handle,
+          },
           notifyId,
         );
       }
