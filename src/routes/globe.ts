@@ -2,11 +2,11 @@ import { Router, Response } from 'express';
 import { eq, ne, desc, lt, and, notInArray, gt, isNull, sql, count } from 'drizzle-orm';
 import { Server } from 'socket.io';
 import { db } from '../db';
-import { messages, users, userProfiles, blockedUsers, globeReadPositions } from '../db/schema';
+import { messages, users, userProfiles, blockedUsers, globeReadPositions, globeRoomMemberships } from '../db/schema';
 import { requireAuth, AuthRequest } from '../middleware/auth';
 import { attachReactions } from '../utils/attachReactions';
 import { attachReplyTo } from '../utils/attachReplyTo';
-import { GLOBE_ROOMS, isValidGlobeRoom, getRegionForTimezone } from '../config/globeRooms';
+import { GLOBE_ROOMS, isValidGlobeRoom, getRegionForTimezone, getGlobeRoom } from '../config/globeRooms';
 
 const router = Router();
 router.use(requireAuth);
@@ -24,6 +24,13 @@ router.get('/rooms', async (req: AuthRequest, res: Response): Promise<void> => {
     .limit(1);
 
   const suggestedRegion = getRegionForTimezone(profile?.timezone ?? 'UTC');
+
+  // Phase 11 D-03: derive isMember per room via a single membership query
+  const memberships = await db
+    .select({ roomSlug: globeRoomMemberships.roomSlug })
+    .from(globeRoomMemberships)
+    .where(eq(globeRoomMemberships.userId, userId));
+  const memberSlugs = new Set(memberships.map((m) => m.roomSlug));
 
   const rooms = await Promise.all(
     GLOBE_ROOMS.map(async (room) => {
@@ -55,9 +62,24 @@ router.get('/rooms', async (req: AuthRequest, res: Response): Promise<void> => {
         isGlobal: room.isGlobal,
         sortOrder: room.sortOrder,
         welcomeMessage: room.welcomeMessage,
+        // Phase 11 D-03 + D-05:
+        isMember: memberSlugs.has(room.slug),
+        autoJoin: room.autoJoin,
       };
     })
   );
+
+  // Phase 11 D-06: server-owned ordering — user's region first (per
+  // isSuggested), then remaining rooms by sortOrder ASC. Town Square is
+  // included in the response (existing contract); the mobile screen
+  // continues to filter it out client-side via the existing
+  // `globe/index.tsx:154` line.
+  rooms.sort((a, b) => {
+    const aIsUserRegion = a.isSuggested ? 1 : 0;
+    const bIsUserRegion = b.isSuggested ? 1 : 0;
+    if (aIsUserRegion !== bIsUserRegion) return bIsUserRegion - aIsUserRegion;
+    return a.sortOrder - b.sortOrder;
+  });
 
   res.json({ rooms });
 });
@@ -191,6 +213,61 @@ router.get('/unread', async (req: AuthRequest, res: Response): Promise<void> => 
   );
 
   res.json({ unread });
+});
+
+// ── Phase 11 D-05: Join a Globe room ──────────────────────────────────────
+// Idempotent — re-running with the same (userId, roomSlug) is a no-op via
+// onConflictDoNothing. Slug validation via isValidGlobeRoom. No capability
+// gate (D-10 — Globe-room membership is not a capability axis). No
+// caps:invalidated emit. requireAuth covered at router level (line 12).
+router.post('/rooms/:slug/join', async (req: AuthRequest, res: Response): Promise<void> => {
+  const slug = req.params.slug as string;
+  if (!isValidGlobeRoom(slug)) {
+    res.status(404).json({ error: 'Unknown globe room' });
+    return;
+  }
+
+  const userId = req.user!.id;
+  await db
+    .insert(globeRoomMemberships)
+    .values({ userId, roomSlug: slug })
+    .onConflictDoNothing({
+      target: [globeRoomMemberships.userId, globeRoomMemberships.roomSlug],
+    });
+
+  res.json({ ok: true, isMember: true });
+});
+
+// ── Phase 11 D-05 + D-08: Leave a Globe room ──────────────────────────────
+// Slug validation + autoJoin gate. autoJoin=true rooms (Town Square only in
+// v1.7) CANNOT be left — returns 422. Regular regional rooms remove the
+// membership row but PRESERVE the corresponding globe_read_positions row
+// (D-08 — keeps read position on rejoin; cheap to keep). No
+// caps:invalidated emit (D-10).
+router.delete('/rooms/:slug/join', async (req: AuthRequest, res: Response): Promise<void> => {
+  const slug = req.params.slug as string;
+  if (!isValidGlobeRoom(slug)) {
+    res.status(404).json({ error: 'Unknown globe room' });
+    return;
+  }
+
+  const room = getGlobeRoom(slug);
+  if (room?.autoJoin) {
+    res.status(422).json({ error: 'Cannot leave an auto-join community' });
+    return;
+  }
+
+  const userId = req.user!.id;
+  await db
+    .delete(globeRoomMemberships)
+    .where(
+      and(
+        eq(globeRoomMemberships.userId, userId),
+        eq(globeRoomMemberships.roomSlug, slug),
+      ),
+    );
+
+  res.json({ ok: true, isMember: false });
 });
 
 export default router;
