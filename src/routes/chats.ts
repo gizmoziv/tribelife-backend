@@ -10,9 +10,11 @@ import {
   userProfiles,
   blockedUsers,
   globeReadPositions,
+  globeRoomMemberships,
 } from '../db/schema';
 import { requireAuth, AuthRequest } from '../middleware/auth';
 import type { ChatsRow, ChatsListResponse } from '../types/chats';
+import { GLOBE_ROOMS } from '../config/globeRooms';
 
 const router = Router();
 router.use(requireAuth);
@@ -105,6 +107,89 @@ router.get('/', async (req: AuthRequest, res: Response): Promise<void> => {
       : null,
   };
 
+  // ── 4b. Globe rooms the user is a member of (excluding Town Square) ─────
+  // Phase 11 D-04: one row per non-Town-Square membership. These rows
+  // participate in the same DM/Group sort bucket — unreadCount DESC,
+  // lastMessageAt DESC — and are merged in step 5g. Town Square is
+  // excluded (it has its own type: 'town_square' row at index 1).
+  const globeRoomMembershipRows = await db
+    .select({ roomSlug: globeRoomMemberships.roomSlug })
+    .from(globeRoomMemberships)
+    .where(
+      and(
+        eq(globeRoomMemberships.userId, userId),
+        ne(globeRoomMemberships.roomSlug, TOWN_SQUARE_SLUG),
+      ),
+    );
+
+  const globeRoomRows: Array<ChatsRow & { lastMessageAt: Date | null }> = [];
+  if (globeRoomMembershipRows.length > 0) {
+    const joinedSlugs = globeRoomMembershipRows.map((r) => r.roomSlug);
+
+    // One read-position query for all joined regional slugs at once
+    // (mirrors the step-2 pattern at routes/chats.ts:46-52).
+    const joinedReadPositions = await db
+      .select({
+        roomSlug: globeReadPositions.roomSlug,
+        lastReadAt: globeReadPositions.lastReadAt,
+      })
+      .from(globeReadPositions)
+      .where(
+        and(
+          eq(globeReadPositions.userId, userId),
+          inArray(globeReadPositions.roomSlug, joinedSlugs),
+        ),
+      );
+    const joinedReadMap = new Map(joinedReadPositions.map((r) => [r.roomSlug, r.lastReadAt]));
+
+    // Per-slug: unread count + last message (N+1, acceptable at <=7 rooms).
+    await Promise.all(
+      joinedSlugs.map(async (slug) => {
+        const room = GLOBE_ROOMS.find((r) => r.slug === slug);
+        if (!room) return; // defensive — orphaned slug (shouldn't happen per Phase 7 contract)
+        const roomId = 'globe:' + slug;
+        const lastRead = joinedReadMap.get(slug) ?? null;
+
+        const unreadWhere = lastRead
+          ? and(
+              eq(messages.roomId, roomId),
+              gt(messages.createdAt, lastRead),
+              ne(messages.senderId, userId),
+              isNull(messages.deletedAt),
+            )
+          : and(
+              eq(messages.roomId, roomId),
+              ne(messages.senderId, userId),
+              isNull(messages.deletedAt),
+            );
+
+        const [unreadRow] = await db
+          .select({ c: count() })
+          .from(messages)
+          .where(unreadWhere)
+          .limit(1);
+
+        const [lastMsg] = await db
+          .select({ content: messages.content, createdAt: messages.createdAt })
+          .from(messages)
+          .where(and(eq(messages.roomId, roomId), isNull(messages.deletedAt)))
+          .orderBy(desc(messages.createdAt))
+          .limit(1);
+
+        globeRoomRows.push({
+          type: 'globe_room' as const,
+          roomSlug: slug,
+          displayName: room.displayName,
+          unreadCount: Math.min(unreadRow?.c ?? 0, 99),
+          lastMessage: lastMsg
+            ? { preview: lastMsg.content ?? '', at: (lastMsg.createdAt as Date).toISOString() }
+            : null,
+          lastMessageAt: (lastMsg?.createdAt as Date | undefined) ?? null,
+        });
+      }),
+    );
+  }
+
   // ── 5. DMs + Groups: list of participations + blocked filter ────────────
   const participations = await db
     .select({ conversationId: conversationParticipants.conversationId })
@@ -116,6 +201,8 @@ router.get('/', async (req: AuthRequest, res: Response): Promise<void> => {
     ));
 
   const dmsAndGroups: ChatsRow[] = [];
+  let dmRows: Array<ChatsRow & { lastMessageAt: Date | null }> = [];
+  let groupRows: Array<ChatsRow & { lastMessageAt: Date | null }> = [];
 
   if (participations.length > 0) {
     const convIds = participations.map((p) => p.conversationId);
@@ -205,7 +292,7 @@ router.get('/', async (req: AuthRequest, res: Response): Promise<void> => {
       .orderBy(desc(conversations.lastMessageAt));
 
     // ── 5e. Last-message preview for DMs (N+1 — acceptable at <50 convs) ──
-    const dmRows: Array<ChatsRow & { lastMessageAt: Date | null }> = await Promise.all(
+    dmRows = await Promise.all(
       dmResult.map(async (row) => {
         const [lastMsg] = await db
           .select({ content: messages.content, createdAt: messages.createdAt })
@@ -230,7 +317,7 @@ router.get('/', async (req: AuthRequest, res: Response): Promise<void> => {
     );
 
     // ── 5f. Last-message preview for Groups ───────────────────────────────
-    const groupRows: Array<ChatsRow & { lastMessageAt: Date | null }> = await Promise.all(
+    groupRows = await Promise.all(
       groupResult.map(async (row) => {
         const [lastMsg] = await db
           .select({ content: messages.content, createdAt: messages.createdAt })
@@ -252,24 +339,32 @@ router.get('/', async (req: AuthRequest, res: Response): Promise<void> => {
         };
       }),
     );
+  }
 
-    // ── 5g. Merge + sort (unreadCount DESC, lastMessageAt DESC) ───────────
-    const merged = [...dmRows, ...groupRows];
-    merged.sort((a, b) => {
-      if (b.unreadCount !== a.unreadCount) return b.unreadCount - a.unreadCount;
-      const aTime = a.lastMessageAt?.getTime() ?? 0;
-      const bTime = b.lastMessageAt?.getTime() ?? 0;
-      return bTime - aTime;
-    });
+  // ── 5g. Merge + sort (unreadCount DESC, lastMessageAt DESC) ───────────────
+  // Phase 11 D-04: globe_room rows participate in the same bucket as DMs
+  // and Groups (NOT pinned). Same sort comparator handles all three.
+  // Step runs unconditionally so a user with zero DMs/Groups but one or
+  // more joined regional Globe rooms still sees those rows in the list.
+  const merged: Array<ChatsRow & { lastMessageAt: Date | null }> = [
+    ...dmRows,
+    ...groupRows,
+    ...globeRoomRows,
+  ];
+  merged.sort((a, b) => {
+    if (b.unreadCount !== a.unreadCount) return b.unreadCount - a.unreadCount;
+    const aTime = a.lastMessageAt?.getTime() ?? 0;
+    const bTime = b.lastMessageAt?.getTime() ?? 0;
+    return bTime - aTime;
+  });
 
-    // Strip the lastMessageAt helper field — it's not part of the ChatsRow
-    // contract (mobile relies on lastMessage.at for display; lastMessageAt
-    // was only carried through for the server-side sort).
-    for (const row of merged) {
-      const { lastMessageAt: _sortKey, ...rowOnly } = row;
-      void _sortKey; // consumed by sort comparator above; intentionally unused here
-      dmsAndGroups.push(rowOnly);
-    }
+  // Strip the lastMessageAt helper field — it's not part of the ChatsRow
+  // contract (mobile relies on lastMessage.at for display; lastMessageAt
+  // was only carried through for the server-side sort).
+  for (const row of merged) {
+    const { lastMessageAt: _sortKey, ...rowOnly } = row;
+    void _sortKey; // consumed by sort comparator above; intentionally unused here
+    dmsAndGroups.push(rowOnly);
   }
 
   // ── 6. Final assembly — server owns the array order ─────────────────────
