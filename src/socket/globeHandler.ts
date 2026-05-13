@@ -8,6 +8,7 @@ import { isValidGlobeRoom, AGE_GATE_HOURS } from '../config/globeRooms';
 import { moderateMessage } from '../services/claude';
 import { moderateMessageImages } from '../services/imageModeration';
 import { sendPushToUser, shouldSendPush } from '../services/pushNotifications';
+import { getGlobeMembershipsForUser } from '../services/globeMembership';
 import type { ChatNotificationPayload } from '../types/chatNotification';
 
 // ── Globe Room Event Handlers ───────────────────────────────────────────────
@@ -82,6 +83,16 @@ export function registerGlobeHandlers(io: Server, socket: Socket): void {
         socket.emit('message:rejected', { reason: modResult.reason });
         return;
       }
+    }
+
+    // D-14: server-side posting gate — reject non-members before any DB write.
+    // Town Square is transparent (every user has the auto-join row per Phase 7
+    // D-02). Defense in depth — the client-side composer-hide in D-12 is
+    // bypassable, so the server gate is the real enforcement point.
+    const memberships = await getGlobeMembershipsForUser(userId);
+    if (!memberships.has(data.slug)) {
+      socket.emit('message:rejected', { reason: 'not_a_member' });
+      return;
     }
 
     // Parse @mentions so we can store them on the message and notify targets
