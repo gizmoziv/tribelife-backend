@@ -167,6 +167,13 @@ export function registerGlobeHandlers(io: Server, socket: Socket): void {
       slug: data.slug,
       roomId,
       senderId: userId,
+      // Carry a minimal lastMessage preview so non-member clients can keep
+      // their Chevra discovery tile's lastMessage current without polling
+      // /api/globe/rooms. Members already get the preview via globe:message
+      // (in-room) and chat:notification (Chats list).
+      senderHandle: handle,
+      content,
+      createdAt: msg.createdAt,
     });
 
     // Build the full set of users to notify: explicit @mentions + reply target
