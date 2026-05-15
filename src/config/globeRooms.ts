@@ -5,12 +5,11 @@ export interface GlobeRoom {
   slug: string;
   roomId: string;
   displayName: string;
-  description: string;
   welcomeMessage: string;
   timezones: string[];
   isGlobal: boolean;
   sortOrder: number;
-  autoJoin: boolean;   // true = inserted into globe_room_memberships on signup (Phase 7, per D-05)
+  autoJoin: boolean; // true = inserted into globe_room_memberships on signup (Phase 7, per D-05)
 }
 
 export const AGE_GATE_HOURS = parseInt(process.env.AGE_GATE_HOURS || '24', 10);
@@ -20,8 +19,8 @@ export const GLOBE_ROOMS: GlobeRoom[] = [
     slug: 'town-square',
     roomId: 'globe:town-square',
     displayName: 'Town Square',
-    description: 'A global space for Jewish people & allies to connect',
-    welcomeMessage: 'Welcome to Town Square! This is a space for Jewish people and allies worldwide to connect. Be kind, be respectful, and enjoy the conversation.',
+    welcomeMessage:
+      'Welcome to Town Square! This is a space for Jewish people and allies worldwide to connect. Be kind, be respectful, and enjoy the conversation.',
     timezones: [],
     isGlobal: true,
     sortOrder: 0,
@@ -31,12 +30,21 @@ export const GLOBE_ROOMS: GlobeRoom[] = [
     slug: 'north-america',
     roomId: 'globe:north-america',
     displayName: 'North America',
-    description: 'For the Jewish community in the US and Canada',
-    welcomeMessage: 'Welcome to North America! This is a space for Jews in the US and Canada to connect. Be kind, be respectful, and enjoy the conversation.',
+    welcomeMessage:
+      'Welcome to North America! This is a space for Jews in the US and Canada to connect. Be kind, be respectful, and enjoy the conversation.',
     timezones: [
-      'America/New_York', 'America/Chicago', 'America/Denver', 'America/Los_Angeles',
-      'America/Phoenix', 'America/Anchorage', 'America/Toronto', 'America/Vancouver',
-      'America/Winnipeg', 'America/Edmonton', 'America/Halifax', 'Pacific/Honolulu',
+      'America/New_York',
+      'America/Chicago',
+      'America/Denver',
+      'America/Los_Angeles',
+      'America/Phoenix',
+      'America/Anchorage',
+      'America/Toronto',
+      'America/Vancouver',
+      'America/Winnipeg',
+      'America/Edmonton',
+      'America/Halifax',
+      'Pacific/Honolulu',
     ],
     isGlobal: false,
     sortOrder: 1,
@@ -46,8 +54,8 @@ export const GLOBE_ROOMS: GlobeRoom[] = [
     slug: 'israel',
     roomId: 'globe:israel',
     displayName: 'Israel',
-    description: 'For the Jewish community in Israel',
-    welcomeMessage: 'Welcome to Israel! This is a space for Jews in Israel to connect. Be kind, be respectful, and enjoy the conversation.',
+    welcomeMessage:
+      'Welcome to Israel! This is a space for Jews in Israel to connect. Be kind, be respectful, and enjoy the conversation.',
     timezones: ['Asia/Jerusalem'],
     isGlobal: false,
     sortOrder: 2,
@@ -57,14 +65,27 @@ export const GLOBE_ROOMS: GlobeRoom[] = [
     slug: 'europe',
     roomId: 'globe:europe',
     displayName: 'Europe',
-    description: 'For the Jewish community across Europe',
-    welcomeMessage: 'Welcome to Europe! This is a space for Jews in Europe to connect. Be kind, be respectful, and enjoy the conversation.',
+    welcomeMessage:
+      'Welcome to Europe! This is a space for Jews in Europe to connect. Be kind, be respectful, and enjoy the conversation.',
     timezones: [
-      'Europe/Paris', 'Europe/Berlin', 'Europe/Amsterdam', 'Europe/Brussels',
-      'Europe/Rome', 'Europe/Madrid', 'Europe/Zurich', 'Europe/Vienna',
-      'Europe/Stockholm', 'Europe/Oslo', 'Europe/Copenhagen', 'Europe/Helsinki',
-      'Europe/Warsaw', 'Europe/Prague', 'Europe/Budapest', 'Europe/Bucharest',
-      'Europe/Athens', 'Europe/Istanbul',
+      'Europe/Paris',
+      'Europe/Berlin',
+      'Europe/Amsterdam',
+      'Europe/Brussels',
+      'Europe/Rome',
+      'Europe/Madrid',
+      'Europe/Zurich',
+      'Europe/Vienna',
+      'Europe/Stockholm',
+      'Europe/Oslo',
+      'Europe/Copenhagen',
+      'Europe/Helsinki',
+      'Europe/Warsaw',
+      'Europe/Prague',
+      'Europe/Budapest',
+      'Europe/Bucharest',
+      'Europe/Athens',
+      'Europe/Istanbul',
     ],
     isGlobal: false,
     sortOrder: 3,
@@ -74,8 +95,8 @@ export const GLOBE_ROOMS: GlobeRoom[] = [
     slug: 'uk-ireland',
     roomId: 'globe:uk-ireland',
     displayName: 'UK & Ireland',
-    description: 'For the Jewish community in the UK and Ireland',
-    welcomeMessage: 'Welcome to UK & Ireland! This is a space for Jews in the UK and Ireland to connect. Be kind, be respectful, and enjoy the conversation.',
+    welcomeMessage:
+      'Welcome to UK & Ireland! This is a space for Jews in the UK and Ireland to connect. Be kind, be respectful, and enjoy the conversation.',
     timezones: ['Europe/London', 'Europe/Dublin'],
     isGlobal: false,
     sortOrder: 4,
@@ -85,11 +106,16 @@ export const GLOBE_ROOMS: GlobeRoom[] = [
     slug: 'latin-america',
     roomId: 'globe:latin-america',
     displayName: 'Latin America',
-    description: 'For the Jewish community in Latin America',
-    welcomeMessage: 'Welcome to Latin America! This is a space for Jews in Latin America to connect. Be kind, be respectful, and enjoy the conversation.',
+    welcomeMessage:
+      'Welcome to Latin America! This is a space for Jews in Latin America to connect. Be kind, be respectful, and enjoy the conversation.',
     timezones: [
-      'America/Mexico_City', 'America/Bogota', 'America/Lima', 'America/Santiago',
-      'America/Argentina/Buenos_Aires', 'America/Sao_Paulo', 'America/Caracas',
+      'America/Mexico_City',
+      'America/Bogota',
+      'America/Lima',
+      'America/Santiago',
+      'America/Argentina/Buenos_Aires',
+      'America/Sao_Paulo',
+      'America/Caracas',
     ],
     isGlobal: false,
     sortOrder: 5,
@@ -99,11 +125,16 @@ export const GLOBE_ROOMS: GlobeRoom[] = [
     slug: 'australia-nz',
     roomId: 'globe:australia-nz',
     displayName: 'Australia/NZ',
-    description: 'For the Jewish community in Australia and New Zealand',
-    welcomeMessage: 'Welcome to Australia/NZ! This is a space for Jews in Australia and New Zealand to connect. Be kind, be respectful, and enjoy the conversation.',
+    welcomeMessage:
+      'Welcome to Australia/NZ! This is a space for Jews in Australia and New Zealand to connect. Be kind, be respectful, and enjoy the conversation.',
     timezones: [
-      'Australia/Sydney', 'Australia/Melbourne', 'Australia/Brisbane',
-      'Australia/Perth', 'Australia/Adelaide', 'Pacific/Auckland', 'Pacific/Fiji',
+      'Australia/Sydney',
+      'Australia/Melbourne',
+      'Australia/Brisbane',
+      'Australia/Perth',
+      'Australia/Adelaide',
+      'Pacific/Auckland',
+      'Pacific/Fiji',
     ],
     isGlobal: false,
     sortOrder: 6,
@@ -113,8 +144,8 @@ export const GLOBE_ROOMS: GlobeRoom[] = [
     slug: 'south-africa',
     roomId: 'globe:south-africa',
     displayName: 'South Africa',
-    description: 'For the Jewish community in South Africa',
-    welcomeMessage: 'Welcome to South Africa! This is a space for Jews in South Africa to connect. Be kind, be respectful, and enjoy the conversation.',
+    welcomeMessage:
+      'Welcome to South Africa! This is a space for Jews in South Africa to connect. Be kind, be respectful, and enjoy the conversation.',
     timezones: ['Africa/Johannesburg'],
     isGlobal: false,
     sortOrder: 7,
