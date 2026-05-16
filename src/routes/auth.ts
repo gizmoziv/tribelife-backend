@@ -336,6 +336,7 @@ const onboardingSchema = z.object({
     errorMap: () => ({ message: 'You must accept the Terms of Service to continue' }),
   }),
   referralCode: z.string().max(50).optional(),
+  attributionSource: z.enum(['handle_code', 'profile_share', 'group_invite']).optional(),
 });
 
 router.post('/onboarding', requireAuth, async (req: AuthRequest, res: Response): Promise<void> => {
@@ -345,7 +346,7 @@ router.post('/onboarding', requireAuth, async (req: AuthRequest, res: Response):
     return;
   }
 
-  const { handle, timezone, avatarUrl, referralCode } = parse.data;
+  const { handle, timezone, avatarUrl, referralCode, attributionSource } = parse.data;
   const userId = req.user!.id;
 
   // Check handle uniqueness
@@ -410,7 +411,10 @@ router.post('/onboarding', requireAuth, async (req: AuthRequest, res: Response):
         referralCode: referralCode.toLowerCase(),
         status: 'onboarded',
         convertedAt: new Date(),
+        source: attributionSource ?? 'handle_code',
       });
+
+      console.log('[attribution]', { userId, referrerId: referrer.userId, source: attributionSource ?? 'handle_code' });
 
       // Grant referrer premium: 1 referral = 1 month, cap at 12
       const [countResult] = await db
