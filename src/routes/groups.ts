@@ -227,6 +227,7 @@ router.post('/:slug/join', async (req: AuthRequest, res: Response): Promise<void
       id: conversations.id,
       groupName: conversations.groupName,
       createdById: conversations.createdById,
+      archivedAt: conversations.archivedAt,
     })
     .from(conversations)
     .where(and(eq(conversations.inviteSlug, slug), eq(conversations.isGroup, true)))
@@ -234,6 +235,12 @@ router.post('/:slug/join', async (req: AuthRequest, res: Response): Promise<void
 
   if (!group) {
     res.status(404).json({ error: 'Group not found' });
+    return;
+  }
+
+  // D-12: reject join on archived group
+  if (group.archivedAt) {
+    res.status(403).json({ error: 'Group archived' });
     return;
   }
 
