@@ -325,6 +325,7 @@ router.get('/conversations/:id/messages', async (req: AuthRequest, res: Response
       senderAvatar: userProfiles.avatarUrl,
       mentions: messages.mentions,
       mediaUrls: messages.mediaUrls,
+      kind: messages.kind,
     })
     .from(messages)
     .leftJoin(users, eq(users.id, messages.senderId))
