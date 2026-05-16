@@ -4,7 +4,7 @@ import logger from '../lib/logger';
 const log = logger.child({ module: 'revenuecat' });
 import { eq } from 'drizzle-orm';
 import { db } from '../db';
-import { userProfiles } from '../db/schema';
+import { userProfiles, attributionConversions, referrals } from '../db/schema';
 import { emitCapabilityInvalidationToUser } from '../services/capabilityInvalidation';
 
 const router = Router();
@@ -70,6 +70,41 @@ router.post('/webhook', async (req: Request, res: Response): Promise<void> => {
           updatedAt: new Date(),
         })
         .where(eq(userProfiles.userId, userId));
+
+      // Phase 13: record attribution conversion for INITIAL_PURCHASE only
+      // (RENEWAL / PRODUCT_CHANGE / UNCANCELLATION are explicitly out of scope per D-02)
+      if (eventType === 'INITIAL_PURCHASE') {
+        const revenuecatEventId: string | undefined = event.id;
+        const productId: string | undefined = event.product_id;
+
+        // Look up first-touch referrer locked at signup (oldest row for this user)
+        const [referralRow] = await db
+          .select({ referrerId: referrals.referrerId, source: referrals.source })
+          .from(referrals)
+          .where(eq(referrals.referredUserId, userId))
+          .limit(1);
+
+        await db
+          .insert(attributionConversions)
+          .values({
+            referredUserId: userId,
+            referrerUserId: referralRow?.referrerId ?? null,
+            source: referralRow?.source ?? 'organic',
+            plan: productId ?? null,
+            revenuecatEventId: revenuecatEventId ?? null,
+          })
+          .onConflictDoNothing(); // idempotent on revenuecat_event_id UNIQUE
+
+        log.info(
+          {
+            eventType,
+            userId,
+            referrerUserId: referralRow?.referrerId ?? null,
+            source: referralRow?.source ?? 'organic',
+          },
+          'Attribution recorded'
+        );
+      }
 
       emitCapabilityInvalidationToUser(userId, 'revenuecat_grant');
       log.info({ eventType, userId }, 'Granted premium');
