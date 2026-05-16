@@ -279,21 +279,40 @@ router.get('/conversations/:id/messages', async (req: AuthRequest, res: Response
     )
     .limit(1);
 
+  // Phase 12 D-09: public, non-archived groups allow read-only preview for
+  // non-members so the in-place "Join Community" UX can render message history.
+  let isPreviewRead = false;
   if (participation.length === 0) {
-    res.status(403).json({ error: 'Not a participant in this conversation' });
-    return;
+    const [convo] = await db
+      .select({
+        isGroup: conversations.isGroup,
+        isPublic: conversations.isPublic,
+        archivedAt: conversations.archivedAt,
+      })
+      .from(conversations)
+      .where(eq(conversations.id, convId))
+      .limit(1);
+
+    if (!convo || !convo.isGroup || !convo.isPublic || convo.archivedAt !== null) {
+      res.status(403).json({ error: 'Not a participant in this conversation' });
+      return;
+    }
+
+    isPreviewRead = true;
   }
 
-  // Update last read
-  await db
-    .update(conversationParticipants)
-    .set({ lastReadAt: new Date() })
-    .where(
-      and(
-        eq(conversationParticipants.conversationId, convId),
-        eq(conversationParticipants.userId, userId)
-      )
-    );
+  // Update last read (skip for non-member preview reads — no participant row).
+  if (!isPreviewRead) {
+    await db
+      .update(conversationParticipants)
+      .set({ lastReadAt: new Date() })
+      .where(
+        and(
+          eq(conversationParticipants.conversationId, convId),
+          eq(conversationParticipants.userId, userId)
+        )
+      );
+  }
 
   const query = db
     .select({
