@@ -132,6 +132,7 @@ router.post('/google', async (req: Request, res: Response): Promise<void> => {
     await bootstrapAutoJoins(user.users.id);
     const token = signToken(user.users.id);
     const profile = user.user_profiles;
+    const userId = user.users.id;
 
     const orgMemberships = await getOrgMembershipsForUser(user.users.id);
     // isPremium removed from response payload (TIER-03); the field below is the
@@ -142,6 +143,15 @@ router.post('/google', async (req: Request, res: Response): Promise<void> => {
       premiumExpiresAt: profile?.premiumExpiresAt ?? null,
       orgMemberships,
     });
+
+    const [referralInfo] = await db
+      .select({ source: referrals.source, referrerHandle: userProfiles.handle })
+      .from(referrals)
+      .leftJoin(userProfiles, eq(userProfiles.userId, referrals.referrerId))
+      .where(eq(referrals.referredUserId, userId))
+      .limit(1);
+    const referralSource = referralInfo?.source ?? null;
+    const referrerHandle = referralInfo?.referrerHandle ?? null;
 
     res.json({
       token,
@@ -155,6 +165,8 @@ router.post('/google', async (req: Request, res: Response): Promise<void> => {
         timezone: profile?.timezone ?? null,
         acceptedTermsAt: profile?.acceptedTermsAt ?? null,
         handleUpdatedAt: profile?.handleUpdatedAt ?? null,
+        referralSource,
+        referrerHandle,
       },
       needsOnboarding: needsOnboarding({
         handle: profile?.handle ?? null,
@@ -286,6 +298,7 @@ router.post('/apple', async (req: Request, res: Response): Promise<void> => {
     await bootstrapAutoJoins(user.users.id);
     const token = signToken(user.users.id);
     const profile = user.user_profiles;
+    const userId = user.users.id;
 
     const orgMemberships = await getOrgMembershipsForUser(user.users.id);
     // isPremium removed from response payload (TIER-03); the field below is the
@@ -296,6 +309,15 @@ router.post('/apple', async (req: Request, res: Response): Promise<void> => {
       premiumExpiresAt: profile?.premiumExpiresAt ?? null,
       orgMemberships,
     });
+
+    const [referralInfo] = await db
+      .select({ source: referrals.source, referrerHandle: userProfiles.handle })
+      .from(referrals)
+      .leftJoin(userProfiles, eq(userProfiles.userId, referrals.referrerId))
+      .where(eq(referrals.referredUserId, userId))
+      .limit(1);
+    const referralSource = referralInfo?.source ?? null;
+    const referrerHandle = referralInfo?.referrerHandle ?? null;
 
     res.json({
       token,
@@ -309,6 +331,8 @@ router.post('/apple', async (req: Request, res: Response): Promise<void> => {
         timezone: profile?.timezone ?? null,
         acceptedTermsAt: profile?.acceptedTermsAt ?? null,
         handleUpdatedAt: profile?.handleUpdatedAt ?? null,
+        referralSource,
+        referrerHandle,
       },
       needsOnboarding: needsOnboarding({
         handle: profile?.handle ?? null,
@@ -602,6 +626,15 @@ router.get('/me', requireAuth, async (req: AuthRequest, res: Response): Promise<
     orgMemberships,
   });
 
+  const [referralInfo] = await db
+    .select({ source: referrals.source, referrerHandle: userProfiles.handle })
+    .from(referrals)
+    .leftJoin(userProfiles, eq(userProfiles.userId, referrals.referrerId))
+    .where(eq(referrals.referredUserId, req.user!.id))
+    .limit(1);
+  const referralSource = referralInfo?.source ?? null;
+  const referrerHandle = referralInfo?.referrerHandle ?? null;
+
   res.json({
     user: {
       id: req.user!.id,
@@ -613,6 +646,8 @@ router.get('/me', requireAuth, async (req: AuthRequest, res: Response): Promise<
       timezone: req.user!.timezone,
       acceptedTermsAt: req.user!.acceptedTermsAt,
       handleUpdatedAt: req.user!.handleUpdatedAt,
+      referralSource,
+      referrerHandle,
     },
     needsOnboarding: needsOnboarding(req.user!),
     capabilities,
