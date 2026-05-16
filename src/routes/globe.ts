@@ -20,6 +20,7 @@ import {
   blockedUsers,
   globeReadPositions,
   globeRoomMemberships,
+  conversations,
 } from '../db/schema';
 import { requireAuth, AuthRequest } from '../middleware/auth';
 import { attachReactions } from '../utils/attachReactions';
@@ -75,6 +76,7 @@ router.get('/rooms', async (req: AuthRequest, res: Response): Promise<void> => {
         .limit(1);
 
       return {
+        kind: 'globe_room' as const,
         slug: room.slug,
         displayName: room.displayName,
         participantCount,
@@ -108,7 +110,68 @@ router.get('/rooms', async (req: AuthRequest, res: Response): Promise<void> => {
     return a.sortOrder - b.sortOrder;
   });
 
-  res.json({ rooms });
+  // Phase 12 D-04 + D-08: public-group UNION — appended after globe rooms
+  // (ordered by lastMessageAt DESC per D-08). Filters: isPublic=true,
+  // archivedAt IS NULL. LIMIT 50 safety ceiling.
+  const publicGroupsRaw = await db
+    .select({
+      conversationId: conversations.id,
+      name: conversations.groupName,
+      iconUrl: conversations.groupIconUrl,
+      lastMessageAt: conversations.lastMessageAt,
+      memberCount: sql<number>`(
+        SELECT count(*)::int FROM conversation_participants
+        WHERE conversation_id = ${conversations.id} AND left_at IS NULL
+      )`,
+      isMember: sql<boolean>`EXISTS (
+        SELECT 1 FROM conversation_participants
+        WHERE conversation_id = ${conversations.id}
+          AND user_id = ${userId}
+          AND left_at IS NULL
+      )`,
+    })
+    .from(conversations)
+    .where(and(
+      eq(conversations.isGroup, true),
+      eq(conversations.isPublic, true),
+      isNull(conversations.archivedAt),
+    ))
+    .orderBy(desc(conversations.lastMessageAt))
+    .limit(50);
+
+  // Last-message preview per group (N+1 — mirrors chats.ts group N+1 pattern)
+  const publicGroupRows = await Promise.all(
+    publicGroupsRaw.map(async (row) => {
+      const [lastMsg] = await db
+        .select({
+          content: messages.content,
+          createdAt: messages.createdAt,
+          senderHandle: userProfiles.handle,
+        })
+        .from(messages)
+        .leftJoin(userProfiles, eq(userProfiles.userId, messages.senderId))
+        .where(and(eq(messages.conversationId, row.conversationId), isNull(messages.deletedAt)))
+        .orderBy(desc(messages.createdAt))
+        .limit(1);
+      return {
+        kind: 'group' as const,
+        conversationId: row.conversationId,
+        name: row.name ?? 'Group',
+        iconUrl: row.iconUrl ?? null,
+        memberCount: Number(row.memberCount ?? 0),
+        isMember: Boolean(row.isMember),
+        lastMessage: lastMsg
+          ? {
+              content: lastMsg.content,
+              createdAt: (lastMsg.createdAt as Date).toISOString(),
+              senderHandle: lastMsg.senderHandle ?? '',
+            }
+          : null,
+      };
+    }),
+  );
+
+  res.json({ rooms: [...rooms, ...publicGroupRows] });
 });
 
 // ── Get paginated message history for a Globe room ──────────────────────────
