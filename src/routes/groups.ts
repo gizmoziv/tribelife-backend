@@ -11,8 +11,9 @@ import {
   messages,
 } from '../db/schema';
 import { requireAuth, AuthRequest } from '../middleware/auth';
-import { requireCapability } from '../middleware/capabilities';
+import { requireCapability, CapabilityViolationError } from '../middleware/capabilities';
 import { computeCapabilities } from '../services/capabilities';
+import { enforceLimit, countOwnedGroups } from '../services/limitChecks';
 import { getOrgMembershipsForUser } from '../services/orgMemberships';
 import { logCapabilityDenial } from '../lib/capabilityLogger';
 import logger from '../lib/logger';
@@ -87,6 +88,26 @@ router.post(
   if (!parse.success) {
     res.status(400).json({ error: 'Invalid input', details: parse.error.flatten() });
     return;
+  }
+
+  // CARRY-01: enforce maxGroupsOwned limit AFTER the Phase 12 D-02 capability
+  // predicate (tier-availability gate runs as middleware before this body) and
+  // BEFORE the slug uniqueness check + DB insert. `logCapabilityDenial` is
+  // emitted internally by enforceLimit on the over-limit path.
+  try {
+    await enforceLimit(req, 'maxGroupsOwned', countOwnedGroups);
+  } catch (err) {
+    if (err instanceof CapabilityViolationError) {
+      const max = err.max ?? 0;
+      res.status(403).json({
+        error: max > 1
+          ? `You can own up to ${max} groups`
+          : `Free accounts can own 1 group. Upgrade to Premium for more.`,
+        capabilityViolation: true,
+      });
+      return;
+    }
+    throw err;
   }
 
   const { name } = parse.data;
