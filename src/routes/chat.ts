@@ -219,11 +219,17 @@ router.post('/conversations', async (req: AuthRequest, res: Response): Promise<v
     return;
   }
 
-  // Check if a 1-on-1 conversation already exists between these two users
+  // Check if a 1-on-1 DM conversation already exists between these two users.
+  // SCHM-04: legacy 1:1 DMs have is_group = NULL; v1.7+ DMs explicitly set
+  // is_group = false; groups have is_group = true. We want to match the
+  // first two but NEVER a group — even a 2-member group that happens to
+  // contain exactly these two users would otherwise be returned here and
+  // the mobile would re-open it as a DM (Phase 12 bug).
   const existing = await db.execute(sql`
     SELECT c.id
     FROM conversations c
-    WHERE (
+    WHERE c.is_group IS NOT TRUE
+    AND (
       SELECT COUNT(*) FROM conversation_participants cp WHERE cp.conversation_id = c.id
     ) = 2
     AND EXISTS (SELECT 1 FROM conversation_participants WHERE conversation_id = c.id AND user_id = ${userId})
@@ -236,8 +242,10 @@ router.post('/conversations', async (req: AuthRequest, res: Response): Promise<v
     return;
   }
 
-  // Create new conversation
-  const [convo] = await db.insert(conversations).values({}).returning();
+  // Create new DM conversation — set is_group explicitly so this row never
+  // falls into the "legacy NULL" bucket and stays distinguishable from
+  // group conversations going forward.
+  const [convo] = await db.insert(conversations).values({ isGroup: false }).returning();
 
   await db.insert(conversationParticipants).values([
     { conversationId: convo.id, userId },
