@@ -532,18 +532,13 @@ router.post('/:id/leave', async (req: AuthRequest, res: Response): Promise<void>
   }
 
   const [membership] = await db
-    .select({
-      id: conversationParticipants.id,
-      role: conversationParticipants.role,
-    })
+    .select({ id: conversationParticipants.id, role: conversationParticipants.role })
     .from(conversationParticipants)
-    .where(
-      and(
-        eq(conversationParticipants.conversationId, convId),
-        eq(conversationParticipants.userId, userId),
-        isNull(conversationParticipants.leftAt)
-      )
-    )
+    .where(and(
+      eq(conversationParticipants.conversationId, convId),
+      eq(conversationParticipants.userId, userId),
+      isNull(conversationParticipants.leftAt),
+    ))
     .limit(1);
 
   if (!membership) {
@@ -551,36 +546,39 @@ router.post('/:id/leave', async (req: AuthRequest, res: Response): Promise<void>
     return;
   }
 
-  // Set leftAt
-  await db
-    .update(conversationParticipants)
-    .set({ leftAt: new Date() })
-    .where(eq(conversationParticipants.id, membership.id));
-
-  // If admin, transfer to longest-tenured member
+  // D-05: detect last-admin BEFORE mutating leftAt
+  let isLastAdmin = false;
   if (membership.role === 'admin') {
-    const [nextAdmin] = await db
-      .select({ id: conversationParticipants.id })
+    const [{ count: remainingAdmins }] = await db
+      .select({ count: sql<number>`count(*)::int` })
       .from(conversationParticipants)
-      .where(
-        and(
-          eq(conversationParticipants.conversationId, convId),
-          isNull(conversationParticipants.leftAt),
-          sql`${conversationParticipants.userId} != ${userId}`
-        )
-      )
-      .orderBy(asc(conversationParticipants.joinedAt))
-      .limit(1);
-
-    if (nextAdmin) {
-      await db
-        .update(conversationParticipants)
-        .set({ role: 'admin' })
-        .where(eq(conversationParticipants.id, nextAdmin.id));
-    }
+      .where(and(
+        eq(conversationParticipants.conversationId, convId),
+        eq(conversationParticipants.role, 'admin'),
+        isNull(conversationParticipants.leftAt),
+        sql`${conversationParticipants.userId} != ${userId}`,
+      ));
+    isLastAdmin = remainingAdmins === 0;
   }
 
-  res.json({ ok: true });
+  // D-05: atomic leave + optional archive in a single transaction
+  await db.transaction(async (tx) => {
+    await tx.update(conversationParticipants)
+      .set({ leftAt: new Date() })
+      .where(eq(conversationParticipants.id, membership.id));
+
+    if (isLastAdmin) {
+      await tx.update(conversations)
+        .set({ archivedAt: new Date() })
+        .where(eq(conversations.id, convId));
+    }
+  });
+
+  if (isLastAdmin) {
+    log.info({ conversationId: convId, archivedBy: userId }, '[groups] archived');
+  }
+
+  res.json({ ok: true, archived: isLastAdmin });
 });
 
 export default router;
