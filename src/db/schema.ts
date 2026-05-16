@@ -274,11 +274,29 @@ export const referrals = pgTable('referrals', {
   referredUserId: integer('referred_user_id').references(() => users.id),
   referralCode: varchar('referral_code', { length: 50 }).notNull(),
   status: varchar('status', { length: 20 }).notNull().default('pending'),
+  source: varchar('source', { length: 20 }).notNull().default('handle_code'),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   convertedAt: timestamp('converted_at'),
 }, (t) => [
   index('referrals_referrer_idx').on(t.referrerId),
   index('referrals_code_idx').on(t.referralCode),
+]);
+
+// ─────────────────────────────────────────────
+// ATTRIBUTION CONVERSIONS (Phase 13)
+// Paid-conversion records — webhook-driven, copies first-touch referrer
+// ─────────────────────────────────────────────
+export const attributionConversions = pgTable('attribution_conversions', {
+  id: serial('id').primaryKey(),
+  referredUserId: integer('referred_user_id').notNull().references(() => users.id),
+  referrerUserId: integer('referrer_user_id').references(() => users.id),
+  source: varchar('source', { length: 20 }).notNull(),
+  plan: varchar('plan', { length: 50 }),
+  occurredAt: timestamp('occurred_at').notNull().defaultNow(),
+  revenuecatEventId: text('revenuecat_event_id'),
+}, (t) => [
+  index('attribution_conversions_referrer_idx').on(t.referrerUserId, t.occurredAt),
+  uniqueIndex('attribution_conversions_event_id_idx').on(t.revenuecatEventId),
 ]);
 
 // ─────────────────────────────────────────────
