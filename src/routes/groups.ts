@@ -1,4 +1,5 @@
 import { Router, Response } from 'express';
+import { Server } from 'socket.io';
 import { eq, and, sql, isNull, asc } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '../db';
@@ -7,6 +8,7 @@ import {
   conversationParticipants,
   users,
   userProfiles,
+  messages,
 } from '../db/schema';
 import { requireAuth, AuthRequest } from '../middleware/auth';
 import { requireCapability } from '../middleware/capabilities';
@@ -331,6 +333,62 @@ router.post('/:slug/join', async (req: AuthRequest, res: Response): Promise<void
     });
   }
 
+  // Phase 12: post a system message announcing the join so existing members
+  // and current previewers see who just joined. Mirrors the timezone-room
+  // pattern in routes/auth.ts:454-490.
+  try {
+    const joinerHandle = (req.user!.handle ?? '').toLowerCase();
+    if (joinerHandle) {
+      const announcementContent = `@${joinerHandle} joined the community`;
+      const [systemMsg] = await db
+        .insert(messages)
+        .values({
+          content: announcementContent,
+          senderId: userId,
+          conversationId: group.id,
+          kind: 'system',
+          mentions: [userId],
+        })
+        .returning();
+
+      // Bump lastMessageAt so the new row order is correct on next Chevra fetch.
+      await db
+        .update(conversations)
+        .set({ lastMessageAt: new Date() })
+        .where(eq(conversations.id, group.id));
+
+      const io = req.app.get('io') as Server | undefined;
+      if (io) {
+        io.to(`conversation:${group.id}`).emit('dm:message', {
+          id: systemMsg.id,
+          content: announcementContent,
+          senderId: userId,
+          senderHandle: joinerHandle,
+          senderAvatar: req.user!.avatarUrl ?? null,
+          conversationId: group.id,
+          createdAt: systemMsg.createdAt,
+          kind: 'system',
+          mentions: [userId],
+          replyToId: null,
+          replyTo: null,
+        });
+        // Live-update Chevra rows so observers see the latest preview.
+        io.emit('chevra:group-message', {
+          conversationId: group.id,
+          name: group.groupName ?? 'Group',
+          iconUrl: null,
+          lastMessage: {
+            content: announcementContent,
+            createdAt: systemMsg.createdAt,
+            senderHandle: joinerHandle,
+          },
+        });
+      }
+    }
+  } catch (err) {
+    log.error({ err, userId, groupId: group.id }, '[groups] join announcement failed');
+  }
+
   res.json({
     conversation: {
       id: group.id,
@@ -524,6 +582,20 @@ router.delete('/:id/members/:userId', async (req: AuthRequest, res: Response): P
     .update(conversationParticipants)
     .set({ leftAt: new Date(), role: 'kicked' })
     .where(eq(conversationParticipants.id, target.id));
+
+  // Phase 12: tell the kicked user's connected clients so the group disappears
+  // from their Chats list and any open chat screen ejects to the list.
+  try {
+    const io = req.app.get('io') as Server | undefined;
+    if (io) {
+      io.to(`user:${targetUserId}`).emit('chat:removed', {
+        conversationId: convId,
+        reason: 'kicked' as const,
+      });
+    }
+  } catch (err) {
+    log.error({ err, convId, targetUserId }, '[groups] chat:removed emit failed');
+  }
 
   res.json({ ok: true });
 });
