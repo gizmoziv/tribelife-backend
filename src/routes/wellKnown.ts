@@ -21,12 +21,24 @@ router.get('/apple-app-site-association', (_req, res) => {
           appIDs: [`${teamId}.com.tribelife.app`],
           components: [
             {
+              '/': '/org/invite/*',
+              comment: 'Org invite accept deep links (Phase 5)',
+            },
+            {
+              '/': '/org/*',
+              comment: 'Public org page deep links (Phase 5)',
+            },
+            {
               '/': '/globe/*',
               comment: 'Globe room deep links',
             },
             {
               '/': '/g/*',
               comment: 'Group invite deep links',
+            },
+            {
+              '/': '/u/*',
+              comment: 'Profile share deep links (Phase 13 ATTR-02)',
             },
             {
               '/': '/invite*',
