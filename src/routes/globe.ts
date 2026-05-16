@@ -5,6 +5,7 @@ import {
   desc,
   lt,
   and,
+  inArray,
   notInArray,
   gt,
   isNull,
@@ -21,6 +22,7 @@ import {
   globeReadPositions,
   globeRoomMemberships,
   conversations,
+  conversationParticipants,
 } from '../db/schema';
 import { requireAuth, AuthRequest } from '../middleware/auth';
 import { attachReactions } from '../utils/attachReactions';
@@ -124,12 +126,6 @@ router.get('/rooms', async (req: AuthRequest, res: Response): Promise<void> => {
         SELECT count(*)::int FROM conversation_participants
         WHERE conversation_id = ${conversations.id} AND left_at IS NULL
       )`,
-      isMember: sql<boolean>`EXISTS (
-        SELECT 1 FROM conversation_participants
-        WHERE conversation_id = ${conversations.id}
-          AND user_id = ${userId}
-          AND left_at IS NULL
-      )`,
     })
     .from(conversations)
     .where(and(
@@ -139,6 +135,22 @@ router.get('/rooms', async (req: AuthRequest, res: Response): Promise<void> => {
     ))
     .orderBy(desc(conversations.lastMessageAt))
     .limit(50);
+
+  // Derive isMember via a separate participant lookup — mirrors the globe-room
+  // memberships pattern above. Avoids the inline-EXISTS userId binding issue
+  // and keeps the query path consistent across both row kinds.
+  const publicGroupIds = publicGroupsRaw.map((r) => r.conversationId);
+  const memberConversationIds = publicGroupIds.length
+    ? await db
+        .select({ conversationId: conversationParticipants.conversationId })
+        .from(conversationParticipants)
+        .where(and(
+          eq(conversationParticipants.userId, userId),
+          isNull(conversationParticipants.leftAt),
+          inArray(conversationParticipants.conversationId, publicGroupIds),
+        ))
+    : [];
+  const memberGroupIdSet = new Set(memberConversationIds.map((m) => m.conversationId));
 
   // Last-message preview per group (N+1 — mirrors chats.ts group N+1 pattern)
   const publicGroupRows = await Promise.all(
@@ -161,7 +173,7 @@ router.get('/rooms', async (req: AuthRequest, res: Response): Promise<void> => {
         iconUrl: row.iconUrl ?? null,
         inviteSlug: row.inviteSlug ?? '',
         memberCount: Number(row.memberCount ?? 0),
-        isMember: Boolean(row.isMember),
+        isMember: memberGroupIdSet.has(row.conversationId),
         lastMessage: lastMsg
           ? {
               content: lastMsg.content,
