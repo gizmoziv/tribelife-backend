@@ -66,11 +66,18 @@ router.get('/', async (req: AuthRequest, res: Response): Promise<void> => {
 const createGroupSchema = z.object({
   name: z.string().min(1).max(50),
   slug: z.string().min(1).max(50).optional(),
+  isPublic: z.boolean().default(false),
 });
 
 router.post(
   '/',
-  requireCapability('canCreatePrivateGroup', 'Premium subscription required to create groups'),
+  (req: AuthRequest, res: Response, next) => {
+    const isPublic = req.body?.isPublic === true;
+    return requireCapability(
+      (caps) => isPublic ? caps.features.canCreatePublicGroup : caps.features.canCreatePrivateGroup,
+      'You need Premium to create a private group',
+    )(req, res, next);
+  },
   async (req: AuthRequest, res: Response): Promise<void> => {
   const userId = req.user!.id;
 
@@ -111,6 +118,7 @@ router.post(
             groupName: name,
             inviteSlug: slug,
             createdById: userId,
+            isPublic: parse.data.isPublic,
           })
           .returning();
         convo = row;
