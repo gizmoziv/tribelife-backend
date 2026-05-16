@@ -281,6 +281,9 @@ router.get('/', async (req: AuthRequest, res: Response): Promise<void> => {
         groupIconUrl: conversations.groupIconUrl,
         lastMessageAt: conversations.lastMessageAt,
         memberCount: sql<number>`(SELECT count(*)::int FROM conversation_participants WHERE conversation_id = ${conversations.id} AND left_at IS NULL)`,
+        // Phase 12 D-11: public/archive fields for mobile ChatsRow group variant
+        isPublic: conversations.isPublic,
+        isArchived: sql<boolean>`${conversations.archivedAt} IS NOT NULL`,
       })
       .from(conversations)
       .where(
@@ -336,6 +339,9 @@ router.get('/', async (req: AuthRequest, res: Response): Promise<void> => {
             ? { preview: lastMsg.content ?? '', at: (lastMsg.createdAt as Date).toISOString() }
             : null,
           lastMessageAt: row.lastMessageAt ?? null,
+          // Phase 12 D-11: public/archive fields
+          isPublic: row.isPublic ?? false,
+          isArchived: Boolean(row.isArchived),
         };
       }),
     );
