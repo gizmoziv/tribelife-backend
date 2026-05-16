@@ -118,6 +118,7 @@ router.get('/rooms', async (req: AuthRequest, res: Response): Promise<void> => {
       conversationId: conversations.id,
       name: conversations.groupName,
       iconUrl: conversations.groupIconUrl,
+      inviteSlug: conversations.inviteSlug,
       lastMessageAt: conversations.lastMessageAt,
       memberCount: sql<number>`(
         SELECT count(*)::int FROM conversation_participants
@@ -158,6 +159,7 @@ router.get('/rooms', async (req: AuthRequest, res: Response): Promise<void> => {
         conversationId: row.conversationId,
         name: row.name ?? 'Group',
         iconUrl: row.iconUrl ?? null,
+        inviteSlug: row.inviteSlug ?? '',
         memberCount: Number(row.memberCount ?? 0),
         isMember: Boolean(row.isMember),
         lastMessage: lastMsg
