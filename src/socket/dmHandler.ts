@@ -68,7 +68,7 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
 
     // Fetch conversation to determine if group
     const [convo] = await db
-      .select({ id: conversations.id, isGroup: conversations.isGroup, groupName: conversations.groupName })
+      .select({ id: conversations.id, isGroup: conversations.isGroup, groupName: conversations.groupName, archivedAt: conversations.archivedAt })
       .from(conversations)
       .where(eq(conversations.id, data.conversationId))
       .limit(1);
@@ -79,6 +79,13 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
     }
 
     const isGroup = convo.isGroup === true;
+
+    // D-12: reject messages to archived groups
+    if (isGroup && convo.archivedAt) {
+      log.warn({ event: 'dm_dropped_archived', userId, conversationId: data?.conversationId }, 'dm:message dropped — group archived');
+      socket.emit('message:rejected', { reason: 'Group archived' });
+      return;
+    }
 
     // Block check — only for 1:1 DMs. Groups skip this (filtering on read side).
     if (!isGroup) {
