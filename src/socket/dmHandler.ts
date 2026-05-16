@@ -68,7 +68,7 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
 
     // Fetch conversation to determine if group
     const [convo] = await db
-      .select({ id: conversations.id, isGroup: conversations.isGroup, groupName: conversations.groupName, archivedAt: conversations.archivedAt })
+      .select({ id: conversations.id, isGroup: conversations.isGroup, isPublic: conversations.isPublic, groupName: conversations.groupName, groupIconUrl: conversations.groupIconUrl, archivedAt: conversations.archivedAt })
       .from(conversations)
       .where(eq(conversations.id, data.conversationId))
       .limit(1);
@@ -177,6 +177,23 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
     // Emit to conversation room
     io.to(`conversation:${data.conversationId}`).emit('dm:message', msgPayload);
     log.info({ event: 'dm_saved_emitted', userId, conversationId: data.conversationId, messageId: msg.id, isGroup }, 'dm:message persisted + broadcast');
+
+    // Phase 12 D-04 follow-up: broadcast a light-weight last-message update
+    // so anyone currently viewing Chevra can refresh the row without
+    // re-fetching. Limited to PUBLIC, non-archived groups since the row
+    // preview is already public info (returned by GET /api/globe/rooms).
+    if (isGroup && convo.isPublic === true && !convo.archivedAt) {
+      io.emit('chevra:group-message', {
+        conversationId: data.conversationId,
+        name: convo.groupName ?? 'Group',
+        iconUrl: convo.groupIconUrl ?? null,
+        lastMessage: {
+          content,
+          createdAt: msg.createdAt,
+          senderHandle: handle,
+        },
+      });
+    }
 
     // Fire-and-forget image moderation
     if (mediaUrls.length > 0) {
