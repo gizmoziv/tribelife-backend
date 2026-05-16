@@ -64,7 +64,14 @@ export const conversations = pgTable('conversations', {
   groupIconUrl: text('group_icon_url'),
   inviteSlug: varchar('invite_slug', { length: 50 }).unique(),
   maxMembers: integer('max_members').default(200),
-});
+  // Phase 12 D-01: public/archive flags for group discovery + last-admin auto-archive
+  isPublic: boolean('is_public').notNull().default(false),
+  archivedAt: timestamp('archived_at'),
+}, (t) => ({
+  publicActiveIdx: index('conversations_public_active_idx')
+    .on(t.isPublic, t.archivedAt)
+    .where(sql`${t.isGroup} = true`),
+}));
 
 export const conversationParticipants = pgTable('conversation_participants', {
   id: serial('id').primaryKey(),
