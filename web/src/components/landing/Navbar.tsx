@@ -4,11 +4,12 @@ import logo from '@/assets/tribelife-logo.png';
 import ThemeToggle from './ThemeToggle';
 import { trackDownloadClick, trackNavClick } from '@/lib/analytics';
 
-const APP_STORE_URL = 'https://apps.apple.com/us/app/tribelife-app/id6759845843';
-
+const APP_STORE_URL =
+  'https://apps.apple.com/us/app/tribelife-app/id6759845843';
+const PLAY_STORE_URL =
+  'https://play.google.com/store/apps/details?id=com.tribelife.app';
 function getDownloadUrl() {
-  if (/android/i.test(navigator.userAgent)) return 'https://play.google.com/store/apps/details?id=com.tribelife.app';
-  return APP_STORE_URL;
+  return getDownloadPlatform() === 'android' ? PLAY_STORE_URL : APP_STORE_URL;
 }
 
 function getDownloadPlatform(): 'ios' | 'android' {
@@ -46,16 +47,31 @@ const Navbar = () => {
         </a>
 
         <div className="hidden md:flex items-center gap-8 text-sm font-medium text-muted-foreground">
-          <a href="#features" onClick={(e) => handleSectionNav(e, 'features')} className="hover:text-foreground transition-colors">
+          <a
+            href="#features"
+            onClick={(e) => handleSectionNav(e, 'features')}
+            className="hover:text-foreground transition-colors"
+          >
             Features
           </a>
-          <a href="#how-it-works" onClick={(e) => handleSectionNav(e, 'how-it-works')} className="hover:text-foreground transition-colors">
+          <a
+            href="#how-it-works"
+            onClick={(e) => handleSectionNav(e, 'how-it-works')}
+            className="hover:text-foreground transition-colors"
+          >
             How It Works
           </a>
-          <a href="#community" onClick={(e) => handleSectionNav(e, 'community')} className="hover:text-foreground transition-colors">
+          <a
+            href="#community"
+            onClick={(e) => handleSectionNav(e, 'community')}
+            className="hover:text-foreground transition-colors"
+          >
             Community
           </a>
-          <Link to="/support" className="hover:text-foreground transition-colors">
+          <Link
+            to="/support"
+            className="hover:text-foreground transition-colors"
+          >
             Support
           </Link>
         </div>
@@ -68,8 +84,12 @@ const Navbar = () => {
             return (
               <a
                 href={downloadUrl}
-                {...(isExternal ? { target: "_blank", rel: "noopener noreferrer" } : {})}
-                onClick={() => trackDownloadClick(getDownloadPlatform(), 'header')}
+                {...(isExternal
+                  ? { target: '_blank', rel: 'noopener noreferrer' }
+                  : {})}
+                onClick={() =>
+                  trackDownloadClick(getDownloadPlatform(), 'header')
+                }
                 className="gradient-bg gradient-bg-hover text-primary-foreground px-4 py-2 md:px-5 md:py-2.5 rounded-full text-sm font-semibold whitespace-nowrap transition-all glow-shadow hover:scale-105"
               >
                 Download App
