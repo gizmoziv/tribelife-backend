@@ -6,6 +6,7 @@ import {
   conversations,
   conversationParticipants,
   messages,
+  messageEdits,
   users,
   userProfiles,
   blockedUsers,
@@ -15,6 +16,8 @@ import { requireCapability } from '../middleware/capabilities';
 import { attachReactions } from '../utils/attachReactions';
 import { attachReplyTo } from '../utils/attachReplyTo';
 import { translateMessage } from '../services/translation';
+import { moderateMessage } from '../services/claude';
+import type { Server } from 'socket.io';
 import logger from '../lib/logger';
 
 const log = logger.child({ module: 'chat' });
@@ -327,6 +330,7 @@ router.get('/conversations/:id/messages', async (req: AuthRequest, res: Response
       id: messages.id,
       content: messages.content,
       createdAt: messages.createdAt,
+      editedAt: messages.editedAt,
       senderId: messages.senderId,
       senderName: users.name,
       senderHandle: userProfiles.handle,
@@ -420,6 +424,7 @@ router.get('/room/:roomId/messages', async (req: AuthRequest, res: Response): Pr
       id: messages.id,
       content: messages.content,
       createdAt: messages.createdAt,
+      editedAt: messages.editedAt,
       senderId: messages.senderId,
       senderName: users.name,
       senderHandle: userProfiles.handle,
@@ -442,6 +447,10 @@ router.get('/room/:roomId/messages', async (req: AuthRequest, res: Response): Pr
 
 const translateSchema = z.object({
   targetLanguage: z.string().min(1).max(50).default('English'),
+});
+
+const editMessageSchema = z.object({
+  content: z.string().min(1, 'Message cannot be empty').max(2000),
 });
 
 // ── Translate message ─────────────────────────────────────────────────────
@@ -505,5 +514,124 @@ router.post(
   }
   }
 );
+
+// ── Edit message ─────────────────────────────────────────────────────────────
+router.patch('/messages/:id', async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    // 1. Parse and validate message ID
+    const messageId = parseInt(req.params.id as string);
+    if (isNaN(messageId)) {
+      res.status(400).json({ error: 'Invalid message ID' });
+      return;
+    }
+
+    // 2. Validate body
+    const parse = editMessageSchema.safeParse(req.body);
+    if (!parse.success) {
+      res.status(400).json({ error: parse.error.errors[0].message });
+      return;
+    }
+
+    // 3. Trim and check for whitespace-only
+    const content = parse.data.content.trim();
+    if (!content) {
+      res.status(400).json({ error: 'Message cannot be empty' });
+      return;
+    }
+
+    // 4. Fetch existing message
+    const [msg] = await db
+      .select()
+      .from(messages)
+      .where(eq(messages.id, messageId))
+      .limit(1);
+
+    if (!msg) {
+      res.status(404).json({ error: 'Message not found' });
+      return;
+    }
+
+    // 5. Authorization: only owner can edit
+    if (msg.senderId !== req.user!.id) {
+      res.status(403).json({ error: 'You can only edit your own messages' });
+      return;
+    }
+
+    // 6. Media guard: text-only edits in v1
+    if (Array.isArray(msg.mediaUrls) && msg.mediaUrls.length > 0) {
+      res.status(422).json({ error: 'Edits are not supported on media messages yet' });
+      return;
+    }
+
+    // 7. Moderation re-run on new content
+    const modResult = moderateMessage(content);
+    if (!modResult.isAllowed) {
+      console.error('[chat/edit]', { messageId, userId: req.user!.id, reason: modResult.reason });
+      res.status(422).json({ error: modResult.reason ?? 'Content rejected by moderation' });
+      return;
+    }
+
+    // 8. Transaction: audit insert + message update
+    const now = new Date();
+    await db.transaction(async (tx) => {
+      await tx.insert(messageEdits).values({
+        messageId: msg.id,
+        content: msg.content,  // preserve OLD content in audit
+        editedAt: now,
+      });
+      await tx.update(messages)
+        .set({ content, editedAt: now })
+        .where(eq(messages.id, msg.id));
+    });
+
+    // 9. Fetch updated row in GET-handler projection shape
+    const [updatedRows] = await db
+      .select({
+        id: messages.id,
+        content: messages.content,
+        createdAt: messages.createdAt,
+        editedAt: messages.editedAt,
+        senderId: messages.senderId,
+        senderName: users.name,
+        senderHandle: userProfiles.handle,
+        senderAvatar: userProfiles.avatarUrl,
+        mentions: messages.mentions,
+        mediaUrls: messages.mediaUrls,
+        kind: messages.kind,
+      })
+      .from(messages)
+      .leftJoin(users, eq(users.id, messages.senderId))
+      .leftJoin(userProfiles, eq(userProfiles.userId, messages.senderId))
+      .where(eq(messages.id, msg.id))
+      .limit(1);
+
+    const withReactions = await attachReactions([updatedRows], req.user!.id);
+    const withReplies = await attachReplyTo(withReactions);
+    const updatedMessage = withReplies[0];
+
+    // 10. Socket broadcast to the correct room
+    const io = req.app.get('io') as Server | undefined;
+    if (io) {
+      const payload = {
+        messageId: msg.id,
+        content,
+        editedAt: now.toISOString(),
+        roomId: msg.roomId,
+        conversationId: msg.conversationId,
+      };
+      if (msg.conversationId != null) {
+        io.to(`conversation:${msg.conversationId}`).emit('message:edited', payload);
+      } else if (msg.roomId != null) {
+        io.to(msg.roomId).emit('message:edited', payload);
+      }
+    }
+
+    // 11. Return updated message
+    res.json({ message: updatedMessage });
+  } catch (err) {
+    console.error('[chat/edit]', err);
+    res.status(500).json({ error: 'Edit failed' });
+  }
+});
 
 export default router;
