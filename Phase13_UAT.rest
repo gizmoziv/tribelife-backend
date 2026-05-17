@@ -1,0 +1,189 @@
+@secret = sk_fMBUkDWRCjVyBXsvLqobWsyXSppSQ
+@referredUserId=93
+@organicUserId=85
+@host=http://localhost:4000
+### UAT Test 2 section
+#### Step 1
+POST {{host}}/api/revenuecat/webhook
+  Authorization: Bearer {{secret}}
+  Content-Type: application/json
+
+  {
+    "event": {
+      "id": "evt_uat_test_001",
+      "type": "INITIAL_PURCHASE",
+      "app_user_id": "{{referredUserId}}",
+      "product_id": "tribelife_premium_monthly",
+      "expiration_at_ms": 1900000000000
+    }
+  }
+
+### Step 2
+POST {{host}}/api/revenuecat/webhook
+Authorization: Bearer {{secret}}
+Content-Type: application/json
+
+{
+"event": {
+    "id": "evt_uat_test_001",
+    "type": "INITIAL_PURCHASE",
+    "app_user_id": "{{referredUserId}}",
+    "product_id": "tribelife_premium_monthly",
+    "expiration_at_ms": 1900000000000
+}
+}
+
+### POST 3 — RENEWAL → expect 0 new attribution rows
+POST {{host}}/api/revenuecat/webhook
+Authorization: Bearer {{secret}}
+Content-Type: application/json
+
+{
+    "event": {
+        "id": "evt_uat_test_002",
+        "type": "RENEWAL",
+        "app_user_id": "{{referredUserId}}",
+        "product_id": "tribelife_premium_monthly",
+        "expiration_at_ms": 1910000000000
+    }
+}
+
+### POST 4 — INITIAL_PURCHASE for organic user → expect 1 row, referrer_user_id NULL, source='organic'
+POST {{host}}/api/revenuecat/webhook
+Authorization: Bearer {{secret}}
+Content-Type: application/json
+
+{
+    "event": {
+        "id": "evt_uat_test_003",
+        "type": "INITIAL_PURCHASE",
+        "app_user_id": "{{organicUserId}}",
+        "product_id": "tribelife_premium_monthly",
+        "expiration_at_ms": 1900000000000
+    }
+}
+
+### UAT Test 2 END
+
+### UAT Test 3 Start
+### ── Referrals Funnel UAT (Phase 13 — Test 3) ────────────────────────
+@nirJwt = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjg1LCJpYXQiOjE3NzkwNDIzMjksImV4cCI6MTc4MTYzNDMyOX0.PwTthiSNBnY4W19OG33-Zl31dbEQms9Gd8i3V09fKzA
+@otherJwt = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjkzLCJpYXQiOjE3NzkwNDIzNDgsImV4cCI6MTc4MTYzNDM0OH0.mYoNB84BAdrM3YqP2YgYahxKnz2GWo7RkL2gwKo9rdg
+
+### 3a. Happy path — authenticated user gets their own funnel
+  GET {{host}}/api/referrals/funnel
+  Authorization: Bearer {{nirJwt}}
+
+### 3b. Auth gate — no token → 401
+  GET {{host}}/api/referrals/funnel
+
+### 3c. Self-scope — user 93's call must show user 93's data, NOT user 85's
+  GET {{host}}/api/referrals/funnel
+  Authorization: Bearer {{otherJwt}}
+### UAT Test 3 End
+
+### UAT Test 6 Start
+### ── Group Create Tier-Matrix (Phase 13 — Test 6 / CARRY-01) ─────────
+
+@freeJwt = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjkzLCJpYXQiOjE3NzkwNDM5ODUsImV4cCI6MTc4MTYzNTk4NX0.hRBdPLnIoYnNRnssQeZuA7sir-6OfaSatCeI4n1Ian0
+@premJwt = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjg1LCJpYXQiOjE3NzkwNDIzMjksImV4cCI6MTc4MTYzNDMyOX0.PwTthiSNBnY4W19OG33-Zl31dbEQms9Gd8i3V09fKzA
+
+### Pre-flight — count groups currently OWNED by each test user.
+###   You can also run this directly in psql.
+###   Replace 999 with each user's id.
+###   SELECT COUNT(*) FROM conversations c
+###   JOIN conversation_participants cp ON cp.conversation_id = c.id
+###   WHERE c.is_group = true AND cp.role = 'admin' AND cp.user_id = 999;
+
+# ─────────────────────────────────────────────────────────────────────
+# Sub-test 6a — free@0 owned → expect 200
+# Precondition: @freeJwt's user owns 0 groups (verify with pre-flight SQL)
+# ─────────────────────────────────────────────────────────────────────
+###
+
+POST {{host}}/api/chat/groups
+Authorization: Bearer {{freeJwt}}
+Content-Type: application/json
+
+{
+"name": "UAT Free Group 1",
+"isPublic": true
+}
+
+# ─────────────────────────────────────────────────────────────────────
+# Sub-test 6b — free@1 owned → expect 403 + capabilityViolation:true
+# Precondition: 6a above succeeded (user now at 1 owned, free cap=1)
+# Server log: [capabilities] denied with reason maxGroupsOwned
+# ─────────────────────────────────────────────────────────────────────
+###
+POST {{host}}/api/chat/groups
+Authorization: Bearer {{freeJwt}}
+Content-Type: application/json
+
+{
+"name": "UAT Free Group 2",
+"isPublic": true
+}
+
+# ─────────────────────────────────────────────────────────────────────
+# Sub-test 6c — free trying to create PRIVATE → expect 403 predicate denial
+# Reason: free tier can't create private groups (canCreatePrivateGroup=false)
+# Precondition: any free user (group count irrelevant — predicate gate fires first)
+# Server log: [capabilities] denied with reason canCreatePrivateGroup
+# ─────────────────────────────────────────────────────────────────────
+###
+POST {{host}}/api/chat/groups
+Authorization: Bearer {{freeJwt}}
+Content-Type: application/json
+
+{
+"name": "UAT Free Private Attempt",
+"isPublic": false
+}
+
+# ─────────────────────────────────────────────────────────────────────
+# Sub-test 6d — premium@0-4 owned → expect 200
+# Precondition: @premJwt user owns ≤4 groups (verify with pre-flight SQL)
+# ─────────────────────────────────────────────────────────────────────
+###  
+POST {{host}}/api/chat/groups
+Authorization: Bearer {{premJwt}}
+Content-Type: application/json
+
+{
+"name": "UAT Prem Group C",
+"isPublic": true
+}
+
+# ─────────────────────────────────────────────────────────────────────
+# Sub-test 6e — premium@5 owned → expect 403 + capabilityViolation:true
+# Precondition: @premJwt user owns EXACTLY 5 groups.
+# To get to 5 quickly: rerun 6d 4 more times with unique names
+#   ("UAT Prem Group B", "C", "D", "E" — should each return 200)
+#   then run 6e (the 6th attempt should hit the limit).
+# Server log: [capabilities] denied with reason maxGroupsOwned
+# ─────────────────────────────────────────────────────────────────────
+###
+POST {{host}}/api/chat/groups
+Authorization: Bearer {{premJwt}}
+Content-Type: application/json
+
+{
+"name": "UAT Prem Group 6th",
+"isPublic": true
+}
+
+# ─────────────────────────────────────────────────────────────────────
+# Cleanup (run when done) — delete UAT groups so they don't pollute state.
+# Replace 'YOUR_FREE_USER_ID' and 'YOUR_PREMIUM_USER_ID' with the real ids.
+# DELETE FROM conversation_participants WHERE conversation_id IN (
+#   SELECT id FROM conversations WHERE group_name LIKE 'UAT %'
+# );
+# DELETE FROM conversations WHERE group_name LIKE 'UAT %';
+# ─────────────────────────────────────────────────────────────────────
+### UAT Test 6 End
+
+
+curl -s -A "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15" \
+"http://localhost:4000/u/nir?ref=%3Cscript%3Ealert%281%29%3C%2Fscript%3E" \
+| head -20
