@@ -213,6 +213,7 @@ router.get('/:handle', async (req: AuthRequest, res: Response): Promise<void> =>
       handle: userProfiles.handle,
       avatarUrl: userProfiles.avatarUrl,
       timezone: userProfiles.timezone,
+      bio: userProfiles.bio,
       isPremium: userProfiles.isPremium,
       premiumExpiresAt: userProfiles.premiumExpiresAt,
       createdAt: users.createdAt,

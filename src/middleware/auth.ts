@@ -20,6 +20,7 @@ export interface AuthUser {
   timezone: string | null;
   acceptedTermsAt: Date | null;
   handleUpdatedAt: Date | null;
+  bio: string | null;
 }
 
 export const HANDLE_COOLDOWN_DAYS = 30;
@@ -56,6 +57,7 @@ export async function loadAuthUser(userId: number): Promise<AuthUser | null> {
       timezone: userProfiles.timezone,
       acceptedTermsAt: userProfiles.acceptedTermsAt,
       handleUpdatedAt: userProfiles.handleUpdatedAt,
+      bio: userProfiles.bio,
     })
     .from(users)
     .leftJoin(userProfiles, eq(users.id, userProfiles.userId))

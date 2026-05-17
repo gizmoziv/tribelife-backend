@@ -165,6 +165,7 @@ router.post('/google', async (req: Request, res: Response): Promise<void> => {
         timezone: profile?.timezone ?? null,
         acceptedTermsAt: profile?.acceptedTermsAt ?? null,
         handleUpdatedAt: profile?.handleUpdatedAt ?? null,
+        bio: profile?.bio ?? null,
         referralSource,
         referrerHandle,
       },
@@ -331,6 +332,7 @@ router.post('/apple', async (req: Request, res: Response): Promise<void> => {
         timezone: profile?.timezone ?? null,
         acceptedTermsAt: profile?.acceptedTermsAt ?? null,
         handleUpdatedAt: profile?.handleUpdatedAt ?? null,
+        bio: profile?.bio ?? null,
         referralSource,
         referrerHandle,
       },
@@ -646,12 +648,36 @@ router.get('/me', requireAuth, async (req: AuthRequest, res: Response): Promise<
       timezone: req.user!.timezone,
       acceptedTermsAt: req.user!.acceptedTermsAt,
       handleUpdatedAt: req.user!.handleUpdatedAt,
+      bio: req.user!.bio ?? null,
       referralSource,
       referrerHandle,
     },
     needsOnboarding: needsOnboarding(req.user!),
     capabilities,
   });
+});
+
+// ── Update bio ─────────────────────────────────────────────────────────────
+const updateBioSchema = z.object({ bio: z.string().max(280).nullable() });
+
+router.put('/me/bio', requireAuth, async (req: AuthRequest, res: Response): Promise<void> => {
+  const parse = updateBioSchema.safeParse(req.body);
+  if (!parse.success) {
+    res.status(400).json({ error: parse.error.errors[0].message });
+    return;
+  }
+
+  const userId = req.user!.id;
+  const raw = parse.data.bio;
+  const next = raw === null ? null : raw.trim() === '' ? null : raw.trim();
+
+  try {
+    await db.update(userProfiles).set({ bio: next, updatedAt: new Date() }).where(eq(userProfiles.userId, userId));
+    res.json({ bio: next });
+  } catch (err) {
+    log.error({ err, userId }, 'bio update failed');
+    res.status(500).json({ error: 'Failed to update bio' });
+  }
 });
 
 // ── Get current capabilities (foreground refresh) ─────────────────────
