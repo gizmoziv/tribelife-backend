@@ -131,6 +131,7 @@ export const messages = pgTable('messages', {
 
   createdAt: timestamp('created_at').defaultNow(),
   deletedAt: timestamp('deleted_at'),
+  editedAt: timestamp('edited_at'),                         // null = never edited; set on first edit via PATCH /api/chat/messages/:id
   replyToId: integer('reply_to_id'),                        // SCHM-01: nullable self-ref FK (added via migration)
   mediaUrls: jsonb('media_urls').$type<string[]>(),         // SCHM-02: nullable JSON array of URLs
   translatedContent: text('translated_content'),
@@ -389,6 +390,23 @@ export const messagesRelations = relations(messages, ({ one, many }) => ({
   conversation: one(conversations, { fields: [messages.conversationId], references: [conversations.id] }),
   replyTo: one(messages, { fields: [messages.replyToId], references: [messages.id], relationName: 'replies' }),
   reactions: many(reactions),
+  edits: many(messageEdits),
+}));
+
+// ─────────────────────────────────────────────
+// MESSAGE EDITS — audit table (tamper-evident history)
+// ─────────────────────────────────────────────
+export const messageEdits = pgTable('message_edits', {
+  id: serial('id').primaryKey(),
+  messageId: integer('message_id').references(() => messages.id, { onDelete: 'cascade' }).notNull(),
+  content: text('content').notNull(),
+  editedAt: timestamp('edited_at').notNull(),
+}, (t) => ({
+  messageIdx: index('message_edits_message_idx').on(t.messageId),
+}));
+
+export const messageEditsRelations = relations(messageEdits, ({ one }) => ({
+  message: one(messages, { fields: [messageEdits.messageId], references: [messages.id] }),
 }));
 
 export const beaconsRelations = relations(beacons, ({ one, many }) => ({
