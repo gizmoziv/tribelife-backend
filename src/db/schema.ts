@@ -44,6 +44,7 @@ export const userProfiles = pgTable('user_profiles', {
   newsPushEnabled: boolean('news_push_enabled').notNull().default(false),
   acceptedTermsAt: timestamp('accepted_terms_at'),               // null = onboarding not complete
   handleUpdatedAt: timestamp('handle_updated_at'),               // null = handle never changed since onboarding (no cooldown active)
+  bio: text('bio'),
   createdAt: timestamp('created_at').defaultNow(),
   updatedAt: timestamp('updated_at').defaultNow(),
 }, (t) => ({
