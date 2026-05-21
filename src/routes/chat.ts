@@ -73,6 +73,15 @@ const searchQuerySchema = z.object({
   cursor: z.string().optional(),
 });
 
+// ── aroundMessageId query param schema (D-04) ─────────────────────────────────
+// Shared across the 3 message-list endpoints. When `aroundMessageId` is absent
+// the existing pagination path is used unchanged (regression-safe).
+const aroundMessageSchema = z.object({
+  aroundMessageId: z.coerce.number().int().positive().optional(),
+  before: z.coerce.number().int().min(0).max(50).optional().default(25),
+  after: z.coerce.number().int().min(0).max(50).optional().default(25),
+});
+
 const router = Router();
 router.use(requireAuth);
 
@@ -325,7 +334,18 @@ router.put('/conversations/mark-all-read', async (req: AuthRequest, res: Respons
 router.get('/conversations/:id/messages', async (req: AuthRequest, res: Response): Promise<void> => {
   const userId = req.user!.id;
   const convId = parseInt(req.params.id as string);
-  const cursor = req.query.before ? new Date(req.query.before as string) : undefined;
+
+  // Parse aroundMessageId params first — validation error is cheapest to return
+  const aroundParse = aroundMessageSchema.safeParse(req.query);
+  if (!aroundParse.success) {
+    res.status(400).json({ error: aroundParse.error.errors[0].message });
+    return;
+  }
+  const { aroundMessageId, before: beforeCount, after: afterCount } = aroundParse.data;
+
+  const cursor = req.query.before && !aroundMessageId
+    ? new Date(req.query.before as string)
+    : undefined;
   const limit = Math.min(parseInt(req.query.limit as string ?? '50'), 100);
 
   // Verify user is active participant (not left/kicked)
@@ -376,6 +396,99 @@ router.get('/conversations/:id/messages', async (req: AuthRequest, res: Response
       );
   }
 
+  // ── aroundMessageId path (D-04) ────────────────────────────────────────────
+  // Returns up to `before` older messages + target + up to `after` newer
+  // messages in chronological order. Authorization already ran above.
+  if (aroundMessageId !== undefined) {
+    // Fetch target row — must exist, belong to this conversation, and not be deleted
+    const [target] = await db
+      .select({
+        id: messages.id,
+        conversationId: messages.conversationId,
+        createdAt: messages.createdAt,
+        deletedAt: messages.deletedAt,
+      })
+      .from(messages)
+      .where(eq(messages.id, aroundMessageId))
+      .limit(1);
+
+    // T-14-03-I-grinding: mismatch or missing → 404 (no oracle for cross-chat existence)
+    if (
+      !target ||
+      target.conversationId !== convId ||
+      target.deletedAt !== null
+    ) {
+      res.status(404).json({ error: 'message not found' });
+      return;
+    }
+
+    const msgSelect = {
+      id: messages.id,
+      content: messages.content,
+      createdAt: messages.createdAt,
+      editedAt: messages.editedAt,
+      senderId: messages.senderId,
+      senderName: users.name,
+      senderHandle: userProfiles.handle,
+      senderAvatar: userProfiles.avatarUrl,
+      mentions: messages.mentions,
+      mediaUrls: messages.mediaUrls,
+      kind: messages.kind,
+    } as const;
+
+    const targetCreatedAt = target.createdAt as Date;
+    const targetId = target.id;
+
+    // Two parallel queries — (created_at, id) keyset for tie-breaking
+    const [olderRows, newerRows] = await Promise.all([
+      db
+        .select(msgSelect)
+        .from(messages)
+        .leftJoin(users, eq(users.id, messages.senderId))
+        .leftJoin(userProfiles, eq(userProfiles.userId, messages.senderId))
+        .where(
+          and(
+            eq(messages.conversationId, convId),
+            isNull(messages.deletedAt),
+            sql`(${messages.createdAt}, ${messages.id}) < (${targetCreatedAt.toISOString()}::timestamptz, ${targetId})`,
+          ),
+        )
+        .orderBy(desc(messages.createdAt), desc(messages.id))
+        .limit(beforeCount),
+      db
+        .select(msgSelect)
+        .from(messages)
+        .leftJoin(users, eq(users.id, messages.senderId))
+        .leftJoin(userProfiles, eq(userProfiles.userId, messages.senderId))
+        .where(
+          and(
+            eq(messages.conversationId, convId),
+            isNull(messages.deletedAt),
+            sql`(${messages.createdAt}, ${messages.id}) > (${targetCreatedAt.toISOString()}::timestamptz, ${targetId})`,
+          ),
+        )
+        .orderBy(messages.createdAt, messages.id)
+        .limit(afterCount),
+    ]);
+
+    // Fetch target row in full projection shape
+    const [targetFull] = await db
+      .select(msgSelect)
+      .from(messages)
+      .leftJoin(users, eq(users.id, messages.senderId))
+      .leftJoin(userProfiles, eq(userProfiles.userId, messages.senderId))
+      .where(eq(messages.id, aroundMessageId))
+      .limit(1);
+
+    // Reverse older (DESC→ASC) then concat: [...older, target, ...newer]
+    const window = [...olderRows.reverse(), targetFull, ...newerRows];
+    const withReactions = await attachReactions(window, userId);
+    const withReplies = await attachReplyTo(withReactions);
+    res.json({ messages: withReplies });
+    return;
+  }
+
+  // ── Existing pagination path (unchanged) ──────────────────────────────────
   const query = db
     .select({
       id: messages.id,
@@ -451,7 +564,18 @@ router.put('/conversations/:id/hide', async (req: AuthRequest, res: Response): P
 router.get('/room/:roomId/messages', async (req: AuthRequest, res: Response): Promise<void> => {
   const userId = req.user!.id;
   const roomId = req.params.roomId as string;
-  const cursor = req.query.before ? new Date(req.query.before as string) : undefined;
+
+  // Parse aroundMessageId params — validation error is cheapest to return
+  const aroundParse = aroundMessageSchema.safeParse(req.query);
+  if (!aroundParse.success) {
+    res.status(400).json({ error: aroundParse.error.errors[0].message });
+    return;
+  }
+  const { aroundMessageId, before: beforeCount, after: afterCount } = aroundParse.data;
+
+  const cursor = req.query.before && !aroundMessageId
+    ? new Date(req.query.before as string)
+    : undefined;
   const limit = Math.min(parseInt(req.query.limit as string ?? '50'), 100);
 
   // Get blocked user IDs to exclude their messages
@@ -461,6 +585,110 @@ router.get('/room/:roomId/messages', async (req: AuthRequest, res: Response): Pr
     .where(eq(blockedUsers.userId, userId));
   const blockedIds = blockedRows.map((r) => r.blockedUserId);
 
+  // ── aroundMessageId path (D-04) ────────────────────────────────────────────
+  if (aroundMessageId !== undefined) {
+    // Fetch target row — must exist, belong to this roomId, and not be deleted
+    const [target] = await db
+      .select({
+        id: messages.id,
+        roomId: messages.roomId,
+        createdAt: messages.createdAt,
+        deletedAt: messages.deletedAt,
+      })
+      .from(messages)
+      .where(eq(messages.id, aroundMessageId))
+      .limit(1);
+
+    // T-14-03-I-grinding: mismatch or missing → 404
+    if (
+      !target ||
+      target.roomId !== roomId ||
+      target.deletedAt !== null
+    ) {
+      res.status(404).json({ error: 'message not found' });
+      return;
+    }
+
+    const msgSelect = {
+      id: messages.id,
+      content: messages.content,
+      createdAt: messages.createdAt,
+      editedAt: messages.editedAt,
+      senderId: messages.senderId,
+      senderName: users.name,
+      senderHandle: userProfiles.handle,
+      senderAvatar: userProfiles.avatarUrl,
+      mentions: messages.mentions,
+      mediaUrls: messages.mediaUrls,
+      kind: messages.kind,
+    } as const;
+
+    const targetCreatedAt = target.createdAt as Date;
+    const targetId = target.id;
+
+    // Build blocked-sender exclusion for before/after queries
+    const blockedClauseOlder = blockedIds.length > 0
+      ? and(
+          eq(messages.roomId, roomId),
+          isNull(messages.deletedAt),
+          sql`(${messages.createdAt}, ${messages.id}) < (${targetCreatedAt.toISOString()}::timestamptz, ${targetId})`,
+          notInArray(messages.senderId, blockedIds),
+        )
+      : and(
+          eq(messages.roomId, roomId),
+          isNull(messages.deletedAt),
+          sql`(${messages.createdAt}, ${messages.id}) < (${targetCreatedAt.toISOString()}::timestamptz, ${targetId})`,
+        );
+
+    const blockedClauseNewer = blockedIds.length > 0
+      ? and(
+          eq(messages.roomId, roomId),
+          isNull(messages.deletedAt),
+          sql`(${messages.createdAt}, ${messages.id}) > (${targetCreatedAt.toISOString()}::timestamptz, ${targetId})`,
+          notInArray(messages.senderId, blockedIds),
+        )
+      : and(
+          eq(messages.roomId, roomId),
+          isNull(messages.deletedAt),
+          sql`(${messages.createdAt}, ${messages.id}) > (${targetCreatedAt.toISOString()}::timestamptz, ${targetId})`,
+        );
+
+    const [olderRows, newerRows] = await Promise.all([
+      db
+        .select(msgSelect)
+        .from(messages)
+        .leftJoin(users, eq(users.id, messages.senderId))
+        .leftJoin(userProfiles, eq(userProfiles.userId, messages.senderId))
+        .where(blockedClauseOlder)
+        .orderBy(desc(messages.createdAt), desc(messages.id))
+        .limit(beforeCount),
+      db
+        .select(msgSelect)
+        .from(messages)
+        .leftJoin(users, eq(users.id, messages.senderId))
+        .leftJoin(userProfiles, eq(userProfiles.userId, messages.senderId))
+        .where(blockedClauseNewer)
+        .orderBy(messages.createdAt, messages.id)
+        .limit(afterCount),
+    ]);
+
+    // Fetch target in full projection shape (blocked filter does not apply to target itself)
+    const [targetFull] = await db
+      .select(msgSelect)
+      .from(messages)
+      .leftJoin(users, eq(users.id, messages.senderId))
+      .leftJoin(userProfiles, eq(userProfiles.userId, messages.senderId))
+      .where(eq(messages.id, aroundMessageId))
+      .limit(1);
+
+    const window = [...olderRows.reverse(), targetFull, ...newerRows];
+    const withReactions = await attachReactions(window, userId);
+    const withReplies = await attachReplyTo(withReactions);
+    res.json({ messages: withReplies });
+    return;
+  }
+
+  // ── Existing pagination path (unchanged) ──────────────────────────────────
   const baseWhere = cursor
     ? and(eq(messages.roomId, roomId), lt(messages.createdAt, cursor))
     : eq(messages.roomId, roomId);
