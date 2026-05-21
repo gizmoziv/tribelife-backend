@@ -50,6 +50,10 @@ router.get('/rooms', async (req: AuthRequest, res: Response): Promise<void> => {
   const io = req.app.get('io') as Server;
   const userId = req.user!.id;
 
+  // SRCH-03 (D-11): optional ?q= filter — any non-empty string accepted, no 3-char min.
+  // When absent/empty, behavior is byte-identical to the pre-D-11 response.
+  const q = (req.query.q ?? '').toString().trim();
+
   // Get user's timezone for auto-suggestion
   const [profile] = await db
     .select({ timezone: userProfiles.timezone })
@@ -66,8 +70,14 @@ router.get('/rooms', async (req: AuthRequest, res: Response): Promise<void> => {
     .where(eq(globeRoomMemberships.userId, userId));
   const memberSlugs = new Set(memberships.map((m) => m.roomSlug));
 
+  // SRCH-03: in-memory filter on GLOBE_ROOMS config (no globe_rooms table — RESEARCH delta #1).
+  // O(8) — negligible. Empty q → matchingGlobeRooms === GLOBE_ROOMS (no-op filter).
+  const matchingGlobeRooms = q
+    ? GLOBE_ROOMS.filter((r) => r.displayName.toLowerCase().includes(q.toLowerCase()))
+    : GLOBE_ROOMS;
+
   const rooms = await Promise.all(
-    GLOBE_ROOMS.map(async (room) => {
+    matchingGlobeRooms.map(async (room) => {
       const realCount = io.sockets.adapter.rooms.get(room.roomId)?.size ?? 0;
       const participantCount =
         realCount > 0 ? realCount : Math.floor(Math.random() * 10) + 1;
@@ -123,6 +133,8 @@ router.get('/rooms', async (req: AuthRequest, res: Response): Promise<void> => {
   // Phase 12 D-04 + D-08: public-group UNION — appended after globe rooms
   // (ordered by lastMessageAt DESC per D-08). Filters: isPublic=true,
   // archivedAt IS NULL. LIMIT 50 safety ceiling.
+  // SRCH-03: when q is non-empty, add group_name ILIKE filter that lights up
+  // conversations_group_name_trgm_idx from Plan 01.
   const publicGroupsRaw = await db
     .select({
       conversationId: conversations.id,
@@ -140,6 +152,7 @@ router.get('/rooms', async (req: AuthRequest, res: Response): Promise<void> => {
       eq(conversations.isGroup, true),
       eq(conversations.isPublic, true),
       isNull(conversations.archivedAt),
+      ...(q ? [sql`group_name ILIKE ${'%' + q + '%'}`] : []),
     ))
     .orderBy(desc(conversations.lastMessageAt))
     .limit(50);
@@ -193,7 +206,13 @@ router.get('/rooms', async (req: AuthRequest, res: Response): Promise<void> => {
     }),
   );
 
-  res.json({ rooms: [...rooms, ...publicGroupRows] });
+  const responseRows = [...rooms, ...publicGroupRows];
+  // SRCH-03: log every ?q= request (q is safe to log — public-discovery surface,
+  // no PII in globe-room or group names per security_threat_model T-14-04-I-q).
+  if (q) {
+    console.info('[globe] q=' + JSON.stringify(q) + ' results=' + responseRows.length);
+  }
+  res.json({ rooms: responseRows });
 });
 
 // ── Get paginated message history for a Globe room ──────────────────────────
