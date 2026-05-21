@@ -3,7 +3,7 @@ import { Server as HttpServer } from 'http';
 import jwt from 'jsonwebtoken';
 import { eq } from 'drizzle-orm';
 import { db } from '../db';
-import { userProfiles } from '../db/schema';
+import { userProfiles, globeRoomMemberships } from '../db/schema';
 import logger from '../lib/logger';
 import { createClient } from 'redis';
 import { createAdapter } from '@socket.io/redis-adapter';
@@ -215,12 +215,36 @@ export async function createSocketServer(
     }
   });
 
-  io.on('connection', (socket: Socket) => {
+  io.on('connection', async (socket: Socket) => {
     const userId: number = socket.data.userId;
     const handle: string = socket.data.handle;
 
     socket.join(`user:${userId}`); // personal room for targeted events
     socket.join('globe-signals'); // fan-out room for globe unread signals — every connected user joins so they can increment tab badges for rooms they haven't explicitly entered
+
+    // LIVE-01 (D-10): auto-subscribe to all globe rooms the user is a member of.
+    // Sits AFTER globe-signals join and BEFORE registerXHandlers so that the
+    // socket is subscribed before any handler emits into those rooms.
+    // socket.join is idempotent (socket.io 4.8.1) — re-joining town-square is a no-op.
+    try {
+      const regionMemberships = await db
+        .select({ roomSlug: globeRoomMemberships.roomSlug })
+        .from(globeRoomMemberships)
+        .where(eq(globeRoomMemberships.userId, userId));
+      for (const m of regionMemberships) {
+        socket.join('globe:' + m.roomSlug);
+      }
+      log.info(
+        { userId, roomCount: regionMemberships.length },
+        '[live] socket joined regional rooms',
+      );
+    } catch (err) {
+      log.error(
+        { userId, err: String(err) },
+        '[live] failed to auto-join regional rooms',
+      );
+      // degraded — socket connection continues normally without auto-subscribe
+    }
 
     log.info(
       { userId, handle, timezone: socket.data.timezone },
