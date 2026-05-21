@@ -1,6 +1,7 @@
 import { Router, Response } from 'express';
 import { eq, and, inArray, desc, lt, sql, notInArray, isNull, ne, gt, or } from 'drizzle-orm';
 import { z } from 'zod';
+import rateLimit from 'express-rate-limit';
 import { db } from '../db';
 import {
   conversations,
@@ -19,8 +20,58 @@ import { translateMessage } from '../services/translation';
 import { moderateMessage } from '../services/claude';
 import type { Server } from 'socket.io';
 import logger from '../lib/logger';
+import type { SearchResult, SearchResponse } from '../types/searchResult';
+import { GLOBE_ROOMS } from '../config/globeRooms';
 
 const log = logger.child({ module: 'chat' });
+
+// ── Cursor helpers (D-02: opaque base64-encoded JSON { createdAt, id }) ──────
+
+/** Encode a pagination cursor from the last row's createdAt + id. */
+function encodeCursor(createdAt: string, id: number): string {
+  return Buffer.from(JSON.stringify({ createdAt, id })).toString('base64');
+}
+
+/**
+ * Decode a pagination cursor. Returns null on any parse failure or shape
+ * mismatch — callers must respond 400 `{ error: 'invalid cursor' }`.
+ */
+function decodeCursor(s: string): { createdAt: string; id: number } | null {
+  try {
+    const raw = JSON.parse(Buffer.from(s, 'base64').toString('utf8')) as unknown;
+    if (
+      typeof raw !== 'object' ||
+      raw === null ||
+      typeof (raw as Record<string, unknown>).createdAt !== 'string' ||
+      typeof (raw as Record<string, unknown>).id !== 'number'
+    ) {
+      return null;
+    }
+    const { createdAt, id } = raw as { createdAt: string; id: number };
+    return { createdAt, id };
+  } catch {
+    return null;
+  }
+}
+
+// ── Per-route rate limiter for /search (D-08: 30 req/min per user) ────────────
+// Keyed on req.user.id so shared-IP users (e.g. behind NAT) are not affected
+// by each other. requireAuth is at router level (line below) so req.user is
+// populated before keyGenerator runs.
+const searchLimiter = rateLimit({
+  windowMs: 60_000,
+  max: 30,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  keyGenerator: (req) => String((req as AuthRequest).user?.id ?? req.ip),
+  handler: (_req, res) => res.status(429).json({ error: 'too many search requests' }),
+});
+
+// ── Search query param schema (D-03) ─────────────────────────────────────────
+const searchQuerySchema = z.object({
+  q: z.string(),
+  cursor: z.string().optional(),
+});
 
 const router = Router();
 router.use(requireAuth);
@@ -631,6 +682,259 @@ router.patch('/messages/:id', async (req: AuthRequest, res: Response): Promise<v
   } catch (err) {
     console.error('[chat/edit]', err);
     res.status(500).json({ error: 'Edit failed' });
+  }
+});
+
+// ── Message search: GET /api/chat/search?q=<query>&cursor=<opaque> ──────────
+// SRCH-01: cross-source authorization via UNION ALL CTE across DMs, joined
+// groups, joined Globe rooms, and Local Chat (timezone rooms). Requires
+// pg_trgm GIN index on messages.content (Plan 14-01).
+//
+// Security: raw q is NEVER logged (PII gate T-14-02-I-pii). All $params are
+// bound via Drizzle sql`` template (parameterized — T-14-02-T-q). Blocked
+// users are excluded inline (T-14-02-I-block). Authorization is join-based,
+// not pre-computed (T-14-02-I-auth). Rate-limited 30/min per user (T-14-02-D-dos).
+router.get('/search', searchLimiter, async (req: AuthRequest, res: Response): Promise<void> => {
+  const startedAt = Date.now();
+  const userId = req.user!.id;
+
+  // 1. Validate query params
+  const parse = searchQuerySchema.safeParse(req.query);
+  if (!parse.success) {
+    res.status(400).json({ error: parse.error.errors[0].message });
+    return;
+  }
+
+  // 2. Trim + 3-char gate (D-03)
+  const q = parse.data.q.trim();
+  if (q.length < 3) {
+    res.status(400).json({ error: 'query too short' });
+    return;
+  }
+
+  // 3. Cursor decode (D-02)
+  let cursorData: { createdAt: string; id: number } | null = null;
+  if (parse.data.cursor) {
+    cursorData = decodeCursor(parse.data.cursor);
+    if (cursorData === null) {
+      res.status(400).json({ error: 'invalid cursor' });
+      return;
+    }
+  }
+
+  try {
+    // 4. Execute UNION ALL CTE via raw sql template (D-07, RESEARCH Q12).
+    //    RESEARCH delta #8: room_id uses prefixes 'globe:slug' and 'timezone:tz',
+    //    so joins must prepend the prefix when matching against the memberships tables.
+    //
+    //    The outer SELECT joins users + user_profiles for senderHandle, and
+    //    conversations for chatTitle resolution on dm/group rows.
+    //    A correlated subquery resolves the "other participant" handle for DM rows.
+    const ilikePat = `%${q}%`;
+
+    const rows = await db.execute(sql`
+      WITH authorized_messages AS (
+        -- DMs and groups: messages where the requester is a current participant
+        SELECT
+          m.id,
+          m.content,
+          m.created_at,
+          m.sender_id,
+          m.conversation_id,
+          m.room_id,
+          'dm_or_group' AS auth_source
+        FROM messages m
+        JOIN conversation_participants cp
+          ON cp.conversation_id = m.conversation_id
+        WHERE cp.user_id = ${userId}
+          AND cp.left_at IS NULL
+          AND m.deleted_at IS NULL
+
+        UNION ALL
+
+        -- Globe rooms: messages in rooms the requester has a membership row for
+        -- RESEARCH delta #8: room_id uses 'globe:' prefix
+        SELECT
+          m.id,
+          m.content,
+          m.created_at,
+          m.sender_id,
+          NULL::integer AS conversation_id,
+          m.room_id,
+          'globe_room' AS auth_source
+        FROM messages m
+        JOIN globe_room_memberships grm
+          ON ('globe:' || grm.room_slug) = m.room_id
+        WHERE grm.user_id = ${userId}
+          AND m.deleted_at IS NULL
+
+        UNION ALL
+
+        -- Local Chat: messages in the requester's own timezone room
+        -- RESEARCH delta #8: room_id uses 'timezone:' prefix
+        SELECT
+          m.id,
+          m.content,
+          m.created_at,
+          m.sender_id,
+          NULL::integer AS conversation_id,
+          m.room_id,
+          'local_chat' AS auth_source
+        FROM messages m
+        JOIN user_profiles up
+          ON ('timezone:' || up.timezone) = m.room_id
+        WHERE up.user_id = ${userId}
+          AND m.deleted_at IS NULL
+      )
+      SELECT
+        am.id,
+        am.content,
+        am.created_at,
+        am.sender_id,
+        am.conversation_id,
+        am.room_id,
+        am.auth_source,
+        sup.handle AS sender_handle,
+        c.is_group,
+        c.group_name,
+        (
+          SELECT up2.handle
+          FROM conversation_participants cp2
+          JOIN user_profiles up2 ON up2.user_id = cp2.user_id
+          WHERE cp2.conversation_id = am.conversation_id
+            AND cp2.user_id != ${userId}
+          LIMIT 1
+        ) AS other_handle
+      FROM authorized_messages am
+      JOIN users u ON u.id = am.sender_id
+      LEFT JOIN user_profiles sup ON sup.user_id = u.id
+      LEFT JOIN conversations c ON c.id = am.conversation_id
+      WHERE am.content ILIKE ${ilikePat}
+        AND am.sender_id NOT IN (
+          SELECT blocked_user_id FROM blocked_users WHERE user_id = ${userId}
+        )
+        ${cursorData
+          ? sql`AND (am.created_at, am.id) < (${cursorData.createdAt}::timestamptz, ${cursorData.id})`
+          : sql``
+        }
+      ORDER BY am.created_at DESC, am.id DESC
+      LIMIT 25
+    `);
+
+    // 5. Map raw rows → SearchResult[] with server-resolved chatTitle (D-06)
+    const results: SearchResult[] = (rows.rows as Array<{
+      id: number;
+      content: string;
+      created_at: Date;
+      sender_id: number;
+      conversation_id: number | null;
+      room_id: string | null;
+      auth_source: string;
+      sender_handle: string | null;
+      is_group: boolean | null;
+      group_name: string | null;
+      other_handle: string | null;
+    }>).map((row) => {
+      const senderHandle = row.sender_handle ?? 'unknown';
+      const createdAt = row.created_at instanceof Date
+        ? row.created_at.toISOString()
+        : String(row.created_at);
+
+      // Determine source from row data
+      if (row.conversation_id != null) {
+        const isGroup = row.is_group === true;
+        if (isGroup) {
+          // Group chat
+          const chatTitle = row.group_name ?? 'Group';
+          return {
+            source: 'group' as const,
+            messageId: row.id,
+            content: row.content,
+            createdAt,
+            senderHandle,
+            chatTitle,
+            entityId: row.conversation_id,
+            conversationId: row.conversation_id,
+          };
+        } else {
+          // 1-on-1 DM — chatTitle = other participant's @handle
+          const otherHandle = row.other_handle ?? 'unknown';
+          const chatTitle = `@${otherHandle}`;
+          return {
+            source: 'dm' as const,
+            messageId: row.id,
+            content: row.content,
+            createdAt,
+            senderHandle,
+            chatTitle,
+            entityId: row.conversation_id,
+            conversationId: row.conversation_id,
+          };
+        }
+      } else if (row.room_id?.startsWith('globe:')) {
+        // Globe room — chatTitle = #DisplayName from GLOBE_ROOMS config
+        const slug = row.room_id.replace(/^globe:/, '');
+        const displayName = GLOBE_ROOMS.find((r) => r.slug === slug)?.displayName ?? slug;
+        const chatTitle = `#${displayName}`;
+        return {
+          source: 'globe_room' as const,
+          messageId: row.id,
+          content: row.content,
+          createdAt,
+          senderHandle,
+          chatTitle,
+          entityId: slug,
+          roomSlug: slug,
+        };
+      } else {
+        // Local Chat (timezone room) — chatTitle = "Local · {city}"
+        const iana = row.room_id?.replace(/^timezone:/, '') ?? '';
+        // Extract city: last segment after the final '/' in the IANA string,
+        // replace underscores with spaces (e.g. "America/New_York" → "New York")
+        const city = iana.includes('/')
+          ? iana.split('/').pop()!.replace(/_/g, ' ')
+          : iana.replace(/_/g, ' ');
+        const chatTitle = `Local · ${city}`;
+        return {
+          source: 'local_chat' as const,
+          messageId: row.id,
+          content: row.content,
+          createdAt,
+          senderHandle,
+          chatTitle,
+          entityId: iana,
+          timezoneIana: iana,
+        };
+      }
+    });
+
+    // 6. Compute nextCursor: encode from last row if exactly 25 returned
+    const lastRow = rows.rows[rows.rows.length - 1] as {
+      id: number;
+      created_at: Date;
+    } | undefined;
+    const nextCursor: string | null =
+      rows.rows.length === 25 && lastRow
+        ? encodeCursor(
+            lastRow.created_at instanceof Date
+              ? lastRow.created_at.toISOString()
+              : String(lastRow.created_at),
+            lastRow.id,
+          )
+        : null;
+
+    // 7. Respond
+    const response: SearchResponse = { results, nextCursor };
+    res.json(response);
+
+    // 8. Log per-request — NO raw q content (PII gate T-14-02-I-pii)
+    log.info(
+      { userId, qLength: q.length, resultsCount: results.length, durationMs: Date.now() - startedAt },
+      '[search]',
+    );
+  } catch (err) {
+    log.error({ err, userId }, '[search] error');
+    res.status(500).json({ error: 'search failed' });
   }
 });
 
