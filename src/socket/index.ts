@@ -232,7 +232,13 @@ export async function createSocketServer(
         .from(globeRoomMemberships)
         .where(eq(globeRoomMemberships.userId, userId));
       for (const m of regionMemberships) {
-        socket.join('globe:' + m.roomSlug);
+        // Phase 14 Bug 3 fix: auto-join the FEED room ('globe-feed:<slug>'),
+        // not the presence room ('globe:<slug>'). The presence room is for
+        // active-viewer participant counting + typing indicators and is
+        // joined/left as the user navigates in/out of the globe room screen.
+        // The feed room is the broadcast subscription that keeps the Chats
+        // list lastMessage updating even after the user leaves the screen.
+        socket.join('globe-feed:' + m.roomSlug);
       }
       log.info(
         { userId, roomCount: regionMemberships.length },

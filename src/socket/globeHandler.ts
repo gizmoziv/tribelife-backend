@@ -23,18 +23,30 @@ export function registerGlobeHandlers(io: Server, socket: Socket): void {
   const avatarUrl: string | null = socket.data.avatarUrl;
 
   // ── Join a Globe room ───────────────────────────────────────────────────
+  // Phase 14 Bug 3 fix: two-room model.
+  //   - 'globe:<slug>'      = active-viewer PRESENCE (participant counts,
+  //                           typing indicators). Joined here, left on exit.
+  //   - 'globe-feed:<slug>' = broadcast FEED (drives globe:message arrival
+  //                           and therefore Chats-list lastMessage updates).
+  //                           Auto-joined on socket connect for every
+  //                           globe_room_memberships row. Survives globe:leave.
   socket.on('globe:join', (data: { slug: string }) => {
     if (!isValidGlobeRoom(data.slug)) return;
 
-    // Leave any existing globe rooms first
+    // Leave previous PRESENCE rooms only — feed subscriptions persist so the
+    // user keeps receiving Chats-list updates for every joined globe room.
     for (const room of socket.rooms) {
-      if (room.startsWith('globe:')) {
+      if (room.startsWith('globe:') && !room.startsWith('globe-feed:')) {
         socket.leave(room);
       }
     }
 
     const roomId = 'globe:' + data.slug;
     socket.join(roomId);
+    // Also subscribe to the feed for this room. Idempotent for member rooms
+    // (already auto-joined on connect); required for non-member previewers
+    // so they receive in-room messages while the screen is open.
+    socket.join('globe-feed:' + data.slug);
 
     const count = io.sockets.adapter.rooms.get(roomId)?.size ?? 0;
     io.to(roomId).emit('globe:participants', { slug: data.slug, count });
@@ -44,6 +56,12 @@ export function registerGlobeHandlers(io: Server, socket: Socket): void {
   socket.on('globe:leave', (data: { slug: string }) => {
     const roomId = 'globe:' + data.slug;
     socket.leave(roomId);
+    // Deliberately DO NOT leave 'globe-feed:<slug>' — the user stays
+    // subscribed so their Chats list keeps updating for this room even after
+    // they navigate away from the screen. Bug 3 root cause: pre-fix the
+    // leave loop in globe:join (and this handler) removed the user from the
+    // only socket room delivering globe:message, so Town Square (and any
+    // other regional globe room) stopped live-updating after one visit.
 
     const count = io.sockets.adapter.rooms.get(roomId)?.size ?? 0;
     io.to(roomId).emit('globe:participants', { slug: data.slug, count });
@@ -142,8 +160,12 @@ export function registerGlobeHandlers(io: Server, socket: Socket): void {
       }
     }
 
-    // Broadcast to room
-    io.to(roomId).emit('globe:message', {
+    // Broadcast to room. Phase 14 Bug 3 fix: emit to the FEED room so every
+    // subscriber (active viewers + auto-joined members on the Chats tab) gets
+    // the message. Active viewers also belong to the feed room because
+    // globe:join subscribes them to both, so they still receive in-room
+    // messages and the count of recipients is correct.
+    io.to('globe-feed:' + data.slug).emit('globe:message', {
       id: msg.id,
       content,
       senderId: userId,
