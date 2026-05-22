@@ -17,6 +17,11 @@ export interface ChatNotificationCommon {
   title: string;
   body: string;
   senderHandle: string;
+  // Phase 14: optional message id so notification taps can deep-link to the
+  // exact triggering message via `aroundMessageId` (D-04). Optional because
+  // older payloads predate Phase 14 and the adapter falls back to a
+  // chat-level tap when this is absent.
+  messageId?: number;
 }
 
 export type ChatNotificationPayload =

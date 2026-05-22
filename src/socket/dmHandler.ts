@@ -255,6 +255,7 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
           conversationId: data.conversationId,
           groupName: groupLabel,
           notificationId: notifIdByUser.get(p.userId)!,
+          messageId: msg.id, // Phase 14 D-04: deep-link to the new message
           title: titleFor(p.userId),
           body: notifBody,
           senderHandle: handle,
@@ -293,6 +294,7 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
           conversationId: data.conversationId,
           groupName: groupLabel,
           notificationId: notifIdByUser.get(r.userId)!,
+          messageId: msg.id, // Phase 14 D-04
           senderHandle: handle,
         },
         sound: 'default' as const,
@@ -325,6 +327,7 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
           entityId: data.conversationId,
           conversationId: data.conversationId,
           notificationId: inserted.id,
+          messageId: msg.id, // Phase 14 D-04: deep-link to the new message
           title: `Message from @${handle}`,
           body: content.slice(0, 100),
           senderHandle: handle,
@@ -347,6 +350,7 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
               entityId: data.conversationId,
               conversationId: data.conversationId,
               notificationId: inserted.id,
+              messageId: msg.id, // Phase 14 D-04
               senderHandle: handle,
             },
             p.userId,

@@ -212,6 +212,7 @@ export function registerGlobeHandlers(io: Server, socket: Socket): void {
         entityId: data.slug,
         roomSlug: data.slug,
         notificationId: inserted.id,
+        messageId: msg.id, // Phase 14 D-04: deep-link to the mentioning message
         title,
         body: content.slice(0, 100),
         senderHandle: handle,
@@ -234,6 +235,7 @@ export function registerGlobeHandlers(io: Server, socket: Socket): void {
             entityId: data.slug,
             roomSlug: data.slug,
             notificationId: inserted.id,
+            messageId: msg.id, // Phase 14 D-04
             senderHandle: handle,
           },
           notifyId,

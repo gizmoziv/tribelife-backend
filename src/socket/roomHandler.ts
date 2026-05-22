@@ -150,6 +150,7 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
         entityId: timezone,
         timezoneIana: timezone,
         notificationId: inserted.id,
+        messageId: msg.id, // Phase 14 D-04
         title,
         body: content.slice(0, 100),
         senderHandle: handle,
@@ -173,6 +174,7 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
             entityId: timezone,
             timezoneIana: timezone,
             notificationId: inserted.id,
+            messageId: msg.id, // Phase 14 D-04
             senderHandle: handle,
           },
           notifyId,
@@ -284,6 +286,7 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
             entityId: timezone,
             timezoneIana: timezone,
             notificationId: notifId,
+            messageId: msg.id, // Phase 14 D-04
             title: `@${handle}`,
             body: content.slice(0, 100),
             senderHandle: handle,
@@ -301,6 +304,7 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
             entityId: timezone,
             timezoneIana: timezone,
             notificationId: notifIdByUser.get(c.userId)!,
+            messageId: msg.id, // Phase 14 D-04
             senderHandle: handle,
           },
           sound: 'default' as const,
