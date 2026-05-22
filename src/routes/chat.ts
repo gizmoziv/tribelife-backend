@@ -944,9 +944,21 @@ router.get('/search', searchLimiter, async (req: AuthRequest, res: Response): Pr
     return;
   }
 
-  // 2. Trim + 3-char gate (D-03)
+  // 2. Trim + 3-char gate (D-03). Tokenize on whitespace and use each term
+  // ≥3 chars as an AND-ed ILIKE clause so "hello world" matches content
+  // containing "Hello Great World" (token-order-independent substring match).
+  // Each ILIKE still lights up the messages_content_trgm_idx GIN index from
+  // Plan 14-01 because trigrams index 3-char windows of `content`.
   const q = parse.data.q.trim();
   if (q.length < 3) {
+    res.status(400).json({ error: 'query too short' });
+    return;
+  }
+  const terms = q.split(/\s+/).filter((t) => t.length >= 3);
+  if (terms.length === 0) {
+    // e.g. "ab cd" — total length passes the 3-char gate but no individual
+    // term is long enough to use the trigram index. Treat as too-short rather
+    // than slow-falling-through to seq scan.
     res.status(400).json({ error: 'query too short' });
     return;
   }
@@ -969,7 +981,13 @@ router.get('/search', searchLimiter, async (req: AuthRequest, res: Response): Pr
     //    The outer SELECT joins users + user_profiles for senderHandle, and
     //    conversations for chatTitle resolution on dm/group rows.
     //    A correlated subquery resolves the "other participant" handle for DM rows.
-    const ilikePat = `%${q}%`;
+    //
+    //    Multi-term search: build "am.content ILIKE %t1% AND am.content ILIKE %t2% AND ..."
+    //    using sql.join so each term is a parameterized bind (no injection risk).
+    const ilikeClauses = sql.join(
+      terms.map((t) => sql`am.content ILIKE ${'%' + t + '%'}`),
+      sql` AND `,
+    );
 
     const rows = await db.execute(sql`
       WITH authorized_messages AS (
@@ -1048,7 +1066,7 @@ router.get('/search', searchLimiter, async (req: AuthRequest, res: Response): Pr
       JOIN users u ON u.id = am.sender_id
       LEFT JOIN user_profiles sup ON sup.user_id = u.id
       LEFT JOIN conversations c ON c.id = am.conversation_id
-      WHERE am.content ILIKE ${ilikePat}
+      WHERE ${ilikeClauses}
         AND am.sender_id NOT IN (
           SELECT blocked_user_id FROM blocked_users WHERE user_id = ${userId}
         )
