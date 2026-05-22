@@ -287,17 +287,21 @@ router.get(
       const targetCreatedAt = target.createdAt as Date;
       const targetId = target.id;
 
-      // Build blocked-sender exclusion for before/after queries
+      // Build blocked-sender exclusion for before/after queries.
+      // ne(id, targetId) guards against the target slipping into either half due
+      // to JS-ms-vs-pg-µs precision mismatch in the keyset boundary value.
       const blockedClauseOlder = blockedIds.length > 0
         ? and(
             eq(messages.roomId, roomId),
             isNull(messages.deletedAt),
+            ne(messages.id, targetId),
             sql`(${messages.createdAt}, ${messages.id}) < (${targetCreatedAt.toISOString()}::timestamptz, ${targetId})`,
             notInArray(messages.senderId, blockedIds),
           )
         : and(
             eq(messages.roomId, roomId),
             isNull(messages.deletedAt),
+            ne(messages.id, targetId),
             sql`(${messages.createdAt}, ${messages.id}) < (${targetCreatedAt.toISOString()}::timestamptz, ${targetId})`,
           );
 
@@ -305,12 +309,14 @@ router.get(
         ? and(
             eq(messages.roomId, roomId),
             isNull(messages.deletedAt),
+            ne(messages.id, targetId),
             sql`(${messages.createdAt}, ${messages.id}) > (${targetCreatedAt.toISOString()}::timestamptz, ${targetId})`,
             notInArray(messages.senderId, blockedIds),
           )
         : and(
             eq(messages.roomId, roomId),
             isNull(messages.deletedAt),
+            ne(messages.id, targetId),
             sql`(${messages.createdAt}, ${messages.id}) > (${targetCreatedAt.toISOString()}::timestamptz, ${targetId})`,
           );
 

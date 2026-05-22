@@ -439,7 +439,10 @@ router.get('/conversations/:id/messages', async (req: AuthRequest, res: Response
     const targetCreatedAt = target.createdAt as Date;
     const targetId = target.id;
 
-    // Two parallel queries — (created_at, id) keyset for tie-breaking
+    // Two parallel queries — (created_at, id) keyset for tie-breaking.
+    // JS Date.toISOString() truncates to ms but Postgres timestamptz stores µs;
+    // the explicit ne(id) guards against the target row slipping into either
+    // half due to the precision mismatch (target is concat'd separately below).
     const [olderRows, newerRows] = await Promise.all([
       db
         .select(msgSelect)
@@ -450,6 +453,7 @@ router.get('/conversations/:id/messages', async (req: AuthRequest, res: Response
           and(
             eq(messages.conversationId, convId),
             isNull(messages.deletedAt),
+            ne(messages.id, targetId),
             sql`(${messages.createdAt}, ${messages.id}) < (${targetCreatedAt.toISOString()}::timestamptz, ${targetId})`,
           ),
         )
@@ -464,6 +468,7 @@ router.get('/conversations/:id/messages', async (req: AuthRequest, res: Response
           and(
             eq(messages.conversationId, convId),
             isNull(messages.deletedAt),
+            ne(messages.id, targetId),
             sql`(${messages.createdAt}, ${messages.id}) > (${targetCreatedAt.toISOString()}::timestamptz, ${targetId})`,
           ),
         )
@@ -626,17 +631,21 @@ router.get('/room/:roomId/messages', async (req: AuthRequest, res: Response): Pr
     const targetCreatedAt = target.createdAt as Date;
     const targetId = target.id;
 
-    // Build blocked-sender exclusion for before/after queries
+    // Build blocked-sender exclusion for before/after queries.
+    // ne(id, targetId) guards against the target slipping into either half due
+    // to JS-ms-vs-pg-µs precision mismatch in the keyset boundary value.
     const blockedClauseOlder = blockedIds.length > 0
       ? and(
           eq(messages.roomId, roomId),
           isNull(messages.deletedAt),
+          ne(messages.id, targetId),
           sql`(${messages.createdAt}, ${messages.id}) < (${targetCreatedAt.toISOString()}::timestamptz, ${targetId})`,
           notInArray(messages.senderId, blockedIds),
         )
       : and(
           eq(messages.roomId, roomId),
           isNull(messages.deletedAt),
+          ne(messages.id, targetId),
           sql`(${messages.createdAt}, ${messages.id}) < (${targetCreatedAt.toISOString()}::timestamptz, ${targetId})`,
         );
 
@@ -644,12 +653,14 @@ router.get('/room/:roomId/messages', async (req: AuthRequest, res: Response): Pr
       ? and(
           eq(messages.roomId, roomId),
           isNull(messages.deletedAt),
+          ne(messages.id, targetId),
           sql`(${messages.createdAt}, ${messages.id}) > (${targetCreatedAt.toISOString()}::timestamptz, ${targetId})`,
           notInArray(messages.senderId, blockedIds),
         )
       : and(
           eq(messages.roomId, roomId),
           isNull(messages.deletedAt),
+          ne(messages.id, targetId),
           sql`(${messages.createdAt}, ${messages.id}) > (${targetCreatedAt.toISOString()}::timestamptz, ${targetId})`,
         );
 
