@@ -7,12 +7,13 @@ import { createRemoteJWKSet, jwtVerify } from 'jose';
 import { eq, count } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '../db';
-import { users, userProfiles, referrals, messages } from '../db/schema';
+import { users, userProfiles, referrals, messages, globeRoomMemberships } from '../db/schema';
 import { signToken, requireAuth, needsOnboarding, HANDLE_COOLDOWN_DAYS, HANDLE_COOLDOWN_MS, AuthRequest } from '../middleware/auth';
 import { computeCapabilities } from '../services/capabilities';
 import { getOrgMembershipsForUser } from '../services/orgMemberships';
 import { bootstrapAutoJoins } from '../services/globeMembership';
 import { getZoneForTimezone } from '../config/timezoneZones';
+import { callerCanAccessNonNativeTimezone } from '../lib/timezoneRoomAccess';
 import { sendWelcomeEmail } from '../services/email';
 import { getIO } from '../lib/socketRegistry';
 
@@ -616,12 +617,59 @@ router.get('/me', requireAuth, async (req: AuthRequest, res: Response): Promise<
   const timezone = req.query.timezone as string | undefined;
 
   if (timezone && timezone !== req.user!.timezone) {
+    const oldTimezone = req.user!.timezone;
+
     await db
       .update(userProfiles)
       .set({ timezone, updatedAt: new Date() })
       .where(eq(userProfiles.userId, req.user!.id));
 
     req.user!.timezone = timezone;
+
+    // Phase 15 D-06 / D-07: handle old native zone on timezone change.
+    // D-06: premium/org_admin — preserve old native as a non-native membership
+    //       row so the user's chat history in their old zone stays accessible.
+    // D-07: free user — silent drop (NO auto-conversion). Otherwise a free
+    //       caller could harvest non-native memberships by spinning profile-tz
+    //       around the world. This preserves the capability boundary.
+    // Capability snapshot uses the caller's PRE-CHANGE caps — correct per
+    // CONTEXT.md §domain bullet 7. (Tier doesn't change on tz change anyway,
+    // so pre/post snapshots are identical in practice; explicit
+    // `computeCapabilities` call keeps the audit semantic visible.)
+    if (oldTimezone) {
+      const oldZoneSlug = getZoneForTimezone(oldTimezone);
+      const newZoneSlug = getZoneForTimezone(timezone);
+
+      if (oldZoneSlug !== newZoneSlug && oldZoneSlug !== 'utc') {
+        const orgMemberships = await getOrgMembershipsForUser(req.user!.id);
+        const caps = computeCapabilities({
+          isPremium: req.user!.isPremium,
+          premiumExpiresAt: req.user!.premiumExpiresAt,
+          orgMemberships,
+        });
+
+        if (callerCanAccessNonNativeTimezone(caps)) {
+          await db
+            .insert(globeRoomMemberships)
+            .values({ userId: req.user!.id, roomSlug: oldZoneSlug })
+            .onConflictDoNothing({
+              target: [globeRoomMemberships.userId, globeRoomMemberships.roomSlug],
+            });
+          console.log(
+            '[tzroom tz-change] userId=' + req.user!.id +
+            ' verdict=preserved old=' + oldZoneSlug +
+            ' new=' + newZoneSlug +
+            ' tier=' + caps.tier,
+          );
+        } else {
+          console.log(
+            '[tzroom tz-change] userId=' + req.user!.id +
+            ' verdict=dropped-free old=' + oldZoneSlug +
+            ' new=' + newZoneSlug,
+          );
+        }
+      }
+    }
   }
 
   const orgMemberships = await getOrgMembershipsForUser(req.user!.id);
