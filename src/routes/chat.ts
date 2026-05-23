@@ -76,10 +76,25 @@ const searchQuerySchema = z.object({
 // ── aroundMessageId query param schema (D-04) ─────────────────────────────────
 // Shared across the 3 message-list endpoints. When `aroundMessageId` is absent
 // the existing pagination path is used unchanged (regression-safe).
+// Phase 14 D-04: around-message window schema.
+// IMPORTANT: existing `?before=<ISO timestamp>` is the OLDER-MESSAGES cursor.
+// We reuse `before` as a COUNT only when aroundMessageId is present. To avoid
+// the timestamp string failing z.coerce.number(), accept either a coercible
+// number OR pass through (default applied at destructure) when not numeric.
+// Bug: prior schema unconditionally coerced before/after → existing
+// /messages?before=<iso> calls 400'd with "Expected number, received nan".
+const beforeAfterCount = z
+  .union([z.coerce.number().int().min(0).max(50), z.string()])
+  .optional()
+  .transform((v) => {
+    if (typeof v === 'number' && Number.isFinite(v)) return v;
+    return undefined;
+  });
+
 const aroundMessageSchema = z.object({
   aroundMessageId: z.coerce.number().int().positive().optional(),
-  before: z.coerce.number().int().min(0).max(50).optional().default(25),
-  after: z.coerce.number().int().min(0).max(50).optional().default(25),
+  before: beforeAfterCount,
+  after: beforeAfterCount,
 });
 
 const router = Router();
@@ -341,7 +356,11 @@ router.get('/conversations/:id/messages', async (req: AuthRequest, res: Response
     res.status(400).json({ error: aroundParse.error.errors[0].message });
     return;
   }
-  const { aroundMessageId, before: beforeCount, after: afterCount } = aroundParse.data;
+  const { aroundMessageId, before: beforeRaw, after: afterRaw } = aroundParse.data;
+  // Default to 25 when caller omitted the count or sent a non-numeric value
+  // (e.g. ?before=<ISO> for the existing older-cursor pagination path).
+  const beforeCount = typeof beforeRaw === 'number' ? beforeRaw : 25;
+  const afterCount = typeof afterRaw === 'number' ? afterRaw : 25;
 
   const cursor = req.query.before && !aroundMessageId
     ? new Date(req.query.before as string)
@@ -576,7 +595,11 @@ router.get('/room/:roomId/messages', async (req: AuthRequest, res: Response): Pr
     res.status(400).json({ error: aroundParse.error.errors[0].message });
     return;
   }
-  const { aroundMessageId, before: beforeCount, after: afterCount } = aroundParse.data;
+  const { aroundMessageId, before: beforeRaw, after: afterRaw } = aroundParse.data;
+  // Default to 25 when caller omitted the count or sent a non-numeric value
+  // (e.g. ?before=<ISO> for the existing older-cursor pagination path).
+  const beforeCount = typeof beforeRaw === 'number' ? beforeRaw : 25;
+  const afterCount = typeof afterRaw === 'number' ? afterRaw : 25;
 
   const cursor = req.query.before && !aroundMessageId
     ? new Date(req.query.before as string)
