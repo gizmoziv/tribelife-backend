@@ -9,14 +9,22 @@ import { moderateMessage } from '../services/claude';
 import { moderateMessageImages } from '../services/imageModeration';
 import { sendPushToUser, sendPushNotifications, shouldSendPush, getUnreadBadgeCounts } from '../services/pushNotifications';
 import type { ChatNotificationPayload } from '../types/chatNotification';
+import { getZoneForTimezone } from '../config/timezoneZones';
 
 export function registerRoomHandlers(io: Server, socket: Socket): void {
   const userId: number = socket.data.userId;
   const timezone: string = socket.data.timezone;
   const handle: string = socket.data.handle;
 
+  // Phase 15 D-01 (RESEARCH §I3): derive the canonical zone slug ONCE from the
+  // user's IANA timezone, then reuse it for the auto-join room key, every
+  // `room:message` persistence, and every broadcast emit. Notification payload
+  // fields `entityId` + `timezoneIana` STAY raw IANA (RESEARCH §I5 + Phase 10
+  // D-01 — those are mobile routing hints, not room keys).
+  const zoneSlug = getZoneForTimezone(timezone);
+
   // Auto-join the user's timezone room for location-based chat
-  const timezoneRoom = `timezone:${timezone}`;
+  const timezoneRoom = `timezone:${zoneSlug}`;
   socket.join(timezoneRoom);
 
   // ── Send a message to a timezone room ─────────────────────────────────
