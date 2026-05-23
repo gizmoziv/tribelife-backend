@@ -34,7 +34,11 @@ import {
   getRegionForTimezone,
   getGlobeRoom,
 } from '../config/globeRooms';
-import { isValidTimezoneRoom } from '../config/timezoneZones';
+import {
+  isValidTimezoneRoom,
+  TIMEZONE_ZONES,
+  getZoneForTimezone,
+} from '../config/timezoneZones';
 import {
   callerCanAccessNonNativeTimezone,
   isCallerNativeForSlug,
@@ -229,7 +233,82 @@ router.get('/rooms', async (req: AuthRequest, res: Response): Promise<void> => {
     }),
   );
 
-  const responseRows = [...rooms, ...publicGroupRows];
+  // ── Phase 15 TZRM-02: timezone_room variants ─────────────────────────────
+  // D-10: caller's native zone is hidden (already implicit via Local Chat
+  // row[0] in /api/chats). For premium/org_admin, joined non-native rooms
+  // are also hidden (same pattern as joined groups in Phase 12). For free
+  // callers, all non-native zones surface with paywalled=true + lastMessage
+  // null (D-03 — no content preview). `utc` is the fallback slug, never
+  // surfaced in discovery.
+  const caps = await getCapabilities(req);
+  const callerCanAccess = callerCanAccessNonNativeTimezone(caps);
+  const callerNativeSlug = getZoneForTimezone(profile?.timezone ?? 'UTC');
+  const joinedTimezoneSlugs = new Set(
+    [...memberSlugs].filter((s) => isValidTimezoneRoom(s)),
+  );
+
+  const timezoneRoomRows = await Promise.all(
+    TIMEZONE_ZONES
+      .filter((z) => z.slug !== callerNativeSlug)
+      .filter((z) => z.slug !== 'utc')
+      .filter((z) => {
+        // D-10: premium/org_admin — hide rooms they've already joined.
+        // Free callers — show ALL non-native (can't legitimately have a
+        // non-native membership row as free; D-08 read-path gate prevents).
+        if (callerCanAccess) return !joinedTimezoneSlugs.has(z.slug);
+        return true;
+      })
+      // SRCH-03 ?q= filter — in-memory like the globe-room filter.
+      .filter((z) => !q || z.displayName.toLowerCase().includes(q.toLowerCase()))
+      .map(async (z) => {
+        const roomId = timezoneRoomId(z.slug);
+
+        // memberCount: indexed query (Plan 15-02 added globe_room_memberships_room_slug_idx).
+        const [memberCountRow] = await db
+          .select({ c: count() })
+          .from(globeRoomMemberships)
+          .where(eq(globeRoomMemberships.roomSlug, z.slug))
+          .limit(1);
+
+        // lastMessage: D-03 — free callers always get null (no preview);
+        // premium/org_admin get the real last-message preview.
+        let lastMessage:
+          | { content: string; createdAt: string; senderHandle: string }
+          | null = null;
+        if (callerCanAccess) {
+          const [lastMsg] = await db
+            .select({
+              content: messages.content,
+              createdAt: messages.createdAt,
+              senderHandle: userProfiles.handle,
+            })
+            .from(messages)
+            .leftJoin(userProfiles, eq(userProfiles.userId, messages.senderId))
+            .where(eq(messages.roomId, roomId))
+            .orderBy(desc(messages.createdAt))
+            .limit(1);
+          if (lastMsg) {
+            lastMessage = {
+              content: lastMsg.content ?? '',
+              createdAt: (lastMsg.createdAt as Date).toISOString(),
+              senderHandle: lastMsg.senderHandle ?? '',
+            };
+          }
+        }
+
+        return {
+          kind: 'timezone_room' as const,
+          slug: z.slug,
+          displayName: z.displayName,
+          memberCount: Number(memberCountRow?.c ?? 0),
+          lastMessage,
+          isMember: joinedTimezoneSlugs.has(z.slug),
+          paywalled: !callerCanAccess,
+        };
+      }),
+  );
+
+  const responseRows = [...rooms, ...publicGroupRows, ...timezoneRoomRows];
   // SRCH-03: log every ?q= request (q is safe to log — public-discovery surface,
   // no PII in globe-room or group names per security_threat_model T-14-04-I-q).
   if (q) {
