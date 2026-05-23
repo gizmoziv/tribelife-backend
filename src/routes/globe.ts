@@ -34,6 +34,14 @@ import {
   getRegionForTimezone,
   getGlobeRoom,
 } from '../config/globeRooms';
+import { isValidTimezoneRoom } from '../config/timezoneZones';
+import {
+  callerCanAccessNonNativeTimezone,
+  isCallerNativeForSlug,
+  timezoneRoomId,
+} from '../lib/timezoneRoomAccess';
+import { getCapabilities } from '../middleware/capabilities';
+import { logCapabilityDenial } from '../lib/capabilityLogger';
 
 const router = Router();
 router.use(requireAuth);
@@ -235,13 +243,39 @@ router.get(
   '/rooms/:slug/messages',
   async (req: AuthRequest, res: Response): Promise<void> => {
     const slug = req.params.slug as string;
-    if (!isValidGlobeRoom(slug)) {
+    // Phase 15 (D-08, TZRM-01): slug may be a globe-room OR a timezone-room.
+    // Namespaces are disjoint (Plan 15-01 acceptance) — exactly one predicate
+    // returns true for valid slugs. Both false → 404.
+    const isGlobe = isValidGlobeRoom(slug);
+    const isTimezone = isValidTimezoneRoom(slug);
+    if (!isGlobe && !isTimezone) {
       res.status(404).json({ error: 'Room not found' });
       return;
     }
 
     const userId = req.user!.id;
-    const roomId = 'globe:' + slug;
+
+    // D-08 read-time cap check: non-native timezone room requires premium /
+    // org_admin even when a globe_room_memberships row exists. Membership
+    // alone is NOT sufficient.
+    if (isTimezone && !isCallerNativeForSlug(req.user!.timezone ?? 'UTC', slug)) {
+      const caps = await getCapabilities(req);
+      if (!callerCanAccessNonNativeTimezone(caps)) {
+        logCapabilityDenial({
+          req,
+          capability: 'tzroom:non-native-read',
+          currentTier: caps.tier,
+          reason: 'feature',
+        });
+        res.status(403).json({
+          error: 'Premium required to read non-native timezone rooms',
+          capabilityViolation: true,
+        });
+        return;
+      }
+    }
+
+    const roomId = isTimezone ? timezoneRoomId(slug) : 'globe:' + slug;
 
     // Parse aroundMessageId params — validation error is cheapest to return
     const aroundParse = aroundMessageSchema.safeParse(req.query);
@@ -520,18 +554,53 @@ router.post(
   '/rooms/:slug/join',
   async (req: AuthRequest, res: Response): Promise<void> => {
     const slug = req.params.slug as string;
-    if (!isValidGlobeRoom(slug)) {
-      res.status(404).json({ error: 'Unknown globe room' });
+    // Phase 15 (D-08, TZRM-01): slug may be a globe-room OR a timezone-room.
+    // Globe rooms have no cap gate (CONTEXT §domain bullet 3). Timezone rooms
+    // gate on non-native joins only.
+    const isGlobe = isValidGlobeRoom(slug);
+    const isTimezone = isValidTimezoneRoom(slug);
+    if (!isGlobe && !isTimezone) {
+      res.status(404).json({ error: 'Unknown room' });
       return;
     }
 
     const userId = req.user!.id;
+
+    if (isTimezone && !isCallerNativeForSlug(req.user!.timezone ?? 'UTC', slug)) {
+      const caps = await getCapabilities(req);
+      if (!callerCanAccessNonNativeTimezone(caps)) {
+        logCapabilityDenial({
+          req,
+          capability: 'tzroom:non-native-join',
+          currentTier: caps.tier,
+          reason: 'feature',
+        });
+        // High-cardinality console log (capability denial logger emits the
+        // structured pino warn; this console.log gives operator quick grep).
+        console.log(
+          '[tzroom join] userId=' + userId + ' slug=' + slug +
+          ' caller-tier=' + caps.tier + ' verdict=denied-non-native-free',
+        );
+        res.status(403).json({
+          error: 'Premium required to join non-native timezone rooms',
+          capabilityViolation: true,
+        });
+        return;
+      }
+    }
+
     await db
       .insert(globeRoomMemberships)
       .values({ userId, roomSlug: slug })
       .onConflictDoNothing({
         target: [globeRoomMemberships.userId, globeRoomMemberships.roomSlug],
       });
+
+    if (isTimezone) {
+      console.log(
+        '[tzroom join] userId=' + userId + ' slug=' + slug + ' verdict=ok',
+      );
+    }
 
     res.json({ ok: true, isMember: true });
   },
@@ -547,15 +616,24 @@ router.delete(
   '/rooms/:slug/join',
   async (req: AuthRequest, res: Response): Promise<void> => {
     const slug = req.params.slug as string;
-    if (!isValidGlobeRoom(slug)) {
-      res.status(404).json({ error: 'Unknown globe room' });
+    // Phase 15: accept globe-room OR timezone-room slugs. Explicit
+    // user-initiated DELETE is always honored — D-09's "never delete on
+    // downgrade" only applies to the caps:invalidated server-driven path.
+    const isGlobe = isValidGlobeRoom(slug);
+    const isTimezone = isValidTimezoneRoom(slug);
+    if (!isGlobe && !isTimezone) {
+      res.status(404).json({ error: 'Unknown room' });
       return;
     }
 
-    const room = getGlobeRoom(slug);
-    if (room?.autoJoin) {
-      res.status(422).json({ error: 'Cannot leave an auto-join community' });
-      return;
+    // autoJoin gate applies ONLY to globe rooms (Town Square). Timezone
+    // rooms have no autoJoin concept and can always be left.
+    if (isGlobe) {
+      const room = getGlobeRoom(slug);
+      if (room?.autoJoin) {
+        res.status(422).json({ error: 'Cannot leave an auto-join community' });
+        return;
+      }
     }
 
     const userId = req.user!.id;
