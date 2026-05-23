@@ -22,8 +22,21 @@ import type { Server } from 'socket.io';
 import logger from '../lib/logger';
 import type { SearchResult, SearchResponse } from '../types/searchResult';
 import { GLOBE_ROOMS } from '../config/globeRooms';
+import { TIMEZONE_ZONES } from '../config/timezoneZones';
 
 const log = logger.child({ module: 'chat' });
+
+// Phase 15 (D-01): Pre-built SQL CASE expression mapping IANA → zone-slug-prefixed
+// room id. Used by the search UNION CTE's `local_chat` branch to authorize a
+// requester's local-chat messages against their consolidated zone room
+// (e.g. America/New_York → timezone:eastern-time). RESEARCH §G2 Note + §10
+// Question 6. Built once at module load; TIMEZONE_ZONES is a constant.
+const TIMEZONE_TO_ROOM_ID_CASE_SQL: string = (() => {
+  const branches = TIMEZONE_ZONES.flatMap((z) =>
+    z.members.map((iana) => `WHEN '${iana}' THEN 'timezone:${z.slug}'`),
+  ).join(' ');
+  return `CASE up.timezone ${branches} ELSE 'timezone:utc' END`;
+})();
 
 // ── Cursor helpers (D-02: opaque base64-encoded JSON { createdAt, id }) ──────
 
@@ -1050,8 +1063,12 @@ router.get('/search', searchLimiter, async (req: AuthRequest, res: Response): Pr
 
         UNION ALL
 
-        -- Local Chat: messages in the requester's own timezone room
-        -- RESEARCH delta #8: room_id uses 'timezone:' prefix
+        -- Local Chat: messages in the requester's own timezone room.
+        -- Phase 15 (D-01): room_id uses canonical zone slug
+        -- ('timezone:eastern-time'), not IANA. The CASE expression
+        -- maps up.timezone (IANA) → 'timezone:<zone-slug>' so the join
+        -- matches messages routed to the consolidated zone room.
+        -- See RESEARCH §G2 Note + §10 Question 6.
         SELECT
           m.id,
           m.content,
@@ -1062,7 +1079,7 @@ router.get('/search', searchLimiter, async (req: AuthRequest, res: Response): Pr
           'local_chat' AS auth_source
         FROM messages m
         JOIN user_profiles up
-          ON ('timezone:' || up.timezone) = m.room_id
+          ON (${sql.raw(TIMEZONE_TO_ROOM_ID_CASE_SQL)}) = m.room_id
         WHERE up.user_id = ${userId}
           AND m.deleted_at IS NULL
       )

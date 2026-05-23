@@ -12,6 +12,7 @@ import { signToken, requireAuth, needsOnboarding, HANDLE_COOLDOWN_DAYS, HANDLE_C
 import { computeCapabilities } from '../services/capabilities';
 import { getOrgMembershipsForUser } from '../services/orgMemberships';
 import { bootstrapAutoJoins } from '../services/globeMembership';
+import { getZoneForTimezone } from '../config/timezoneZones';
 import { sendWelcomeEmail } from '../services/email';
 import { getIO } from '../lib/socketRegistry';
 
@@ -483,7 +484,10 @@ router.post('/onboarding', requireAuth, async (req: AuthRequest, res: Response):
   // mobile bubble even if the account is later deleted.
   if (isFirstOnboarding) {
     try {
-      const timezoneRoom = `timezone:${timezone}`;
+      // Phase 15 (D-01): system messages land in the consolidated zone room
+      // (e.g. timezone:eastern-time), NOT the raw IANA room. NY + Detroit +
+      // Toronto onboardings all post to the same eastern-time history.
+      const timezoneRoom = `timezone:${getZoneForTimezone(timezone)}`;
       const lowerHandle = handle.toLowerCase();
       const announcementContent = `@${lowerHandle} joined the chat`;
 
