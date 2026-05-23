@@ -15,6 +15,7 @@ import {
 import { requireAuth, AuthRequest } from '../middleware/auth';
 import type { ChatsRow, ChatsListResponse } from '../types/chats';
 import { GLOBE_ROOMS } from '../config/globeRooms';
+import { getZoneForTimezone } from '../config/timezoneZones';
 
 const router = Router();
 router.use(requireAuth);
@@ -42,18 +43,28 @@ router.get('/', async (req: AuthRequest, res: Response): Promise<void> => {
     .where(eq(userProfiles.userId, userId))
     .limit(1);
   const userTimezone = profile?.timezone ?? 'UTC';
-  const localRoomId = 'timezone:' + userTimezone;
+  // Phase 15 (D-01): Local Chat room id is keyed by the canonical zone slug
+  // (e.g. 'eastern-time'), NOT the raw IANA. NY + Detroit + Toronto all share
+  // the same consolidated room post-migration 0019. The localChatRow's
+  // `timezoneIana` field below intentionally STAYS raw IANA — it's a mobile
+  // routing hint, not a room key (RESEARCH §I5).
+  const localZoneSlug = getZoneForTimezone(userTimezone);
+  const localRoomId = 'timezone:' + localZoneSlug;
 
   // ── 2. Look up the user's read positions for BOTH room slugs in one pass ─
+  // Phase 15: globe_read_positions.room_slug now stores the BARE zone slug
+  // (e.g. 'eastern-time'), not the IANA — migration 0019 remapped historical
+  // rows; new writes from /api/chats/room-read use whatever the mobile client
+  // passes, which from Phase 15 onward is the bare zone slug.
   const readPositions = await db
     .select({ roomSlug: globeReadPositions.roomSlug, lastReadAt: globeReadPositions.lastReadAt })
     .from(globeReadPositions)
     .where(and(
       eq(globeReadPositions.userId, userId),
-      inArray(globeReadPositions.roomSlug, [userTimezone, TOWN_SQUARE_SLUG]),
+      inArray(globeReadPositions.roomSlug, [localZoneSlug, TOWN_SQUARE_SLUG]),
     ));
   const readMap = new Map(readPositions.map((r) => [r.roomSlug, r.lastReadAt]));
-  const localLastRead = readMap.get(userTimezone) ?? null;
+  const localLastRead = readMap.get(localZoneSlug) ?? null;
   const townLastRead = readMap.get(TOWN_SQUARE_SLUG) ?? null;
 
   // ── 3. Local Chat unread count + last message ───────────────────────────
