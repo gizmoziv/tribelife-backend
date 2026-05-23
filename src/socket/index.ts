@@ -1,9 +1,14 @@
 import { Server as SocketServer, Socket } from 'socket.io';
 import { Server as HttpServer } from 'http';
 import jwt from 'jsonwebtoken';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { db } from '../db';
-import { userProfiles, globeRoomMemberships } from '../db/schema';
+import {
+  userProfiles,
+  globeRoomMemberships,
+  organizationMemberships,
+} from '../db/schema';
+import { isValidTimezoneRoom, getZoneForTimezone } from '../config/timezoneZones';
 import logger from '../lib/logger';
 import { createClient } from 'redis';
 import { createAdapter } from '@socket.io/redis-adapter';
@@ -198,10 +203,30 @@ export async function createSocketServer(
           expoPushToken: userProfiles.expoPushToken,
           createdAt: userProfiles.createdAt,
           avatarUrl: userProfiles.avatarUrl,
+          // Phase 15 D-08: cap fields fetched at auth time so the auto-join
+          // loop below can filter non-native timezone subscriptions without
+          // a second round-trip.
+          isPremium: userProfiles.isPremium,
+          premiumExpiresAt: userProfiles.premiumExpiresAt,
         })
         .from(userProfiles)
         .where(eq(userProfiles.userId, payload.userId))
         .limit(1);
+
+      // Phase 15 D-08: org_admin tier counts as paid for non-native timezone
+      // access — single-source predicate `callerCanAccessNonNativeTimezone`
+      // uses BOTH isPremium and tier='org_admin'.
+      const orgAdminRows = await db
+        .select({ id: organizationMemberships.id })
+        .from(organizationMemberships)
+        .where(
+          and(
+            eq(organizationMemberships.userId, payload.userId),
+            eq(organizationMemberships.role, 'admin'),
+          ),
+        )
+        .limit(1);
+      const isOrgAdmin = orgAdminRows.length > 0;
 
       socket.data.userId = payload.userId;
       socket.data.timezone = profile[0]?.timezone ?? 'UTC';
@@ -209,6 +234,9 @@ export async function createSocketServer(
       socket.data.expoPushToken = profile[0]?.expoPushToken ?? null;
       socket.data.createdAt = profile[0]?.createdAt ?? new Date();
       socket.data.avatarUrl = profile[0]?.avatarUrl ?? null;
+      socket.data.isPremium = profile[0]?.isPremium ?? false;
+      socket.data.premiumExpiresAt = profile[0]?.premiumExpiresAt ?? null;
+      socket.data.isOrgAdmin = isOrgAdmin;
       next();
     } catch {
       next(new Error('Invalid token'));
@@ -231,7 +259,24 @@ export async function createSocketServer(
         .select({ roomSlug: globeRoomMemberships.roomSlug })
         .from(globeRoomMemberships)
         .where(eq(globeRoomMemberships.userId, userId));
+      // Phase 15 D-08: precompute per-socket gate inputs once.
+      const isPremiumActive =
+        socket.data.isPremium &&
+        (!socket.data.premiumExpiresAt ||
+          (socket.data.premiumExpiresAt as Date) > new Date());
+      const callerNativeSlug = getZoneForTimezone(socket.data.timezone);
+
       for (const m of regionMemberships) {
+        if (isValidTimezoneRoom(m.roomSlug)) {
+          // Native timezone room: primary subscription is `timezone:<slug>`,
+          // joined by roomHandler.ts via Plan 15-01's write-path patch. The
+          // `globe-feed:<native-slug>` fan-out is redundant for native zone
+          // (Chats list updates via chat:notification already).
+          if (m.roomSlug === callerNativeSlug) continue;
+          // D-08 cap filter: free/org_member callers do NOT subscribe to
+          // non-native timezone feed rooms even if a membership row exists.
+          if (!isPremiumActive && !socket.data.isOrgAdmin) continue;
+        }
         // Phase 14 Bug 3 fix: auto-join the FEED room ('globe-feed:<slug>'),
         // not the presence room ('globe:<slug>'). The presence room is for
         // active-viewer participant counting + typing indicators and is
