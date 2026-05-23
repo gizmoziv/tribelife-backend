@@ -112,6 +112,7 @@ export const globeRoomMemberships = pgTable('globe_room_memberships', {
 }, (t) => ({
   uniqUserRoom: unique().on(t.userId, t.roomSlug),
   userIdx: index('globe_room_memberships_user_idx').on(t.userId),
+  roomSlugIdx: index('globe_room_memberships_room_slug_idx').on(t.roomSlug),
 }));
 
 // ─────────────────────────────────────────────
