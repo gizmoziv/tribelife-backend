@@ -58,6 +58,20 @@ export type ChatsRow =
       displayName: string;
       unreadCount: number;
       lastMessage: ChatsRowLastMessage | null;
+    }
+  | {
+      // Phase 15 D-04 + D-08 (TZRM-01): joined NON-native timezone room.
+      // `zoneSlug` is the canonical kebab-case slug from TIMEZONE_ZONES
+      // (e.g. 'pacific-time') matching the suffix of `messages.room_id =
+      // 'timezone:<slug>'` post-migration 0019. Only surfaced to premium /
+      // org_admin callers (D-08 — server filters at materialization).
+      // Native zone NEVER appears here — it's already represented by the
+      // pinned `local_chat` row at index 0 (D-05 dedup).
+      type: 'timezone_room';
+      zoneSlug: string;
+      displayName: string;
+      unreadCount: number;
+      lastMessage: ChatsRowLastMessage | null;
     };
 
 export interface ChatsListResponse {

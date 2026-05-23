@@ -14,8 +14,17 @@ import {
 } from '../db/schema';
 import { requireAuth, AuthRequest } from '../middleware/auth';
 import type { ChatsRow, ChatsListResponse } from '../types/chats';
-import { GLOBE_ROOMS } from '../config/globeRooms';
-import { getZoneForTimezone } from '../config/timezoneZones';
+import { GLOBE_ROOMS, isValidGlobeRoom } from '../config/globeRooms';
+import {
+  getZoneForTimezone,
+  getTimezoneZone,
+  isValidTimezoneRoom,
+} from '../config/timezoneZones';
+import {
+  callerCanAccessNonNativeTimezone,
+  timezoneRoomId,
+} from '../lib/timezoneRoomAccess';
+import { getCapabilities } from '../middleware/capabilities';
 
 const router = Router();
 router.use(requireAuth);
@@ -35,6 +44,10 @@ const TOWN_SQUARE_ROOM_ID = 'globe:town-square';
 // unread mirrors the single-aggregate-query pattern from routes/chat.ts:49-73.
 router.get('/', async (req: AuthRequest, res: Response): Promise<void> => {
   const userId = req.user!.id;
+  // Phase 15 D-08: request-scoped caps memo — re-used in section 4b for the
+  // D-08 non-native timezone-room filter. getCapabilities() is idempotent
+  // and memoizes onto req._capabilities.
+  const caps = await getCapabilities(req);
 
   // ── 1. Look up the user's timezone (for the Local Chat row) ────────────
   const [profile] = await db
@@ -50,6 +63,10 @@ router.get('/', async (req: AuthRequest, res: Response): Promise<void> => {
   // routing hint, not a room key (RESEARCH §I5).
   const localZoneSlug = getZoneForTimezone(userTimezone);
   const localRoomId = 'timezone:' + localZoneSlug;
+  // D-05 dedup pivot for section 4b: a membership row whose slug equals the
+  // caller's CURRENT native zone is suppressed from the joined-non-native
+  // list (row stays in DB — protects ping-pong profile-tz moves).
+  const callerNativeSlug = localZoneSlug;
 
   // ── 2. Look up the user's read positions for BOTH room slugs in one pass ─
   // Phase 15: globe_read_positions.room_slug now stores the BARE zone slug
@@ -153,50 +170,113 @@ router.get('/', async (req: AuthRequest, res: Response): Promise<void> => {
       );
     const joinedReadMap = new Map(joinedReadPositions.map((r) => [r.roomSlug, r.lastReadAt]));
 
-    // Per-slug: unread count + last message (N+1, acceptable at <=7 rooms).
+    // Per-slug: unread count + last message (N+1, acceptable at <=30 rooms).
+    // Phase 15 D-04 + D-05 + D-08: slug may be a globe-room (existing
+    // behavior preserved) or a timezone-room (new, gated by caps + dedup).
     await Promise.all(
       joinedSlugs.map(async (slug) => {
-        const room = GLOBE_ROOMS.find((r) => r.slug === slug);
-        if (!room) return; // defensive — orphaned slug (shouldn't happen per Phase 7 contract)
-        const roomId = 'globe:' + slug;
-        const lastRead = joinedReadMap.get(slug) ?? null;
+        const isGlobe = isValidGlobeRoom(slug);
+        const isTimezone = isValidTimezoneRoom(slug);
 
-        const unreadWhere = lastRead
-          ? and(
-              eq(messages.roomId, roomId),
-              gt(messages.createdAt, lastRead),
-              ne(messages.senderId, userId),
-              isNull(messages.deletedAt),
-            )
-          : and(
-              eq(messages.roomId, roomId),
-              ne(messages.senderId, userId),
-              isNull(messages.deletedAt),
-            );
+        // Globe branch — preserved verbatim from Phase 11.
+        if (isGlobe) {
+          const room = GLOBE_ROOMS.find((r) => r.slug === slug);
+          if (!room) return; // defensive — orphaned slug
+          const roomId = 'globe:' + slug;
+          const lastRead = joinedReadMap.get(slug) ?? null;
 
-        const [unreadRow] = await db
-          .select({ c: count() })
-          .from(messages)
-          .where(unreadWhere)
-          .limit(1);
+          const unreadWhere = lastRead
+            ? and(
+                eq(messages.roomId, roomId),
+                gt(messages.createdAt, lastRead),
+                ne(messages.senderId, userId),
+                isNull(messages.deletedAt),
+              )
+            : and(
+                eq(messages.roomId, roomId),
+                ne(messages.senderId, userId),
+                isNull(messages.deletedAt),
+              );
 
-        const [lastMsg] = await db
-          .select({ content: messages.content, createdAt: messages.createdAt })
-          .from(messages)
-          .where(and(eq(messages.roomId, roomId), isNull(messages.deletedAt)))
-          .orderBy(desc(messages.createdAt))
-          .limit(1);
+          const [unreadRow] = await db
+            .select({ c: count() })
+            .from(messages)
+            .where(unreadWhere)
+            .limit(1);
 
-        globeRoomRows.push({
-          type: 'globe_room' as const,
-          roomSlug: slug,
-          displayName: room.displayName,
-          unreadCount: Math.min(unreadRow?.c ?? 0, 99),
-          lastMessage: lastMsg
-            ? { preview: lastMsg.content ?? '', at: (lastMsg.createdAt as Date).toISOString() }
-            : null,
-          lastMessageAt: (lastMsg?.createdAt as Date | undefined) ?? null,
-        });
+          const [lastMsg] = await db
+            .select({ content: messages.content, createdAt: messages.createdAt })
+            .from(messages)
+            .where(and(eq(messages.roomId, roomId), isNull(messages.deletedAt)))
+            .orderBy(desc(messages.createdAt))
+            .limit(1);
+
+          globeRoomRows.push({
+            type: 'globe_room' as const,
+            roomSlug: slug,
+            displayName: room.displayName,
+            unreadCount: Math.min(unreadRow?.c ?? 0, 99),
+            lastMessage: lastMsg
+              ? { preview: lastMsg.content ?? '', at: (lastMsg.createdAt as Date).toISOString() }
+              : null,
+            lastMessageAt: (lastMsg?.createdAt as Date | undefined) ?? null,
+          });
+          return;
+        }
+
+        // Timezone branch — NEW (Phase 15 TZRM-01).
+        if (isTimezone) {
+          // D-05 dedup: caller already sees their native zone as Local Chat
+          // row[0]; do NOT emit a duplicate row here.
+          if (slug === callerNativeSlug) return;
+          // D-08 caps filter: free users do NOT see non-native timezone
+          // rooms in the Chats list even if a membership row exists.
+          if (!callerCanAccessNonNativeTimezone(caps)) return;
+
+          const roomId = timezoneRoomId(slug);
+          const lastRead = joinedReadMap.get(slug) ?? null;
+
+          const unreadWhere = lastRead
+            ? and(
+                eq(messages.roomId, roomId),
+                gt(messages.createdAt, lastRead),
+                ne(messages.senderId, userId),
+                isNull(messages.deletedAt),
+              )
+            : and(
+                eq(messages.roomId, roomId),
+                ne(messages.senderId, userId),
+                isNull(messages.deletedAt),
+              );
+
+          const [unreadRow] = await db
+            .select({ c: count() })
+            .from(messages)
+            .where(unreadWhere)
+            .limit(1);
+
+          const [lastMsg] = await db
+            .select({ content: messages.content, createdAt: messages.createdAt })
+            .from(messages)
+            .where(and(eq(messages.roomId, roomId), isNull(messages.deletedAt)))
+            .orderBy(desc(messages.createdAt))
+            .limit(1);
+
+          globeRoomRows.push({
+            type: 'timezone_room' as const,
+            zoneSlug: slug,
+            displayName: getTimezoneZone(slug)?.displayName ?? slug,
+            unreadCount: Math.min(unreadRow?.c ?? 0, 99),
+            lastMessage: lastMsg
+              ? { preview: lastMsg.content ?? '', at: (lastMsg.createdAt as Date).toISOString() }
+              : null,
+            lastMessageAt: (lastMsg?.createdAt as Date | undefined) ?? null,
+          });
+          return;
+        }
+
+        // Orphaned slug — defensive; should not occur post-migration 0019.
+        console.warn('[chats] orphaned membership slug=' + slug);
       }),
     );
   }
