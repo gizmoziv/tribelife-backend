@@ -22,7 +22,7 @@ import type { Server } from 'socket.io';
 import logger from '../lib/logger';
 import type { SearchResult, SearchResponse } from '../types/searchResult';
 import { GLOBE_ROOMS } from '../config/globeRooms';
-import { TIMEZONE_ZONES } from '../config/timezoneZones';
+import { TIMEZONE_ZONES, translateLegacyTimezoneRoomId } from '../config/timezoneZones';
 
 const log = logger.child({ module: 'chat' });
 
@@ -229,7 +229,10 @@ router.get('/conversations', async (req: AuthRequest, res: Response): Promise<vo
       groupIconUrl: conversations.groupIconUrl,
       lastMessageAt: conversations.lastMessageAt,
       inviteSlug: conversations.inviteSlug,
-      memberCount: sql<number>`(SELECT count(*)::int FROM conversation_participants WHERE conversation_id = ${conversations.id} AND left_at IS NULL)`,
+      // Drizzle interpolates `${conversations.id}` as bare `"id"` which PG
+      // resolves against the inner scope (cp.id), silently miscounting.
+      // Use explicit `conversations.id` reference inline.
+      memberCount: sql<number>`(SELECT count(*)::int FROM conversation_participants cp WHERE cp.conversation_id = conversations.id AND cp.left_at IS NULL)`,
     })
     .from(conversations)
     .where(
@@ -600,7 +603,20 @@ router.put('/conversations/:id/hide', async (req: AuthRequest, res: Response): P
 // ── Get recent location-based (room) chat history ─────────────────────────
 router.get('/room/:roomId/messages', async (req: AuthRequest, res: Response): Promise<void> => {
   const userId = req.user!.id;
-  const roomId = req.params.roomId as string;
+  // Backward-compat shim for clients on ≤v1.4.5 that still send roomIds in the
+  // legacy `timezone:<IANA>` form. Phase 15 migration 0019 rewrote every
+  // matching row in messages.room_id to the canonical `timezone:<slug>` form,
+  // so an unshimmed query against the IANA value would return zero rows and
+  // wipe the user's history on cold open. Logged so the operator can monitor
+  // residual ≤1.4.5 traffic and decide when it's safe to remove this shim.
+  const { roomId: rawRoomId } = req.params as { roomId: string };
+  const { roomId, wasLegacy } = translateLegacyTimezoneRoomId(rawRoomId);
+  if (wasLegacy) {
+    logger.info(
+      { userId, route: '/chat/room/:roomId/messages', original: rawRoomId, translated: roomId },
+      '[shim:legacy-room-id] translated IANA → canonical slug for ≤1.4.5 client',
+    );
+  }
 
   // Parse aroundMessageId params — validation error is cheapest to return
   const aroundParse = aroundMessageSchema.safeParse(req.query);

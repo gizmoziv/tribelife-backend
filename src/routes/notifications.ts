@@ -10,6 +10,8 @@ import {
   globeReadPositions,
 } from '../db/schema';
 import { requireAuth, AuthRequest } from '../middleware/auth';
+import { translateLegacyTimezoneRoomId } from '../config/timezoneZones';
+import logger from '../lib/logger';
 
 const router = Router();
 router.use(requireAuth);
@@ -219,7 +221,23 @@ router.put('/read-context', async (req: AuthRequest, res: Response): Promise<voi
   }
 
   const userId = req.user!.id;
-  const { conversationId, roomId } = parse.data;
+  const { conversationId, roomId: rawRoomId } = parse.data;
+
+  // Backward-compat shim for clients on ≤v1.4.5 that still send roomIds in the
+  // legacy `timezone:<IANA>` form. Phase 15 migration 0019 also rewrote every
+  // `notifications.data.roomId` to the canonical `timezone:<slug>` form, so
+  // an unshimmed mark-read against the IANA value would match zero rows and
+  // the bell badge would never clear. See translateLegacyTimezoneRoomId for
+  // the removal plan.
+  const roomId = rawRoomId !== undefined
+    ? translateLegacyTimezoneRoomId(rawRoomId)
+    : { roomId: undefined as string | undefined, wasLegacy: false };
+  if (roomId.wasLegacy) {
+    logger.info(
+      { userId, route: 'PUT /notifications/read-context', original: rawRoomId, translated: roomId.roomId },
+      '[shim:legacy-room-id] translated IANA → canonical slug for ≤1.4.5 client',
+    );
+  }
 
   // Notification types scoped by context:
   //   conversationId → new_dm + mention rows whose data.conversationId matches
@@ -231,7 +249,7 @@ router.put('/read-context', async (req: AuthRequest, res: Response): Promise<voi
       )
     : and(
         eq(notifications.type, 'mention'),
-        sql`${notifications.data}->>'roomId' = ${roomId!}`,
+        sql`${notifications.data}->>'roomId' = ${roomId.roomId!}`,
       );
 
   const updated = await db
