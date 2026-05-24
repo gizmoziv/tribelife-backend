@@ -10,9 +10,12 @@ function detectPlatform(ua: string): 'ios' | 'android' | 'web' {
 }
 
 // ── Invite deep link interstitial ─────────────────────────────────────────
-// Mobile: tries custom scheme to open app if installed, writes ref to clipboard
-// so the app can recover it after a fresh install from the store. Falls back
-// to the platform-appropriate store.
+// Mobile: writes the referral code to the clipboard so a fresh install can
+// recover it. Renders two manual buttons — "Open in TribeLife" (re-fires
+// Universal Links / Android Intent) and "Download" (store fallback). The
+// previous auto-redirect to App Store via setTimeout fought iOS Universal
+// Links (Safari's tab doesn't reliably go `hidden` after UL handoff, so the
+// store was opening on top of the launched app).
 // Web: redirects to landing page with ref preserved for attribution.
 router.get('/invite', (req: Request, res: Response) => {
   const ua = req.headers['user-agent'] || '';
@@ -30,7 +33,12 @@ router.get('/invite', (req: Request, res: Response) => {
     : 'https://tribelife.app';
   const androidStoreUrl = `https://play.google.com/store/apps/details?id=com.tribelife.app${ref ? `&referrer=${encodeURIComponent(`ref=${ref}`)}` : ''}`;
   const storeUrl = platform === 'ios' ? iosStoreUrl : androidStoreUrl;
-  const deepLink = `tribelife://invite${ref ? `?ref=${encodeURIComponent(ref)}` : ''}`;
+  // "Open in TribeLife" target. iOS: same canonical https URL — re-tapping
+  // re-triggers Universal Links evaluation. Android: intent:// with a built-in
+  // browser_fallback_url so the OS handles store routing if the app is missing.
+  const openInAppHref = platform === 'android'
+    ? `intent://tribelife.app/invite${ref ? `?ref=${encodeURIComponent(ref)}` : ''}#Intent;scheme=https;package=com.tribelife.app;S.browser_fallback_url=${encodeURIComponent(storeUrl)};end`
+    : `https://tribelife.app/invite${ref ? `?ref=${encodeURIComponent(ref)}` : ''}`;
   const clipboardPayload = ref ? `tribelife-ref:${ref}` : '';
 
   const html = `<!DOCTYPE html>
@@ -38,46 +46,32 @@ router.get('/invite', (req: Request, res: Response) => {
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Opening TribeLife…</title>
+<title>Open TribeLife</title>
 <style>
   html, body { margin: 0; padding: 0; height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0F172A; color: #fff; }
   .wrap { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 24px; text-align: center; }
   h1 { font-size: 22px; font-weight: 600; margin: 0 0 8px; }
-  p { font-size: 15px; opacity: 0.8; margin: 4px 0; }
-  a { display: inline-block; margin-top: 16px; padding: 12px 24px; background: #E8922F; color: #fff; text-decoration: none; border-radius: 999px; font-weight: 600; }
+  p { font-size: 15px; opacity: 0.8; margin: 4px 0 20px; }
+  .btn { display: inline-block; margin: 6px 0; padding: 12px 24px; text-decoration: none; border-radius: 999px; font-weight: 600; min-width: 200px; }
+  .btn-primary { background: #E8922F; color: #fff; }
+  .btn-secondary { background: rgba(255,255,255,0.1); color: #fff; border: 1px solid rgba(255,255,255,0.2); }
 </style>
 </head>
 <body>
 <div class="wrap">
-  <h1>Opening TribeLife…</h1>
-  <p>If nothing happens, tap the button below.</p>
-  <a id="fallback" href="${storeUrl}">Get the App</a>
+  <h1>You're invited to TribeLife</h1>
+  <p>Choose how to continue.</p>
+  <a class="btn btn-primary" href="${openInAppHref}">Open in TribeLife</a>
+  <a class="btn btn-secondary" href="${storeUrl}">Download</a>
 </div>
 <script>
 (function () {
-  var deepLink = ${JSON.stringify(deepLink)};
-  var storeUrl = ${JSON.stringify(storeUrl)};
   var clipboardPayload = ${JSON.stringify(clipboardPayload)};
-  var timeout;
-
-  // Write referral code to clipboard so the app can recover it after a fresh install
+  // Write referral code to clipboard so the app can recover it after a fresh
+  // install from the store. No auto-redirect — user picks via the buttons.
   if (clipboardPayload && navigator.clipboard && navigator.clipboard.writeText) {
     navigator.clipboard.writeText(clipboardPayload).catch(function () { /* user denied */ });
   }
-
-  // Try opening the app via custom scheme
-  window.location.href = deepLink;
-
-  // If the page is still visible after 1500ms, the app isn't installed
-  timeout = setTimeout(function () {
-    if (!document.hidden) {
-      window.location.href = storeUrl;
-    }
-  }, 1500);
-
-  document.addEventListener('visibilitychange', function () {
-    if (document.hidden) clearTimeout(timeout);
-  });
 })();
 </script>
 </body>
@@ -116,10 +110,13 @@ router.get('/g/:slug', (req: Request, res: Response, next: NextFunction) => {
     : 'https://tribelife.app';
   const androidStoreUrl = 'https://play.google.com/store/apps/details?id=com.tribelife.app';
   const storeUrl = platform === 'ios' ? iosStoreUrl : androidStoreUrl;
-  // Three slashes = empty authority. Without this, iOS/Expo Router parses
-  // `g` as the URL host, leaving `/${slug}` as the path — which doesn't
-  // match the `app/g/[slug].tsx` route and renders +not-found.
-  const deepLink = `tribelife:///g/${safeSlug}${safeRef ? `?ref=${encodeURIComponent(safeRef)}` : ''}`;
+  // "Open in TribeLife" target. iOS: re-tap the same canonical https URL —
+  // re-triggers Universal Links evaluation. Android: intent:// with a built-in
+  // browser_fallback_url so the OS handles store routing if the app is missing.
+  const refQuery = safeRef ? `?ref=${encodeURIComponent(safeRef)}` : '';
+  const openInAppHref = platform === 'android'
+    ? `intent://tribelife.app/g/${safeSlug}${refQuery}#Intent;scheme=https;package=com.tribelife.app;S.browser_fallback_url=${encodeURIComponent(storeUrl)};end`
+    : `https://tribelife.app/g/${safeSlug}${refQuery}`;
   // Clipboard payload format: tribelife-g-ref:<ref>:<slug>. Empty when no
   // ref present so the inline <script> branch becomes a no-op.
   const clipboardPayload = safeRef ? `tribelife-g-ref:${safeRef}:${safeSlug}` : '';
@@ -129,48 +126,35 @@ router.get('/g/:slug', (req: Request, res: Response, next: NextFunction) => {
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Opening TribeLife…</title>
+<title>Open TribeLife</title>
 <style>
   html, body { margin: 0; padding: 0; height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0F172A; color: #fff; }
   .wrap { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 24px; text-align: center; }
   h1 { font-size: 22px; font-weight: 600; margin: 0 0 8px; }
-  p { font-size: 15px; opacity: 0.8; margin: 4px 0; }
-  a { display: inline-block; margin-top: 16px; padding: 12px 24px; background: #E8922F; color: #fff; text-decoration: none; border-radius: 999px; font-weight: 600; }
+  p { font-size: 15px; opacity: 0.8; margin: 4px 0 20px; }
+  .btn { display: inline-block; margin: 6px 0; padding: 12px 24px; text-decoration: none; border-radius: 999px; font-weight: 600; min-width: 200px; }
+  .btn-primary { background: #E8922F; color: #fff; }
+  .btn-secondary { background: rgba(255,255,255,0.1); color: #fff; border: 1px solid rgba(255,255,255,0.2); }
 </style>
 </head>
 <body>
 <div class="wrap">
-  <h1>Opening TribeLife…</h1>
-  <p>If nothing happens, tap the button below.</p>
-  <a id="fallback" href="${storeUrl}">Get the App</a>
+  <h1>You're invited to a TribeLife group</h1>
+  <p>Choose how to continue.</p>
+  <a class="btn btn-primary" href="${openInAppHref}">Open in TribeLife</a>
+  <a class="btn btn-secondary" href="${storeUrl}">Download</a>
 </div>
 <script>
 (function () {
-  var deepLink = ${JSON.stringify(deepLink)};
-  var storeUrl = ${JSON.stringify(storeUrl)};
   var clipboardPayload = ${JSON.stringify(clipboardPayload)};
-  var timeout;
-
   // Phase 13: write attribution payload to clipboard so the app can recover
-  // both the group slug AND the inviter handle after a fresh install.
+  // both the group slug AND the inviter handle after a fresh install. No
+  // auto-redirect — user picks via the buttons. Previous setTimeout to the
+  // App Store fought iOS Universal Links (Safari's tab doesn't reliably go
+  // `hidden` after UL handoff, so the store was opening on top of the app).
   if (clipboardPayload && navigator.clipboard && navigator.clipboard.writeText) {
     navigator.clipboard.writeText(clipboardPayload).catch(function () { /* user denied */ });
   }
-
-  // Try opening the app immediately
-  window.location.href = deepLink;
-
-  // If the page is still visible after 1500ms, the app isn't installed
-  timeout = setTimeout(function () {
-    if (!document.hidden) {
-      window.location.href = storeUrl;
-    }
-  }, 1500);
-
-  // If the app opens, the page goes to background — cancel the store redirect
-  document.addEventListener('visibilitychange', function () {
-    if (document.hidden) clearTimeout(timeout);
-  });
 })();
 </script>
 </body>
@@ -209,9 +193,13 @@ router.get('/u/:handle', (req: Request, res: Response, next: NextFunction) => {
     : 'https://tribelife.app';
   const androidStoreUrl = 'https://play.google.com/store/apps/details?id=com.tribelife.app';
   const storeUrl = platform === 'ios' ? iosStoreUrl : androidStoreUrl;
-  // Three slashes = empty authority (matches /g/:slug rationale — without
-  // this, iOS/Expo Router parses `u` as the URL host instead of the path).
-  const deepLink = `tribelife:///u/${safeHandle}${safeRef ? `?ref=${encodeURIComponent(safeRef)}` : ''}`;
+  // "Open in TribeLife" target. iOS: re-tap the same canonical https URL —
+  // re-triggers Universal Links evaluation. Android: intent:// with a built-in
+  // browser_fallback_url so the OS handles store routing if the app is missing.
+  const refQuery = safeRef ? `?ref=${encodeURIComponent(safeRef)}` : '';
+  const openInAppHref = platform === 'android'
+    ? `intent://tribelife.app/u/${safeHandle}${refQuery}#Intent;scheme=https;package=com.tribelife.app;S.browser_fallback_url=${encodeURIComponent(storeUrl)};end`
+    : `https://tribelife.app/u/${safeHandle}${refQuery}`;
   // Clipboard payload format: tribelife-u-ref:<ref>:<handle>.
   const clipboardPayload = safeRef ? `tribelife-u-ref:${safeRef}:${safeHandle}` : '';
 
@@ -220,48 +208,34 @@ router.get('/u/:handle', (req: Request, res: Response, next: NextFunction) => {
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Opening TribeLife…</title>
+<title>Open TribeLife</title>
 <style>
   html, body { margin: 0; padding: 0; height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0F172A; color: #fff; }
   .wrap { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 24px; text-align: center; }
   h1 { font-size: 22px; font-weight: 600; margin: 0 0 8px; }
-  p { font-size: 15px; opacity: 0.8; margin: 4px 0; }
-  a { display: inline-block; margin-top: 16px; padding: 12px 24px; background: #E8922F; color: #fff; text-decoration: none; border-radius: 999px; font-weight: 600; }
+  p { font-size: 15px; opacity: 0.8; margin: 4px 0 20px; }
+  .btn { display: inline-block; margin: 6px 0; padding: 12px 24px; text-decoration: none; border-radius: 999px; font-weight: 600; min-width: 200px; }
+  .btn-primary { background: #E8922F; color: #fff; }
+  .btn-secondary { background: rgba(255,255,255,0.1); color: #fff; border: 1px solid rgba(255,255,255,0.2); }
 </style>
 </head>
 <body>
 <div class="wrap">
-  <h1>Opening TribeLife…</h1>
-  <p>If nothing happens, tap the button below.</p>
-  <a id="fallback" href="${storeUrl}">Get the App</a>
+  <h1>View this profile on TribeLife</h1>
+  <p>Choose how to continue.</p>
+  <a class="btn btn-primary" href="${openInAppHref}">Open in TribeLife</a>
+  <a class="btn btn-secondary" href="${storeUrl}">Download</a>
 </div>
 <script>
 (function () {
-  var deepLink = ${JSON.stringify(deepLink)};
-  var storeUrl = ${JSON.stringify(storeUrl)};
   var clipboardPayload = ${JSON.stringify(clipboardPayload)};
-  var timeout;
-
   // Phase 13: write attribution payload to clipboard so the app can recover
-  // both the profile handle AND the inviter handle after a fresh install.
+  // both the profile handle AND the inviter handle after a fresh install. No
+  // auto-redirect — user picks via the buttons (the prior setTimeout to the
+  // App Store fought iOS Universal Links).
   if (clipboardPayload && navigator.clipboard && navigator.clipboard.writeText) {
     navigator.clipboard.writeText(clipboardPayload).catch(function () { /* user denied */ });
   }
-
-  // Try opening the app immediately
-  window.location.href = deepLink;
-
-  // If the page is still visible after 1500ms, the app isn't installed
-  timeout = setTimeout(function () {
-    if (!document.hidden) {
-      window.location.href = storeUrl;
-    }
-  }, 1500);
-
-  // If the app opens, the page goes to background — cancel the store redirect
-  document.addEventListener('visibilitychange', function () {
-    if (document.hidden) clearTimeout(timeout);
-  });
 })();
 </script>
 </body>
