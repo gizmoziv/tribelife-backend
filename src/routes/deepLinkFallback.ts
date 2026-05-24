@@ -150,8 +150,8 @@ router.get('/g/:slug', (req: Request, res: Response, next: NextFunction) => {
   // Phase 13: write attribution payload to clipboard so the app can recover
   // both the group slug AND the inviter handle after a fresh install. No
   // auto-redirect — user picks via the buttons. Previous setTimeout to the
-  // App Store fought iOS Universal Links (Safari's tab doesn't reliably go
-  // `hidden` after UL handoff, so the store was opening on top of the app).
+  // App Store fought iOS Universal Links (Safari tab visibility was unreliable
+  // after UL handoff, so the store was opening on top of the launched app).
   if (clipboardPayload && navigator.clipboard && navigator.clipboard.writeText) {
     navigator.clipboard.writeText(clipboardPayload).catch(function () { /* user denied */ });
   }
