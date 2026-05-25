@@ -82,11 +82,37 @@ app.use(express.json({ limit: '100kb' }));
 
 // ── HTTP request logging (HARDEN-03) ─────────────────────────────────────
 // One structured pino line per HTTP request with method, path, status,
-// duration_ms, userId (if authed), ip, userAgent, reqId. Reuses the root
-// pino logger via a child to keep output unified (D-21). genReqId honors
-// upstream x-request-id if present; echoes the id in the response header
-// for support-ticket correlation (D-26). customProps reads AuthUser.id
-// from req.user — AuthUser has field `id`, NOT `userId` (auth.ts:13).
+// duration_ms, userId (if authed), ip, userAgent, appVersion, reqId.
+// Reuses the root pino logger via a child to keep output unified (D-21).
+// genReqId honors upstream x-request-id if present; echoes the id in the
+// response header for support-ticket correlation (D-26). The success/error
+// object hooks read AuthUser.id from req.user — AuthUser has field `id`,
+// NOT `userId` (auth.ts:13).
+//
+// Why customSuccessObject / customErrorObject instead of customProps:
+// pino-http v11 invokes `customProps` TWICE per request — once at request
+// start (bound onto req.log as child bindings, when req.user is still
+// undefined) and once at response end (merged into the final log call, when
+// req.user is populated). The resulting JSON line carried duplicate keys
+// (reqId / userId / userAgent each appeared twice, with the first userId
+// always null and the second one the real id) — ~30% wasted bytes per line
+// and a footgun for naive greps like `"userId":null`. The *Object hooks
+// only fire at response time, so the top-level shape HARDEN-03 requires is
+// preserved without duplication. (The `reqId` field is still emitted by
+// pino-http itself via `genReqId` — no need to re-emit it from our hook.)
+function buildLogObject(req: AuthRequest, val: object): object {
+  const ua = (req.headers['user-agent'] as string | undefined) ?? null;
+  // iOS app UA shape: "TribeLifeApp/<build> CFNetwork/<x> Darwin/<y>".
+  // Android/Expo UA does not include this prefix → appVersion stays null.
+  const appVersion = ua?.match(/TribeLifeApp\/(\S+)/)?.[1] ?? null;
+  return {
+    ...val,
+    reqId: req.id,
+    userId: req.user?.id ?? null,
+    userAgent: ua,
+    appVersion,
+  };
+}
 app.use(pinoHttp({
   // Cast: pino-http's Options.logger type narrows to the default pino levels
   // ('info' | 'error' | 'warn' | ...), but our root logger is typed as
@@ -101,11 +127,8 @@ app.use(pinoHttp({
     res.setHeader('x-request-id', id);
     return id;
   },
-  customProps: (req, _res) => ({
-    reqId: req.id,
-    userId: (req as AuthRequest).user?.id ?? null,
-    userAgent: req.headers['user-agent'] ?? null,
-  }),
+  customSuccessObject: (req, _res, val) => buildLogObject(req as AuthRequest, val),
+  customErrorObject: (req, _res, _err, val) => buildLogObject(req as AuthRequest, val),
   // HARDEN-03 literal field-name spec: rename pino-http's default response-time
   // key `responseTime` → `duration_ms`. This is REQUIRED (not optional / not
   // contingent on runtime inspection) — the HARDEN-03 spec fixes the field
@@ -116,11 +139,10 @@ app.use(pinoHttp({
   // The serializers emit the nested shape `{ req: { method, path, ip },
   // res: { status }, duration_ms }` — assertions that target top-level `path`,
   // `status`, `ip` would fail. Assertions against `req.path` / `res.status` /
-  // `req.ip` (nested) will pass. If future work needs top-level flat fields,
-  // lift them via `customProps` and drop the serializers (see HARDEN-03 notes).
+  // `req.ip` (nested) will pass. Top-level userId / userAgent / appVersion
+  // are added at log time via buildLogObject above.
   customAttributeKeys: {
     responseTime: 'duration_ms',
-    reqId: 'reqId',
   },
   customLogLevel: (_req, res, err) =>
     err || res.statusCode >= 500 ? 'error'
