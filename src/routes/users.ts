@@ -5,6 +5,7 @@ import { db } from '../db';
 import { users, userProfiles, conversationParticipants, organizationMemberships } from '../db/schema';
 import { requireAuth, AuthRequest } from '../middleware/auth';
 import { GLOBE_ROOMS } from '../config/globeRooms';
+import { getZoneForTimezone, getTimezoneZone } from '../config/timezoneZones';
 
 const router = Router();
 router.use(requireAuth);
@@ -41,7 +42,18 @@ router.get('/suggest', async (req: AuthRequest, res: Response): Promise<void> =>
   }
 
   if (scope === 'timezone') {
-    baseWhere.push(eq(userProfiles.timezone, contextId));
+    // Mobile sends the requester's raw IANA (e.g. 'America/Detroit') as contextId.
+    // Phase 15 consolidated per-IANA rooms into canonical zones (eastern-time,
+    // pacific-time, …), so an exact-IANA match would only surface other users
+    // on the same IANA — invisible to anyone else in the same shared zone room.
+    // Expand IANA → zone slug → all member IANAs, then match any of them.
+    const slug = getZoneForTimezone(contextId);
+    const zone = getTimezoneZone(slug);
+    if (!zone) {
+      res.json({ users: [] });
+      return;
+    }
+    baseWhere.push(inArray(userProfiles.timezone, zone.members));
   } else if (scope === 'globe') {
     const room = GLOBE_ROOMS.find((r) => r.slug === contextId);
     if (!room) {
