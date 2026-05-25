@@ -169,9 +169,14 @@ router.get('/rooms', async (req: AuthRequest, res: Response): Promise<void> => {
       iconUrl: conversations.groupIconUrl,
       inviteSlug: conversations.inviteSlug,
       lastMessageAt: conversations.lastMessageAt,
+      // Drizzle's `${conversations.id}` interpolation emits an unqualified
+      // `"id"` reference, which PostgreSQL resolves against the inner scope
+      // (cp2.id) — silently turning this into `cp2.conversation_id = cp2.id`
+      // and counting at most one matching row per group. Use the explicit
+      // qualified reference `conversations.id` inline instead.
       memberCount: sql<number>`(
-        SELECT count(*)::int FROM conversation_participants
-        WHERE conversation_id = ${conversations.id} AND left_at IS NULL
+        SELECT count(*)::int FROM conversation_participants cp2
+        WHERE cp2.conversation_id = conversations.id AND cp2.left_at IS NULL
       )`,
     })
     .from(conversations)
@@ -550,12 +555,16 @@ router.put(
   },
 );
 
-// ── Mark a Globe room as read ──────────────────────────────────────────────
+// ── Mark a Globe room or non-native timezone room as read ─────────────────
 router.put(
   '/rooms/:slug/read',
   async (req: AuthRequest, res: Response): Promise<void> => {
     const slug = req.params.slug as string;
-    if (!isValidGlobeRoom(slug)) {
+    // Phase 15 (TZRM-01): joined non-native timezone rooms share the same
+    // `globe_read_positions` table; accept their zone slugs here too so the
+    // mobile chat screen's mark-read call updates the read position and the
+    // /api/chats unreadCount aggregate returns to 0 on next hydrate.
+    if (!isValidGlobeRoom(slug) && !isValidTimezoneRoom(slug)) {
       res.status(404).json({ error: 'Room not found' });
       return;
     }

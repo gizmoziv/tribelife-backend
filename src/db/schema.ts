@@ -227,6 +227,7 @@ export const notificationPreferences = pgTable('notification_preferences', {
   timezoneChatPush: boolean('timezone_chat_push').notNull().default(true),
   beaconMatchesPush: boolean('beacon_matches_push').notNull().default(true),
   dmPush: boolean('dm_push').notNull().default(true),
+  townSquarePush: boolean('town_square_push').notNull().default(true),
   createdAt: timestamp('created_at').defaultNow(),
   updatedAt: timestamp('updated_at').defaultNow(),
 });

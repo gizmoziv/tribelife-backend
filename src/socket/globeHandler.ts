@@ -1,13 +1,13 @@
 import { Server, Socket } from 'socket.io';
 import logger from '../lib/logger';
 import { db } from '../db';
-import { messages, userProfiles, notifications } from '../db/schema';
-import { eq, inArray } from 'drizzle-orm';
+import { messages, userProfiles, notifications, notificationPreferences, blockedUsers } from '../db/schema';
+import { and, eq, inArray, ne, isNotNull, or } from 'drizzle-orm';
 import { checkRateLimit } from './rateLimit';
 import { isValidGlobeRoom, AGE_GATE_HOURS } from '../config/globeRooms';
 import { moderateMessage } from '../services/claude';
 import { moderateMessageImages } from '../services/imageModeration';
-import { sendPushToUser, shouldSendPush } from '../services/pushNotifications';
+import { sendPushToUser, sendPushNotifications, shouldSendPush, getUnreadBadgeCounts } from '../services/pushNotifications';
 import { getGlobeMembershipsForUser } from '../services/globeMembership';
 import type { ChatNotificationPayload } from '../types/chatNotification';
 
@@ -263,6 +263,142 @@ export function registerGlobeHandlers(io: Server, socket: Socket): void {
           notifyId,
         );
       }
+    }
+
+    // ── Town Square broadcast notifications ─────────────────────────────────
+    // CPO request: Town Square delivers a push + Chats-tab notification for
+    // EVERY message (not just @mentions), gated by the new
+    // notification_preferences.town_square_push opt-out. Mirrors the Local
+    // Chat (timezone room) pattern from socket/roomHandler.ts. Skips sender,
+    // anyone already notified via @mention/reply, and blocked pairs.
+    // Fire-and-forget — does not block the message broadcast.
+    log.info({ slug: data.slug, isTownSquare: data.slug === 'town-square' }, 'globe message broadcast eligibility check');
+    if (data.slug === 'town-square') {
+      log.info({ msgId: msg.id }, 'town-square broadcast: starting fan-out');
+      (async () => {
+        try {
+          // Everyone except the sender — drop the push-token filter so the
+          // in-app bell + chat:notification fan-out reaches users without a
+          // registered push token (common on dev / Android emulator). Push
+          // delivery is filtered separately below.
+          const candidates = await db
+            .select({
+              userId: userProfiles.userId,
+              expoPushToken: userProfiles.expoPushToken,
+            })
+            .from(userProfiles)
+            .where(ne(userProfiles.userId, userId));
+          if (candidates.length === 0) return;
+
+          const candidateIds = candidates.map((c) => c.userId);
+
+          // Per-user opt-out (defaults to true if no preference row exists).
+          const prefs = await db
+            .select({
+              userId: notificationPreferences.userId,
+              townSquarePush: notificationPreferences.townSquarePush,
+            })
+            .from(notificationPreferences)
+            .where(inArray(notificationPreferences.userId, candidateIds));
+          const prefMap = new Map(prefs.map((p) => [p.userId, p.townSquarePush]));
+
+          const blocks = await db
+            .select({
+              userId: blockedUsers.userId,
+              blockedUserId: blockedUsers.blockedUserId,
+            })
+            .from(blockedUsers)
+            .where(
+              or(
+                and(eq(blockedUsers.userId, userId), inArray(blockedUsers.blockedUserId, candidateIds)),
+                and(eq(blockedUsers.blockedUserId, userId), inArray(blockedUsers.userId, candidateIds)),
+              ),
+            );
+          const blockedSet = new Set<number>();
+          for (const b of blocks) {
+            blockedSet.add(b.userId === userId ? b.blockedUserId : b.userId);
+          }
+
+          const alreadyNotified = notifyUserIds;
+          // Eligibility for the in-app notification row + chat:notification
+          // fan-out — no token requirement (push is filtered separately).
+          const eligible = candidates.filter((c) => {
+            if (blockedSet.has(c.userId)) return false;
+            if (alreadyNotified.has(c.userId)) return false;
+            const allowed = prefMap.has(c.userId) ? prefMap.get(c.userId) : true;
+            return allowed;
+          });
+          log.info(
+            { candidates: candidates.length, eligible: eligible.length, blocked: blockedSet.size, alreadyNotified: alreadyNotified.size },
+            'town-square broadcast: eligibility',
+          );
+          if (eligible.length === 0) return;
+
+          const badgeMap = await getUnreadBadgeCounts(eligible.map((c) => c.userId));
+
+          // Insert notifications rows so the Chats-tab unread badge has a
+          // server source of truth. Reuse type='mention' (no schema change);
+          // `data.source='globe_room'` is the tap-router signal.
+          const notifIdByUser = new Map<number, number>();
+          const insertedRows = await db.insert(notifications).values(
+            eligible.map((c) => ({
+              userId: c.userId,
+              type: 'mention' as const,
+              title: `@${handle}`,
+              body: content.slice(0, 100),
+              data: {
+                messageId: msg.id,
+                roomId,
+                senderHandle: handle,
+                source: 'globe_room' as const,
+                entityId: data.slug,
+                roomSlug: data.slug,
+              },
+            })),
+          ).returning({ id: notifications.id, userId: notifications.userId });
+          for (const row of insertedRows) notifIdByUser.set(row.userId, row.id);
+
+          // chat:notification fan-out — drives the in-app unread badge.
+          for (const c of eligible) {
+            const notifId = notifIdByUser.get(c.userId);
+            if (notifId === undefined) continue;
+            io.to(`user:${c.userId}`).emit('chat:notification', {
+              source: 'globe_room',
+              entityId: data.slug,
+              roomSlug: data.slug,
+              notificationId: notifId,
+              messageId: msg.id,
+              title: `@${handle}`,
+              body: content.slice(0, 100),
+              senderHandle: handle,
+            } satisfies ChatNotificationPayload);
+          }
+
+          // Batch push — only users with a registered token.
+          const pushBatch = eligible.filter((c) => !!c.expoPushToken).map((c) => ({
+            to: c.expoPushToken as string,
+            title: `@${handle}`,
+            body: content.slice(0, 100),
+            data: {
+              type: 'chat' as const,
+              source: 'globe_room' as const,
+              entityId: data.slug,
+              roomSlug: data.slug,
+              notificationId: notifIdByUser.get(c.userId)!,
+              messageId: msg.id,
+              senderHandle: handle,
+            },
+            sound: 'default' as const,
+            badge: badgeMap.get(c.userId) ?? 0,
+            channelId: 'default',
+          }));
+          if (pushBatch.length > 0) {
+            await sendPushNotifications(pushBatch);
+          }
+        } catch (err) {
+          log.error({ err }, 'Town Square broadcast push delivery failed');
+        }
+      })();
     }
 
     // Fire-and-forget image moderation

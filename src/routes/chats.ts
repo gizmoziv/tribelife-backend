@@ -371,7 +371,10 @@ router.get('/', async (req: AuthRequest, res: Response): Promise<void> => {
         groupName: conversations.groupName,
         groupIconUrl: conversations.groupIconUrl,
         lastMessageAt: conversations.lastMessageAt,
-        memberCount: sql<number>`(SELECT count(*)::int FROM conversation_participants WHERE conversation_id = ${conversations.id} AND left_at IS NULL)`,
+        // Drizzle interpolates `${conversations.id}` as bare `"id"` which PG
+        // resolves against the inner scope (cp.id), silently miscounting.
+        // Use explicit `conversations.id` reference inline.
+        memberCount: sql<number>`(SELECT count(*)::int FROM conversation_participants cp WHERE cp.conversation_id = conversations.id AND cp.left_at IS NULL)`,
         // Phase 12 D-11: public/archive fields for mobile ChatsRow group variant
         isPublic: conversations.isPublic,
         isArchived: sql<boolean>`${conversations.archivedAt} IS NOT NULL`,

@@ -37,6 +37,7 @@ function generateSlug(name: string): string {
 // ── List my groups (admin/member) ───────────────────────────────────────────
 router.get('/', async (req: AuthRequest, res: Response): Promise<void> => {
   const userId = req.user!.id;
+  const roleFilter = typeof req.query.role === 'string' ? req.query.role : undefined;
 
   const rows = await db
     .select({
@@ -46,9 +47,13 @@ router.get('/', async (req: AuthRequest, res: Response): Promise<void> => {
       inviteSlug: conversations.inviteSlug,
       createdAt: conversations.createdAt,
       role: conversationParticipants.role,
+      // Use explicit `conversations.id` instead of `${conversations.id}` —
+      // Drizzle interpolates the column ref as bare `"id"`, which PG resolves
+      // against the inner cp2 scope (cp2.id) and silently miscounts. Same
+      // bug pattern fixed in routes/globe.ts publicGroupsRaw.
       memberCount: sql<number>`(
         select count(*)::int from conversation_participants cp2
-        where cp2.conversation_id = ${conversations.id} and cp2.left_at is null
+        where cp2.conversation_id = conversations.id and cp2.left_at is null
       )`,
     })
     .from(conversationParticipants)
@@ -57,7 +62,8 @@ router.get('/', async (req: AuthRequest, res: Response): Promise<void> => {
       and(
         eq(conversationParticipants.userId, userId),
         eq(conversations.isGroup, true),
-        isNull(conversationParticipants.leftAt)
+        isNull(conversationParticipants.leftAt),
+        ...(roleFilter === 'admin' ? [eq(conversationParticipants.role, 'admin')] : []),
       )
     )
     .orderBy(asc(conversations.createdAt));
@@ -193,6 +199,7 @@ router.get('/:slug', async (req: AuthRequest, res: Response): Promise<void> => {
       groupName: conversations.groupName,
       groupIconUrl: conversations.groupIconUrl,
       inviteSlug: conversations.inviteSlug,
+      isPublic: conversations.isPublic,
       createdAt: conversations.createdAt,
     })
     .from(conversations)
@@ -227,15 +234,47 @@ router.get('/:slug', async (req: AuthRequest, res: Response): Promise<void> => {
 
   const isMember = membership != null && membership.leftAt == null;
 
+  // Surface the earliest-joined active admin so non-members can see who runs
+  // the group and tap through to DM them. Single admin is sufficient for the
+  // UI affordance even when the group has multiple admins.
+  const [admin] = await db
+    .select({
+      id: conversationParticipants.userId,
+      handle: userProfiles.handle,
+      name: users.name,
+      avatarUrl: userProfiles.avatarUrl,
+    })
+    .from(conversationParticipants)
+    .innerJoin(users, eq(users.id, conversationParticipants.userId))
+    .leftJoin(userProfiles, eq(userProfiles.userId, conversationParticipants.userId))
+    .where(
+      and(
+        eq(conversationParticipants.conversationId, group.id),
+        eq(conversationParticipants.role, 'admin'),
+        isNull(conversationParticipants.leftAt)
+      )
+    )
+    .orderBy(asc(conversationParticipants.joinedAt))
+    .limit(1);
+
   res.json({
     group: {
       id: group.id,
       groupName: group.groupName,
       groupIconUrl: group.groupIconUrl,
       inviteSlug: group.inviteSlug,
+      isPublic: group.isPublic,
       memberCount: countResult?.count ?? 0,
       createdAt: group.createdAt,
       isMember,
+      admin: admin
+        ? {
+            id: admin.id,
+            handle: admin.handle ?? '',
+            name: admin.name ?? '',
+            avatarUrl: admin.avatarUrl ?? null,
+          }
+        : null,
     },
   });
 });
@@ -423,6 +462,7 @@ const updateGroupSchema = z.object({
   name: z.string().min(1).max(50).optional(),
   slug: z.string().min(1).max(50).optional(),
   groupIconUrl: z.string().optional(),
+  isPublic: z.boolean().optional(),
 });
 
 router.put('/:id', async (req: AuthRequest, res: Response): Promise<void> => {
@@ -461,6 +501,7 @@ router.put('/:id', async (req: AuthRequest, res: Response): Promise<void> => {
   const updates: Partial<typeof conversations.$inferInsert> = {};
   if (parse.data.name) updates.groupName = parse.data.name;
   if (parse.data.groupIconUrl !== undefined) updates.groupIconUrl = parse.data.groupIconUrl;
+  if (parse.data.isPublic !== undefined) updates.isPublic = parse.data.isPublic;
 
   if (parse.data.slug) {
     const [slugExists] = await db
@@ -493,6 +534,7 @@ router.put('/:id', async (req: AuthRequest, res: Response): Promise<void> => {
       groupName: updated.groupName,
       groupIconUrl: updated.groupIconUrl,
       inviteSlug: updated.inviteSlug,
+      isPublic: updated.isPublic,
     },
   });
 });
