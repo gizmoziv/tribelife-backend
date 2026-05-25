@@ -17,6 +17,8 @@
     "db:studio": "drizzle-kit studio",
     "db:seed": "tsx src/db/seed.ts",
     "db:seed:promo": "tsx src/db/seed-promo.ts",
+    "db:create-trgm-indexes": "tsx scripts/create-trgm-indexes.ts",
+    "db:verify-trgm-indexes": "tsx scripts/verify-trgm-indexes.ts",
     "news:ingest": "tsx scripts/ingest-news.ts"
   },
   "dependencies": {
