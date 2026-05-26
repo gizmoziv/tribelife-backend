@@ -268,12 +268,24 @@ router.get('/rooms', async (req: AuthRequest, res: Response): Promise<void> => {
       .map(async (z) => {
         const roomId = timezoneRoomId(z.slug);
 
-        // memberCount: indexed query (Plan 15-02 added globe_room_memberships_room_slug_idx).
-        const [memberCountRow] = await db
-          .select({ c: count() })
-          .from(globeRoomMemberships)
-          .where(eq(globeRoomMemberships.roomSlug, z.slug))
-          .limit(1);
+        // memberCount: native TZ membership is IMPLICIT via user_profiles.timezone
+        // (no globe_room_memberships row gets written for a user's native zone —
+        // those rows only appear for cross-zone retainers from auth.ts tz-change
+        // and explicit globe-room joins). Counting just the table left every
+        // timezone room reading 0. UNION dedupes the rare overlap (a premium
+        // user listed in both because they moved AND were native again later).
+        const memberCountResult = await db.execute(sql`
+          SELECT count(*)::int AS c FROM (
+            SELECT user_id FROM user_profiles
+              WHERE timezone = ANY(${z.members}::text[])
+            UNION
+            SELECT user_id FROM globe_room_memberships
+              WHERE room_slug = ${z.slug}
+          ) u
+        `);
+        const memberCount = Number(
+          (memberCountResult.rows[0] as { c?: number } | undefined)?.c ?? 0,
+        );
 
         // lastMessage: D-03 — free callers always get null (no preview);
         // premium/org_admin get the real last-message preview.
@@ -305,7 +317,7 @@ router.get('/rooms', async (req: AuthRequest, res: Response): Promise<void> => {
           kind: 'timezone_room' as const,
           slug: z.slug,
           displayName: z.displayName,
-          memberCount: Number(memberCountRow?.c ?? 0),
+          memberCount,
           lastMessage,
           isMember: joinedTimezoneSlugs.has(z.slug),
           paywalled: !callerCanAccess,
@@ -419,6 +431,12 @@ router.get(
         senderAvatar: userProfiles.avatarUrl,
         mentions: messages.mentions,
         mediaUrls: messages.mediaUrls,
+        // Without this, the mobile's `if (message.kind === 'system')` check
+        // (MessageBubble.tsx) gets undefined for system rows fetched via
+        // history (the join "@handle joined the chat" announcement from
+        // auth.ts), so they render as regular bubbles instead of the
+        // centered pill. The live socket payload already includes kind.
+        kind: messages.kind,
       } as const;
 
       const targetCreatedAt = target.createdAt as Date;
@@ -513,6 +531,8 @@ router.get(
         senderAvatar: userProfiles.avatarUrl,
         mentions: messages.mentions,
         mediaUrls: messages.mediaUrls,
+        // Mirrors msgSelect above — see comment there for context.
+        kind: messages.kind,
       })
       .from(messages)
       .leftJoin(users, eq(users.id, messages.senderId))
