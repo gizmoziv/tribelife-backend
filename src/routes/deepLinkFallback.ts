@@ -33,12 +33,16 @@ router.get('/invite', (req: Request, res: Response) => {
     : 'https://tribelife.app';
   const androidStoreUrl = `https://play.google.com/store/apps/details?id=com.tribelife.app${ref ? `&referrer=${encodeURIComponent(`ref=${ref}`)}` : ''}`;
   const storeUrl = platform === 'ios' ? iosStoreUrl : androidStoreUrl;
-  // "Open in TribeLife" target. iOS: same canonical https URL — re-tapping
-  // re-triggers Universal Links evaluation. Android: intent:// with a built-in
-  // browser_fallback_url so the OS handles store routing if the app is missing.
+  // "Open in TribeLife" target. iOS: custom `tribelife://` scheme — Apple's
+  // "the app had its chance" rule causes iOS to BYPASS Universal Links when
+  // the foreground app calls openURL() on its own https UL, so users tapping
+  // an in-app link end up in Safari and a re-tap of the same https URL just
+  // re-renders this interstitial in a loop. The custom scheme is exempt from
+  // that rule and launches the app reliably. Android: intent:// (same idea)
+  // with a built-in browser_fallback_url for store routing if app is missing.
   const openInAppHref = platform === 'android'
     ? `intent://tribelife.app/invite${ref ? `?ref=${encodeURIComponent(ref)}` : ''}#Intent;scheme=https;package=com.tribelife.app;S.browser_fallback_url=${encodeURIComponent(storeUrl)};end`
-    : `https://tribelife.app/invite${ref ? `?ref=${encodeURIComponent(ref)}` : ''}`;
+    : `tribelife://invite${ref ? `?ref=${encodeURIComponent(ref)}` : ''}`;
   const clipboardPayload = ref ? `tribelife-ref:${ref}` : '';
 
   const html = `<!DOCTYPE html>
@@ -110,13 +114,17 @@ router.get('/g/:slug', (req: Request, res: Response, next: NextFunction) => {
     : 'https://tribelife.app';
   const androidStoreUrl = 'https://play.google.com/store/apps/details?id=com.tribelife.app';
   const storeUrl = platform === 'ios' ? iosStoreUrl : androidStoreUrl;
-  // "Open in TribeLife" target. iOS: re-tap the same canonical https URL —
-  // re-triggers Universal Links evaluation. Android: intent:// with a built-in
-  // browser_fallback_url so the OS handles store routing if the app is missing.
+  // "Open in TribeLife" target. iOS: custom `tribelife://` scheme — Apple's
+  // "the app had its chance" rule causes iOS to BYPASS Universal Links when
+  // the foreground app calls openURL() on its own https UL, so users tapping
+  // an in-app link end up in Safari and a re-tap of the same https URL just
+  // re-renders this interstitial in a loop. The custom scheme is exempt from
+  // that rule and launches the app reliably. Android: intent:// (same idea)
+  // with a built-in browser_fallback_url for store routing if app is missing.
   const refQuery = safeRef ? `?ref=${encodeURIComponent(safeRef)}` : '';
   const openInAppHref = platform === 'android'
     ? `intent://tribelife.app/g/${safeSlug}${refQuery}#Intent;scheme=https;package=com.tribelife.app;S.browser_fallback_url=${encodeURIComponent(storeUrl)};end`
-    : `https://tribelife.app/g/${safeSlug}${refQuery}`;
+    : `tribelife://g/${safeSlug}${refQuery}`;
   // Clipboard payload format: tribelife-g-ref:<ref>:<slug>. Empty when no
   // ref present so the inline <script> branch becomes a no-op.
   const clipboardPayload = safeRef ? `tribelife-g-ref:${safeRef}:${safeSlug}` : '';
@@ -193,13 +201,17 @@ router.get('/u/:handle', (req: Request, res: Response, next: NextFunction) => {
     : 'https://tribelife.app';
   const androidStoreUrl = 'https://play.google.com/store/apps/details?id=com.tribelife.app';
   const storeUrl = platform === 'ios' ? iosStoreUrl : androidStoreUrl;
-  // "Open in TribeLife" target. iOS: re-tap the same canonical https URL —
-  // re-triggers Universal Links evaluation. Android: intent:// with a built-in
-  // browser_fallback_url so the OS handles store routing if the app is missing.
+  // "Open in TribeLife" target. iOS: custom `tribelife://` scheme — Apple's
+  // "the app had its chance" rule causes iOS to BYPASS Universal Links when
+  // the foreground app calls openURL() on its own https UL, so users tapping
+  // an in-app link end up in Safari and a re-tap of the same https URL just
+  // re-renders this interstitial in a loop. The custom scheme is exempt from
+  // that rule and launches the app reliably. Android: intent:// (same idea)
+  // with a built-in browser_fallback_url for store routing if app is missing.
   const refQuery = safeRef ? `?ref=${encodeURIComponent(safeRef)}` : '';
   const openInAppHref = platform === 'android'
     ? `intent://tribelife.app/u/${safeHandle}${refQuery}#Intent;scheme=https;package=com.tribelife.app;S.browser_fallback_url=${encodeURIComponent(storeUrl)};end`
-    : `https://tribelife.app/u/${safeHandle}${refQuery}`;
+    : `tribelife://u/${safeHandle}${refQuery}`;
   // Clipboard payload format: tribelife-u-ref:<ref>:<handle>.
   const clipboardPayload = safeRef ? `tribelife-u-ref:${safeRef}:${safeHandle}` : '';
 
