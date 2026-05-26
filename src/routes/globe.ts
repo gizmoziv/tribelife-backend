@@ -272,20 +272,32 @@ router.get('/rooms', async (req: AuthRequest, res: Response): Promise<void> => {
         // (no globe_room_memberships row gets written for a user's native zone —
         // those rows only appear for cross-zone retainers from auth.ts tz-change
         // and explicit globe-room joins). Counting just the table left every
-        // timezone room reading 0. UNION dedupes the rare overlap (a premium
-        // user listed in both because they moved AND were native again later).
-        const memberCountResult = await db.execute(sql`
-          SELECT count(*)::int AS c FROM (
-            SELECT user_id FROM user_profiles
-              WHERE timezone = ANY(${z.members}::text[])
-            UNION
-            SELECT user_id FROM globe_room_memberships
-              WHERE room_slug = ${z.slug}
-          ) u
-        `);
-        const memberCount = Number(
-          (memberCountResult.rows[0] as { c?: number } | undefined)?.c ?? 0,
-        );
+        // timezone room reading 0. Sum implicit + explicit, deduping the rare
+        // overlap (a premium user with an old preserved row whose timezone is
+        // now back in the same zone) via the notInArray subquery.
+        // Two count() queries via Drizzle ops — avoids the array-binding
+        // pitfall of `sql\`… ANY(${z.members}::text[])\`` (sql template spreads
+        // arrays into N positional params, producing a record that PG refuses
+        // to cast to text[]).
+        const implicitNativeUserIds = db
+          .select({ userId: userProfiles.userId })
+          .from(userProfiles)
+          .where(inArray(userProfiles.timezone, z.members));
+        const [implicitCount, explicitCount] = await Promise.all([
+          db
+            .select({ c: count() })
+            .from(userProfiles)
+            .where(inArray(userProfiles.timezone, z.members)),
+          db
+            .select({ c: count() })
+            .from(globeRoomMemberships)
+            .where(and(
+              eq(globeRoomMemberships.roomSlug, z.slug),
+              notInArray(globeRoomMemberships.userId, implicitNativeUserIds),
+            )),
+        ]);
+        const memberCount =
+          Number(implicitCount[0]?.c ?? 0) + Number(explicitCount[0]?.c ?? 0);
 
         // lastMessage: D-03 — free callers always get null (no preview);
         // premium/org_admin get the real last-message preview.
