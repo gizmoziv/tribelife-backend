@@ -55,8 +55,16 @@ router.get('/apple-app-site-association', (_req, res) => {
 
 // ── Android Asset Links ─────────────────────────────────────────────────────
 router.get('/assetlinks.json', (_req, res) => {
-  const sha256 = process.env.ANDROID_SHA256_FINGERPRINT;
-  if (!sha256) {
+  // Accept a comma-separated list so we can advertise BOTH the Play App Signing
+  // key (what Play-distributed installs are re-signed with — the cert Android
+  // actually verifies) and the upload key (EAS / internal-test builds). Listing
+  // only one breaks domain verification for the other.
+  const fingerprints = (process.env.ANDROID_SHA256_FINGERPRINT ?? '')
+    .split(',')
+    .map((fp) => fp.trim())
+    .filter(Boolean);
+
+  if (fingerprints.length === 0) {
     log.error('ANDROID_SHA256_FINGERPRINT not set');
     res.status(503).json({ error: 'Asset links not configured' });
     return;
@@ -68,7 +76,7 @@ router.get('/assetlinks.json', (_req, res) => {
       target: {
         namespace: 'android_app',
         package_name: 'com.tribelife.app',
-        sha256_cert_fingerprints: [sha256],
+        sha256_cert_fingerprints: fingerprints,
       },
     },
   ];
