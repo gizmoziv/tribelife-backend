@@ -1,0 +1,11 @@
+-- Flip the default for user_profiles.news_push_enabled from false to true so
+-- NEW accounts have news alerts ON by default. Additive (SET DEFAULT only),
+-- zero-downtime, no table rewrite. Existing rows are intentionally NOT changed
+-- (no backfill — preserves prior opt-out/consent state).
+--
+-- The DROP INDEX that db:generate emitted for "conversations_group_name_trgm_idx"
+-- was removed by hand: that GIN trigram index is built out-of-band via
+-- `npm run db:create-trgm-indexes` (drizzle-kit cannot model gin_trgm_ops), so
+-- the diff is spurious. The index was re-added to this migration's snapshot meta
+-- to stop the drop from recurring on future generates.
+ALTER TABLE "user_profiles" ALTER COLUMN "news_push_enabled" SET DEFAULT true;
