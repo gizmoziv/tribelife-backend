@@ -498,14 +498,18 @@ router.get('/preferences', async (req: AuthRequest, res: Response): Promise<void
 // ── Update notification preferences ────────────────────────────────────────
 router.put('/preferences', async (req: AuthRequest, res: Response): Promise<void> => {
   const userId = req.user!.id;
-  const { beaconMatchesPush, dmsPush } = req.body as {
+  // M3: raw body cast (no zod), matches existing dmsPush/beaconMatchesPush style.
+  // groupsPush added per D-15 — gates plain-message group push (16-06 column).
+  const { beaconMatchesPush, dmsPush, groupsPush } = req.body as {
     beaconMatchesPush?: boolean;
     dmsPush?: boolean;
+    groupsPush?: boolean;
   };
 
   const updates: Partial<typeof notificationPreferences.$inferInsert> = {};
   if (beaconMatchesPush !== undefined) updates.beaconMatchesPush = beaconMatchesPush;
   if (dmsPush !== undefined) updates.dmsPush = dmsPush;
+  if (groupsPush !== undefined) updates.groupsPush = groupsPush;
 
   const existing = await db
     .select({ id: notificationPreferences.id })
