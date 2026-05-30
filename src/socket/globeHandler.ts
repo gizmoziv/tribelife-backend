@@ -7,7 +7,7 @@ import { checkRateLimit } from './rateLimit';
 import { isValidGlobeRoom, AGE_GATE_HOURS } from '../config/globeRooms';
 import { moderateMessage } from '../services/claude';
 import { moderateMessageImages } from '../services/imageModeration';
-import { sendPushToUser, shouldSendPush } from '../services/pushNotifications';
+import { sendPushNotifications, shouldSendPush, getUnreadBadgeCounts } from '../services/pushNotifications';
 import { getGlobeMembershipsForUser, getGlobeMembershipsForRoomSlug } from '../services/globeMembership';
 import type { ChatNotificationPayload } from '../types/chatNotification';
 
@@ -203,14 +203,16 @@ export function registerGlobeHandlers(io: Server, socket: Socket): void {
       createdAt: msg.createdAt,
     });
 
-    // Build the full set of users to notify: explicit @mentions + reply target
-    const notifyUserIds = new Set<number>(mentionedUserIds);
+    // Build the full set of directed targets: explicit @mentions + reply target
+    const directedTargets = new Set<number>(mentionedUserIds);
     if (replyToSenderId && replyToSenderId !== userId) {
-      notifyUserIds.add(replyToSenderId);
+      directedTargets.add(replyToSenderId);
     }
     const explicitMentions = new Set(mentionedUserIds);
 
-    for (const notifyId of notifyUserIds) {
+    // ── Mention / reply notifications (directed targets only) ─────────────
+    // M5: directed targets get ONLY the type:'mention' row — NOT also a group row.
+    for (const notifyId of directedTargets) {
       if (notifyId === userId) continue;
 
       const isReplyTarget = notifyId === replyToSenderId && !explicitMentions.has(notifyId);
@@ -252,23 +254,142 @@ export function registerGlobeHandlers(io: Server, socket: Socket): void {
         .limit(1);
 
       if (await shouldSendPush(notifyId, 'mention')) {
-        await sendPushToUser(
-          targetProfile?.expoPushToken,
-          title,
-          content.slice(0, 100),
-          {
-            type: 'chat',
-            source: 'globe_room',
-            entityId: data.slug,
-            roomSlug: data.slug,
-            notificationId: inserted.id,
-            messageId: msg.id, // Phase 14 D-04
-            senderHandle: handle,
-          },
-          notifyId,
-        );
+        const token = targetProfile?.expoPushToken;
+        if (token?.startsWith('ExponentPushToken[')) {
+          await sendPushNotifications([{
+            to: token,
+            title,
+            body: content.slice(0, 100),
+            data: {
+              type: 'chat',
+              source: 'globe_room',
+              entityId: data.slug,
+              roomSlug: data.slug,
+              notificationId: inserted.id,
+              messageId: msg.id, // Phase 14 D-04
+              senderHandle: handle,
+            },
+            sound: 'default',
+          }]);
+        }
       }
     }
+
+    // ── Plain-message group fan-out (D-13/D-14) ───────────────────────────
+    // Runs AFTER the live broadcast (post-broadcast deferral for chat latency,
+    // M6). All globe room members EXCEPT sender (D-17) and directed targets (M5)
+    // get a stored type:'group' row + groupsPush-gated push.
+    // Town Square (slug='town-square', autoJoin=true) IS included — it uses
+    // source:'globe_room' with entityId='town-square' (no separate source).
+    // D-16: this handler only processes user sends. REST routes (groups.ts)
+    // handle system messages and do NOT pass through here — no group rows for joins.
+    const slug = data.slug;
+    setImmediate(async () => {
+      try {
+        // Fetch all globe room members for this slug (includes Town Square members).
+        const roomMemberSet = await getGlobeMembershipsForRoomSlug(slug);
+        // Exclude sender (D-17).
+        roomMemberSet.delete(userId);
+        if (roomMemberSet.size === 0) return;
+
+        // M5: exclude directed targets — they already got a mention row.
+        const groupRecipients = [...roomMemberSet].filter((id) => !directedTargets.has(id));
+        if (groupRecipients.length === 0) return;
+
+        // Batched token fetch in ONE query (M6 — no N selects).
+        const profileRows = await db
+          .select({ userId: userProfiles.userId, expoPushToken: userProfiles.expoPushToken })
+          .from(userProfiles)
+          .where(inArray(userProfiles.userId, groupRecipients));
+        const tokenMap = new Map<number, string | null>(
+          profileRows.map((r) => [r.userId, r.expoPushToken ?? null]),
+        );
+
+        const notifBody = content.slice(0, 100);
+        const groupTitle = `@${handle}`;
+
+        // MANDATORY batched notification INSERT (single multi-row insert, M6).
+        const insertValues = groupRecipients.map((recipientId) => ({
+          userId: recipientId,
+          type: 'group' as const,
+          title: groupTitle,
+          body: notifBody,
+          data: {
+            messageId: msg.id,
+            roomId,
+            globeSlug: slug,
+            senderHandle: handle,
+            source: 'globe_room' as const,
+            entityId: slug,
+            roomSlug: slug,
+          },
+        }));
+
+        const insertedRows = await db
+          .insert(notifications)
+          .values(insertValues)
+          .returning({ id: notifications.id, userId: notifications.userId });
+
+        // Map userId → notificationId for the socket emit.
+        const notifIdMap = new Map<number, number>(
+          insertedRows.map((r) => [r.userId, r.id]),
+        );
+
+        // Emit chat:notification to each recipient's personal room.
+        for (const recipientId of groupRecipients) {
+          const notifId = notifIdMap.get(recipientId);
+          if (notifId === undefined) continue;
+          io.to(`user:${recipientId}`).emit('chat:notification', {
+            source: 'globe_room',
+            entityId: slug,
+            roomSlug: slug,
+            notificationId: notifId,
+            messageId: msg.id,
+            title: groupTitle,
+            body: notifBody,
+            senderHandle: handle,
+          } satisfies ChatNotificationPayload);
+        }
+
+        // MANDATORY chunked push — gate on groupsPush, batch via array path (M6).
+        const badgeCounts = await getUnreadBadgeCounts(groupRecipients);
+
+        const pushMessages: Array<{ to: string; title: string; body: string; data: Record<string, unknown>; sound: 'default'; badge?: number; channelId: string }> = [];
+        for (const recipientId of groupRecipients) {
+          const canPush = await shouldSendPush(recipientId, 'group');
+          if (!canPush) continue;
+          const token = tokenMap.get(recipientId);
+          if (!token?.startsWith('ExponentPushToken[')) continue;
+          const notifId = notifIdMap.get(recipientId);
+          if (notifId === undefined) continue;
+          pushMessages.push({
+            to: token,
+            title: groupTitle,
+            body: notifBody,
+            data: {
+              type: 'chat',
+              source: 'globe_room',
+              entityId: slug,
+              roomSlug: slug,
+              notificationId: notifId,
+              messageId: msg.id,
+              senderHandle: handle,
+            },
+            sound: 'default',
+            badge: (badgeCounts.get(recipientId) ?? 0),
+            channelId: 'default',
+          });
+        }
+
+        // Send in chunks of 100 (Expo push API limit per request).
+        const CHUNK_SIZE = 100;
+        for (let i = 0; i < pushMessages.length; i += CHUNK_SIZE) {
+          await sendPushNotifications(pushMessages.slice(i, i + CHUNK_SIZE));
+        }
+      } catch (err) {
+        log.error({ err }, '[globe fan-out] group notification fan-out failed');
+      }
+    });
 
     // Fire-and-forget image moderation
     if (mediaUrls.length > 0) {
