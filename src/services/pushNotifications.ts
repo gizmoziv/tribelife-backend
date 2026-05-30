@@ -145,9 +145,9 @@ export async function shouldSendPush(
   if (!prefs) return true;
 
   switch (notificationType) {
-    case 'mention': return prefs.mentionsPush;
+    case 'mention': return prefs.dmsPush;
     case 'timezone_chat': return prefs.timezoneChatPush;
     case 'beacon_match': return prefs.beaconMatchesPush;
-    case 'dm': return prefs.dmPush;
+    case 'dm': return prefs.dmsPush;
   }
 }
