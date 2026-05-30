@@ -2,9 +2,8 @@
 // Canonical backend mapping from notification `type` (varchar) to the bell
 // tab that owns it. Pure function — no db import.
 //
-// NOTE: 'groups' is DERIVED (no stored notification type maps to it).
-// The Groups count comes from the /summary derived query (routes/notifications.ts).
-// This resolver never returns 'groups'.
+// NOTE: type:'group' rows (D-14, CPO reversal 2026-05-30) map to 'groups'.
+// The Groups count includes both derived unread state AND stored 'group' rows.
 
 /** Bell tab identifiers. */
 export type NotificationTab = 'groups' | 'dms' | 'matches' | 'system' | 'org';
@@ -25,6 +24,8 @@ export function typeToTab(type: string): NotificationTab {
       return 'system';
     case 'org_invite':
       return 'org';
+    case 'group':
+      return 'groups';
     default:
       return 'system';
   }
