@@ -1,16 +1,19 @@
 import { Router, Response } from 'express';
-import { eq, and, desc, sql, inArray, or, isNull, gt, ne, exists } from 'drizzle-orm';
+import { eq, and, desc, sql, inArray, or, isNull, gt, ne, exists, count } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '../db';
 import {
   notifications,
   notificationPreferences,
   conversationParticipants,
+  conversations,
   messages,
   globeReadPositions,
+  globeRoomMemberships,
+  userProfiles,
 } from '../db/schema';
 import { requireAuth, AuthRequest } from '../middleware/auth';
-import { translateLegacyTimezoneRoomId } from '../config/timezoneZones';
+import { translateLegacyTimezoneRoomId, getZoneForTimezone } from '../config/timezoneZones';
 import logger from '../lib/logger';
 
 const router = Router();
@@ -34,12 +37,19 @@ router.get('/', async (req: AuthRequest, res: Response): Promise<void> => {
 });
 
 // ── Summary: unread *events* bucketed for the bell + per-tab dots ─────────
-// Designed to keep the bell count low and meaningful. DMs are counted as
-// unread conversations (not unread messages) so a chatty thread doesn't
-// inflate the bell.
+// Response shape: { groups, dms, matches, system }
+//   groups  — DERIVED: count of multi-person chats (local_chat, town_square,
+//             joined globe_room, group) with ≥1 unread plain message not
+//             authored by the user. Excludes 1:1 DMs (those go to dms).
+//             Mirrors the unread fragments from routes/chats.ts sections 3/4/4b/5.
+//   dms     — unread type:'mention' rows + derived count of 1:1 DM conversations
+//             with unread messages (same exists() pattern as previous dmConversations).
+//   matches — unread type:'beacon_match' rows.
+//   system  — unread type:'system' rows (includes moderation notices from imageModeration.ts).
 router.get('/summary', async (req: AuthRequest, res: Response): Promise<void> => {
   const userId = req.user!.id;
 
+  // ── Stored notification counts (mentions, matches, system) ───────────────
   const [notifRows] = await db
     .select({
       mentions: sql<number>`count(*) filter (where ${notifications.type} = 'mention' and ${notifications.isRead} = false)`.mapWith(Number),
@@ -49,13 +59,25 @@ router.get('/summary', async (req: AuthRequest, res: Response): Promise<void> =>
     .from(notifications)
     .where(eq(notifications.userId, userId));
 
-  // DMs: count distinct conversations with at least one message newer than
+  // ── DMs: unread mention rows + 1:1 DM conversations with unread ───────────
+  // Count distinct 1:1 conversations with at least one message newer than
   // the user's lastReadAt on that conversation (and not authored by them).
-  const [dmRow] = await db
+  // Mirrors the previous dmConversations fragment (chats.ts:310-321 pattern).
+  const [dmConvRow] = await db
     .select({ count: sql<number>`count(*)`.mapWith(Number) })
     .from(conversationParticipants)
     .where(and(
       eq(conversationParticipants.userId, userId),
+      // 1:1 DM only (isGroup IS NOT TRUE — mirrors chats.ts:5c)
+      exists(
+        db
+          .select({ id: conversations.id })
+          .from(conversations)
+          .where(and(
+            eq(conversations.id, conversationParticipants.conversationId),
+            sql`${conversations.isGroup} IS NOT TRUE`,
+          )),
+      ),
       exists(
         db
           .select({ id: messages.id })
@@ -71,33 +93,268 @@ router.get('/summary', async (req: AuthRequest, res: Response): Promise<void> =>
       ),
     ));
 
+  const dms = (notifRows?.mentions ?? 0) + (dmConvRow?.count ?? 0);
+
+  // ── Groups: DERIVED count of multi-person chats with unread plain messages ─
+  // Counts each SOURCE (not each message) with ≥1 unread message not by user.
+  // Sources: local_chat zone, town_square, joined non-town-square globe rooms,
+  // group conversations. 1:1 DMs are EXCLUDED.
+  // Cross-reference: chats.ts sections 3 (local), 4 (town_square), 4b (globe_room), 5d (group).
+
+  // Look up user's timezone for local chat room slug.
+  const [profileRow] = await db
+    .select({ timezone: userProfiles.timezone })
+    .from(userProfiles)
+    .where(eq(userProfiles.userId, userId))
+    .limit(1);
+  const userTimezone = profileRow?.timezone ?? 'UTC';
+  const localZoneSlug = getZoneForTimezone(userTimezone);
+  const localRoomId = 'timezone:' + localZoneSlug;
+
+  // Fetch read positions for local zone + town square in one query.
+  const readPositions = await db
+    .select({ roomSlug: globeReadPositions.roomSlug, lastReadAt: globeReadPositions.lastReadAt })
+    .from(globeReadPositions)
+    .where(and(
+      eq(globeReadPositions.userId, userId),
+      inArray(globeReadPositions.roomSlug, [localZoneSlug, 'town-square']),
+    ));
+  const readMap = new Map(readPositions.map((r) => [r.roomSlug, r.lastReadAt]));
+  const localLastRead = readMap.get(localZoneSlug) ?? null;
+  const townLastRead = readMap.get('town-square') ?? null;
+
+  // Local Chat: ≥1 unread message not by user in timezone:<localZoneSlug>?
+  const localWhere = localLastRead
+    ? and(eq(messages.roomId, localRoomId), gt(messages.createdAt, localLastRead), ne(messages.senderId, userId), isNull(messages.deletedAt))
+    : and(eq(messages.roomId, localRoomId), ne(messages.senderId, userId), isNull(messages.deletedAt));
+  const [localUnread] = await db
+    .select({ c: count() })
+    .from(messages)
+    .where(localWhere)
+    .limit(1);
+  const localHasUnread = (localUnread?.c ?? 0) > 0;
+
+  // Town Square: ≥1 unread message not by user in globe:town-square?
+  const townWhere = townLastRead
+    ? and(eq(messages.roomId, 'globe:town-square'), gt(messages.createdAt, townLastRead), ne(messages.senderId, userId), isNull(messages.deletedAt))
+    : and(eq(messages.roomId, 'globe:town-square'), ne(messages.senderId, userId), isNull(messages.deletedAt));
+  const [townUnread] = await db
+    .select({ c: count() })
+    .from(messages)
+    .where(townWhere)
+    .limit(1);
+  const townHasUnread = (townUnread?.c ?? 0) > 0;
+
+  // Joined globe rooms (excluding town-square): count rooms with ≥1 unread.
+  // Mirrors chats.ts section 4b globe branch.
+  const joinedGlobeRows = await db
+    .select({ roomSlug: globeRoomMemberships.roomSlug })
+    .from(globeRoomMemberships)
+    .where(and(
+      eq(globeRoomMemberships.userId, userId),
+      ne(globeRoomMemberships.roomSlug, 'town-square'),
+    ));
+  let globeRoomsWithUnread = 0;
+  if (joinedGlobeRows.length > 0) {
+    const joinedSlugs = joinedGlobeRows.map((r) => r.roomSlug);
+    const joinedReadPos = await db
+      .select({ roomSlug: globeReadPositions.roomSlug, lastReadAt: globeReadPositions.lastReadAt })
+      .from(globeReadPositions)
+      .where(and(
+        eq(globeReadPositions.userId, userId),
+        inArray(globeReadPositions.roomSlug, joinedSlugs),
+      ));
+    const joinedReadMap = new Map(joinedReadPos.map((r) => [r.roomSlug, r.lastReadAt]));
+    await Promise.all(
+      joinedSlugs.map(async (slug) => {
+        const roomId = 'globe:' + slug;
+        const lastRead = joinedReadMap.get(slug) ?? null;
+        const unreadWhere = lastRead
+          ? and(eq(messages.roomId, roomId), gt(messages.createdAt, lastRead), ne(messages.senderId, userId), isNull(messages.deletedAt))
+          : and(eq(messages.roomId, roomId), ne(messages.senderId, userId), isNull(messages.deletedAt));
+        const [unreadRow] = await db.select({ c: count() }).from(messages).where(unreadWhere).limit(1);
+        if ((unreadRow?.c ?? 0) > 0) globeRoomsWithUnread++;
+      }),
+    );
+  }
+
+  // Group conversations (isGroup = true) with ≥1 unread message not by user.
+  // Mirrors chats.ts section 5d. 1:1 DMs (isGroup IS NOT TRUE) are excluded.
+  const [groupUnreadRow] = await db
+    .select({ count: sql<number>`count(*)`.mapWith(Number) })
+    .from(conversationParticipants)
+    .where(and(
+      eq(conversationParticipants.userId, userId),
+      exists(
+        db
+          .select({ id: conversations.id })
+          .from(conversations)
+          .where(and(
+            eq(conversations.id, conversationParticipants.conversationId),
+            eq(conversations.isGroup, true),
+          )),
+      ),
+      exists(
+        db
+          .select({ id: messages.id })
+          .from(messages)
+          .where(and(
+            eq(messages.conversationId, conversationParticipants.conversationId),
+            ne(messages.senderId, userId),
+            or(
+              isNull(conversationParticipants.lastReadAt),
+              gt(messages.createdAt, conversationParticipants.lastReadAt),
+            ),
+          )),
+      ),
+    ));
+
+  const groups =
+    (localHasUnread ? 1 : 0) +
+    (townHasUnread ? 1 : 0) +
+    globeRoomsWithUnread +
+    (groupUnreadRow?.count ?? 0);
+
   res.json({
-    mentions: notifRows?.mentions ?? 0,
-    dmConversations: dmRow?.count ?? 0,
-    beaconMatches: notifRows?.beaconMatches ?? 0,
+    groups,
+    dms,
+    matches: notifRows?.beaconMatches ?? 0,
     system: notifRows?.system ?? 0,
   });
 });
 
 // ── Mark notifications as read ─────────────────────────────────────────────
-// Optional `type` query param scopes the clear to a single bell tab (mention,
-// new_dm, beacon_match, system). Clearing a bucket cascades to the *sources*
-// those events came from:
-//   • conversations where events lived → `lastReadAt = NOW()` for the user
-//   • globe rooms where events lived → upsert `globeReadPositions.lastReadAt`
-//   • other unread notifications tied to the same conversations → marked read
-//     (so clearing DMs on a group chat also clears any pending mention for that
-//     group, and vice versa — as the user expects)
-// Returns the source IDs touched so the client can refresh derived state
-// (chat unread badges, globe unread counts, local-chat counter).
+// Accepts ?tab= (canonical TAB semantics, W1 LOCKED) OR legacy ?type= for
+// backward tolerance. Tab→type[] expansion:
+//   tab=dms      → clears 'mention' + 'new_dm' rows
+//   tab=matches  → clears 'beacon_match' rows
+//   tab=system   → clears 'system' rows
+//   tab=groups   → NO stored-row clear; advances read positions across ALL
+//                  unread multi-person chats (Groups is derived — no rows).
+// Legacy ?type= still accepted: maps to the single type it names.
+// Clearing a stored bucket also cascades to the *sources* those events came
+// from (conversations lastReadAt, globeReadPositions) so chat unread badges
+// clear together with the bell tab.
+// Returns source IDs touched so the client can refresh derived state.
+
+// Inverse of typeToTab: maps a tab name to the notification types it clears.
+// 'groups' has no stored types — handled separately by the read-position cascade.
+const TAB_TYPES: Record<string, string[]> = {
+  dms: ['mention', 'new_dm'],
+  matches: ['beacon_match'],
+  system: ['system'],
+};
+
 router.put('/read-all', async (req: AuthRequest, res: Response): Promise<void> => {
   const userId = req.user!.id;
+
+  // Resolve tab param (new canonical) or fall back to legacy type param.
+  const tabParam = typeof req.query.tab === 'string' ? req.query.tab : undefined;
   const typeParam = typeof req.query.type === 'string' ? req.query.type : undefined;
-  const allowedTypes = ['mention', 'new_dm', 'beacon_match', 'system'] as const;
-  const typeFilter = allowedTypes.includes(typeParam as typeof allowedTypes[number])
-    ? eq(notifications.type, typeParam as string)
+
+  // Determine which notification types to clear (empty = clear all).
+  let typesToClear: string[] = [];
+  if (tabParam && TAB_TYPES[tabParam]) {
+    typesToClear = TAB_TYPES[tabParam];
+  } else if (tabParam === 'groups') {
+    // Groups tab — no stored rows; handled below by read-position cascade.
+    typesToClear = [];
+  } else if (typeParam) {
+    // Legacy ?type= — treat as a single-type clear for backward tolerance.
+    const allowedLegacy = ['mention', 'new_dm', 'beacon_match', 'system'];
+    if (allowedLegacy.includes(typeParam)) typesToClear = [typeParam];
+  }
+  // tabParam is 'groups' OR (no tab and no recognized type) → clear all
+  const isGroupsTab = tabParam === 'groups';
+  const typeFilter = typesToClear.length > 0
+    ? inArray(notifications.type, typesToClear)
     : undefined;
 
+  // ── Groups tab: advance read positions across all unread multi-person chats ─
+  // Groups is a derived tab (no stored rows). Clearing it advances:
+  //   • globeReadPositions for local zone, town-square, joined globe rooms with unread
+  //   • conversationParticipants.lastReadAt for GROUP (not 1:1) conversations with unread
+  // Returns cleared slugs + conversationIds in the standard response shape.
+  if (isGroupsTab) {
+    const now = new Date();
+
+    // Look up user's local zone for local_chat read position.
+    const [profileRow] = await db
+      .select({ timezone: userProfiles.timezone })
+      .from(userProfiles)
+      .where(eq(userProfiles.userId, userId))
+      .limit(1);
+    const userTimezone = profileRow?.timezone ?? 'UTC';
+    const localZoneSlug = getZoneForTimezone(userTimezone);
+    const localRoomId = 'timezone:' + localZoneSlug;
+
+    // Gather all globe slugs to advance: local zone + town-square + joined non-town-square.
+    const slugsToAdvance: string[] = [localZoneSlug, 'town-square'];
+    const joinedGlobe = await db
+      .select({ roomSlug: globeRoomMemberships.roomSlug })
+      .from(globeRoomMemberships)
+      .where(and(
+        eq(globeRoomMemberships.userId, userId),
+        ne(globeRoomMemberships.roomSlug, 'town-square'),
+      ));
+    for (const r of joinedGlobe) slugsToAdvance.push(r.roomSlug);
+
+    // Advance globeReadPositions for all multi-person room slugs.
+    // Only advance slugs that actually have unread to minimise writes — but
+    // for simplicity (mirrors the existing cascade pattern :169-179) we upsert
+    // all collected slugs unconditionally.
+    const clearedGlobeSlugs: string[] = [];
+    await Promise.all(
+      slugsToAdvance.map(async (slug) => {
+        await db
+          .insert(globeReadPositions)
+          .values({ userId, roomSlug: slug, lastReadAt: now })
+          .onConflictDoUpdate({
+            target: [globeReadPositions.userId, globeReadPositions.roomSlug],
+            set: { lastReadAt: now },
+          });
+        clearedGlobeSlugs.push(slug);
+      }),
+    );
+
+    // Advance lastReadAt for GROUP (isGroup = true) conversations the user is in.
+    // Does NOT touch 1:1 DMs (those stay in the dms tab). Mirrors chats.ts 5d.
+    const groupParticipations = await db
+      .select({ conversationId: conversationParticipants.conversationId })
+      .from(conversationParticipants)
+      .where(and(
+        eq(conversationParticipants.userId, userId),
+        isNull(conversationParticipants.leftAt),
+        exists(
+          db
+            .select({ id: conversations.id })
+            .from(conversations)
+            .where(and(
+              eq(conversations.id, conversationParticipants.conversationId),
+              eq(conversations.isGroup, true),
+            )),
+        ),
+      ));
+    const groupConvIds = groupParticipations.map((p) => p.conversationId);
+    if (groupConvIds.length > 0) {
+      await db
+        .update(conversationParticipants)
+        .set({ lastReadAt: now })
+        .where(and(
+          eq(conversationParticipants.userId, userId),
+          inArray(conversationParticipants.conversationId, groupConvIds),
+        ));
+    }
+
+    res.json({
+      clearedConversationIds: groupConvIds,
+      clearedGlobeSlugs,
+      clearedTimezoneRooms: [localRoomId],
+    });
+    return;
+  }
+
+  // ── Stored-row clear (dms / matches / system / all) ───────────────────────
   // Step 1: find the unread rows we're about to clear so we can inspect their
   // source payloads. Doing this before the UPDATE keeps the cascade precise.
   const affected = await db
