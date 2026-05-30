@@ -8,7 +8,7 @@ import { isValidGlobeRoom, AGE_GATE_HOURS } from '../config/globeRooms';
 import { moderateMessage } from '../services/claude';
 import { moderateMessageImages } from '../services/imageModeration';
 import { sendPushToUser, shouldSendPush } from '../services/pushNotifications';
-import { getGlobeMembershipsForUser } from '../services/globeMembership';
+import { getGlobeMembershipsForUser, getGlobeMembershipsForRoomSlug } from '../services/globeMembership';
 import type { ChatNotificationPayload } from '../types/chatNotification';
 
 // ── Globe Room Event Handlers ───────────────────────────────────────────────
@@ -123,7 +123,12 @@ export function registerGlobeHandlers(io: Server, socket: Socket): void {
         .select({ userId: userProfiles.userId })
         .from(userProfiles)
         .where(inArray(userProfiles.handle, mentionedHandles));
-      mentionedUserIds = mentionedProfiles.map((p) => p.userId);
+      // NOTIF-03: intersect with globe room membership — a mention of a handle
+      // that is NOT a member of this room produces no notification for that handle.
+      const roomMemberIds = await getGlobeMembershipsForRoomSlug(data.slug);
+      mentionedUserIds = mentionedProfiles
+        .map((p) => p.userId)
+        .filter((id) => roomMemberIds.has(id));
     }
 
     // Persist message

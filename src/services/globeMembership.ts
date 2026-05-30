@@ -28,3 +28,16 @@ export async function getGlobeMembershipsForUser(userId: number): Promise<Set<st
     .where(eq(globeRoomMemberships.userId, userId));
   return new Set(rows.map((r) => r.roomSlug));
 }
+
+/**
+ * Returns the set of userIds who are members of a given Globe room slug.
+ * Used for NOTIF-03 mention intersection: a mention of a non-member produces
+ * no notification for that user.
+ */
+export async function getGlobeMembershipsForRoomSlug(roomSlug: string): Promise<Set<number>> {
+  const rows = await db
+    .select({ userId: globeRoomMemberships.userId })
+    .from(globeRoomMemberships)
+    .where(eq(globeRoomMemberships.roomSlug, roomSlug));
+  return new Set(rows.map((r) => r.userId));
+}
