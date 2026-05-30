@@ -229,6 +229,7 @@ export const notificationPreferences = pgTable('notification_preferences', {
   dmPush: boolean('dm_push').notNull().default(true),
   townSquarePush: boolean('town_square_push').notNull().default(true),
   dmsPush: boolean('dms_push').notNull().default(true),
+  groupsPush: boolean('groups_push').notNull().default(true),
   createdAt: timestamp('created_at').defaultNow(),
   updatedAt: timestamp('updated_at').defaultNow(),
 });
