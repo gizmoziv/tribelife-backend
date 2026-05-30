@@ -10,6 +10,14 @@
 // zones (Newfoundland, India) use fractional `utcOffsetHours`.
 //
 // MIRROR: `tribelife-mobile/utils/timezoneZones.ts` — keep in sync.
+//
+// ── Phase 16-07: getZoneMemberIds DB helper ────────────────────────────────
+// Imported here (not in the mirror mobile file) because the backend config file
+// is the natural co-location point per the plan. No circular dependency: db and
+// db/schema do not import from this file.
+import { db } from '../db';
+import { userProfiles } from '../db/schema';
+import { inArray, ne, and, isNotNull } from 'drizzle-orm';
 
 export interface TimezoneZone {
   slug: string; // kebab-case, used as room key suffix
@@ -335,4 +343,46 @@ export function translateLegacyTimezoneRoomId(roomId: string): {
   const slug = IANA_TO_SLUG.get(value);
   if (!slug) return { roomId, wasLegacy: false };
   return { roomId: `timezone:${slug}`, wasLegacy: true };
+}
+
+// ── Phase 16-07 (M2): Timezone room membership helper ─────────────────────
+/**
+ * Returns the userIds whose profile timezone maps to the given zoneSlug.
+ * Optionally excludes `excludeUserId` (the message sender, per D-17).
+ *
+ * Timezone/Local Chat rooms have NO membership table — membership is IMPLICIT
+ * in `userProfiles.timezone`. This helper narrows the SQL to only the IANA
+ * strings that resolve to the requested slug (via `inArray`), which leverages
+ * the `user_profiles_timezone_idx` index on the `timezone` column.
+ *
+ * Cost note: the candidate IANA list for a slug is small (typically 1-10
+ * strings from TIMEZONE_ZONES.members), so the `inArray` predicate is cheap.
+ * However the RESULT SET can be O(tens of thousands) for popular zones like
+ * 'eastern-time'. Callers MUST batch notification inserts and push sends (M6)
+ * rather than issuing N individual DB round-trips per recipient.
+ */
+export async function getZoneMemberIds(
+  zoneSlug: string,
+  excludeUserId?: number,
+): Promise<number[]> {
+  // Find all IANA strings that map to this slug (reverse-lookup from TIMEZONE_ZONES).
+  const zone = TIMEZONE_ZONES.find((z) => z.slug === zoneSlug);
+  if (!zone) return [];
+  const ianaValues = zone.members;
+  if (ianaValues.length === 0) return [];
+
+  const conditions = [
+    inArray(userProfiles.timezone, ianaValues),
+    isNotNull(userProfiles.timezone),
+  ];
+  if (excludeUserId !== undefined) {
+    conditions.push(ne(userProfiles.userId, excludeUserId));
+  }
+
+  const rows = await db
+    .select({ userId: userProfiles.userId })
+    .from(userProfiles)
+    .where(and(...conditions));
+
+  return rows.map((r) => r.userId);
 }
