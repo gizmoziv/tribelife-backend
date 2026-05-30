@@ -545,19 +545,13 @@ router.get('/preferences', async (req: AuthRequest, res: Response): Promise<void
 // ── Update notification preferences ────────────────────────────────────────
 router.put('/preferences', async (req: AuthRequest, res: Response): Promise<void> => {
   const userId = req.user!.id;
-  const { mentionsPush, timezoneChatPush, beaconMatchesPush, dmPush, dmsPush } = req.body as {
-    mentionsPush?: boolean;
-    timezoneChatPush?: boolean;
+  const { beaconMatchesPush, dmsPush } = req.body as {
     beaconMatchesPush?: boolean;
-    dmPush?: boolean;
     dmsPush?: boolean;
   };
 
   const updates: Partial<typeof notificationPreferences.$inferInsert> = {};
-  if (mentionsPush !== undefined) updates.mentionsPush = mentionsPush;
-  if (timezoneChatPush !== undefined) updates.timezoneChatPush = timezoneChatPush;
   if (beaconMatchesPush !== undefined) updates.beaconMatchesPush = beaconMatchesPush;
-  if (dmPush !== undefined) updates.dmPush = dmPush;
   if (dmsPush !== undefined) updates.dmsPush = dmsPush;
 
   const existing = await db
