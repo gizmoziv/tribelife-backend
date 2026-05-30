@@ -54,11 +54,16 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
 
     if (mentionedHandles.length > 0) {
       const mentionedProfiles = await db
-        .select({ userId: userProfiles.userId, handle: userProfiles.handle })
+        .select({ userId: userProfiles.userId, handle: userProfiles.handle, timezone: userProfiles.timezone })
         .from(userProfiles)
         .where(inArray(userProfiles.handle, mentionedHandles));
 
-      mentionedUserIds = mentionedProfiles.map((p) => p.userId);
+      // NOTIF-03: a timezone room's membership is the set of users whose profile
+      // timezone maps to the same zoneSlug. Filter out mentions of users in other
+      // zones — they cannot see this Local Chat and must not be notified.
+      mentionedUserIds = mentionedProfiles
+        .filter((p) => getZoneForTimezone(p.timezone ?? 'UTC') === zoneSlug)
+        .map((p) => p.userId);
     }
 
     // Persist message
