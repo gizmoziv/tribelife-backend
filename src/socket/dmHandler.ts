@@ -9,10 +9,10 @@ import {
   notifications,
   blockedUsers,
 } from '../db/schema';
-import { eq, and, isNull } from 'drizzle-orm';
+import { eq, and, isNull, inArray } from 'drizzle-orm';
 import { moderateMessage } from '../services/claude';
 import { moderateMessageImages } from '../services/imageModeration';
-import { sendPushToUser, sendPushNotifications, shouldSendPush, getUnreadBadgeCounts } from '../services/pushNotifications';
+import { sendPushToUser, shouldSendPush } from '../services/pushNotifications';
 import type { ChatNotificationPayload } from '../types/chatNotification';
 
 const log = logger.child({ module: 'socket:dm' });
@@ -216,93 +216,95 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
 
     if (isGroup) {
       const groupLabel = convo.groupName ?? 'Group';
-      const defaultTitle = `@${handle} in ${groupLabel}`;
-      const replyTitle = `@${handle} replied to you`;
       const notifBody = content.slice(0, 100);
 
-      // Helper: is this recipient the reply target?
-      const isReplyTarget = (id: number) => replyToSenderId !== null && id === replyToSenderId;
-      const titleFor = (id: number) => isReplyTarget(id) ? replyTitle : defaultTitle;
-
-      // Batch insert notifications; capture IDs so we can attach them to pushes
-      const notifIdByUser = new Map<number, number>();
-      if (recipients.length > 0) {
-        const inserted = await db.insert(notifications).values(
-          recipients.map((p) => ({
-            userId: p.userId,
-            type: 'new_dm' as const,
-            title: titleFor(p.userId),
-            body: notifBody,
-            data: {
-              conversationId: data.conversationId,
-              senderHandle: handle,
-              isGroup: true,
-              groupName: groupLabel,
-              // Phase 10 D-01 additive (10-CONTEXT.md):
-              source: 'group' as const,
-              entityId: data.conversationId,
-            },
-          }))
-        ).returning({ id: notifications.id, userId: notifications.userId });
-        for (const row of inserted) notifIdByUser.set(row.userId, row.id);
+      // Parse @mentions in the group message (reuse roomHandler pattern).
+      // Resolve handles → userIds, then intersect with the sender-excluded
+      // recipient set so a mention of a non-member produces no notification
+      // (NOTIF-03).
+      const mentionedHandles = [...content.matchAll(/@([a-zA-Z0-9_]+)/g)].map(
+        (m) => m[1].toLowerCase(),
+      );
+      let mentionedInGroup: number[] = [];
+      if (mentionedHandles.length > 0) {
+        const mentionedProfiles = await db
+          .select({ userId: userProfiles.userId })
+          .from(userProfiles)
+          .where(inArray(userProfiles.handle, mentionedHandles));
+        const recipientIds = new Set(recipients.map((p) => p.userId));
+        mentionedInGroup = mentionedProfiles
+          .map((p) => p.userId)
+          .filter((id) => recipientIds.has(id));
       }
 
-      // Phase 10 D-03: chat-type notifications fan to `chat:notification`.
-      for (const p of recipients) {
-        io.to(`user:${p.userId}`).emit('chat:notification', {
+      // Build directed target set: mentioned group members ∪ reply target
+      // (if they are a recipient). Sender is already excluded from recipients.
+      const directedTargets = new Set<number>(mentionedInGroup);
+      if (replyToSenderId !== null) {
+        const recipientIds = new Set(recipients.map((p) => p.userId));
+        if (recipientIds.has(replyToSenderId)) {
+          directedTargets.add(replyToSenderId);
+        }
+      }
+      const explicitMentions = new Set(mentionedInGroup);
+
+      // Only mention/reply targets get a stored row + push. Plain group
+      // recipients get nothing on the bell/push side — their bubble is
+      // message-timestamp-driven (NOTIF-01, §J1 LOCKED).
+      for (const targetId of directedTargets) {
+        const isReplyTarget = targetId === replyToSenderId && !explicitMentions.has(targetId);
+        const title = isReplyTarget ? `@${handle} replied to you` : `@${handle} mentioned you`;
+
+        const [inserted] = await db.insert(notifications).values({
+          userId: targetId,
+          type: 'mention' as const,
+          title,
+          body: notifBody,
+          data: {
+            conversationId: data.conversationId,
+            senderHandle: handle,
+            isGroup: true,
+            groupName: groupLabel,
+            source: 'group' as const,
+            entityId: data.conversationId,
+          },
+        }).returning({ id: notifications.id });
+
+        io.to(`user:${targetId}`).emit('chat:notification', {
           source: 'group',
           entityId: data.conversationId,
           conversationId: data.conversationId,
           groupName: groupLabel,
-          notificationId: notifIdByUser.get(p.userId)!,
-          messageId: msg.id, // Phase 14 D-04: deep-link to the new message
-          title: titleFor(p.userId),
+          notificationId: inserted.id,
+          messageId: msg.id,
+          title,
           body: notifBody,
           senderHandle: handle,
         } satisfies ChatNotificationPayload);
-      }
 
-      // Batch push notifications
-      // Reply target uses 'mention' preference so they get notified even if
-      // they've turned off group DM push (since they were directly addressed).
-      const eligibleRecipients: { userId: number; expoPushToken: string }[] = [];
-      for (const p of recipients) {
-        const prefType = isReplyTarget(p.userId) ? 'mention' : 'dm';
-        if (await shouldSendPush(p.userId, prefType)) {
-          const [profile] = await db
+        if (await shouldSendPush(targetId, 'mention')) {
+          const [targetProfile] = await db
             .select({ expoPushToken: userProfiles.expoPushToken })
             .from(userProfiles)
-            .where(eq(userProfiles.userId, p.userId))
+            .where(eq(userProfiles.userId, targetId))
             .limit(1);
-          if (profile?.expoPushToken) {
-            eligibleRecipients.push({ userId: p.userId, expoPushToken: profile.expoPushToken });
-          }
+          await sendPushToUser(
+            targetProfile?.expoPushToken,
+            title,
+            notifBody,
+            {
+              type: 'chat',
+              source: 'group',
+              entityId: data.conversationId,
+              conversationId: data.conversationId,
+              groupName: groupLabel,
+              notificationId: inserted.id,
+              messageId: msg.id,
+              senderHandle: handle,
+            },
+            targetId,
+          );
         }
-      }
-
-      // Fetch unread badge counts for all eligible users in a single query
-      const badgeMap = await getUnreadBadgeCounts(eligibleRecipients.map((r) => r.userId));
-
-      const pushMessages = eligibleRecipients.map((r) => ({
-        to: r.expoPushToken,
-        title: titleFor(r.userId),
-        body: notifBody,
-        data: {
-          type: 'chat' as const,
-          source: 'group' as const,
-          entityId: data.conversationId,
-          conversationId: data.conversationId,
-          groupName: groupLabel,
-          notificationId: notifIdByUser.get(r.userId)!,
-          messageId: msg.id, // Phase 14 D-04
-          senderHandle: handle,
-        },
-        sound: 'default' as const,
-        badge: badgeMap.get(r.userId) ?? 0,
-        channelId: 'default',
-      }));
-      if (pushMessages.length > 0) {
-        sendPushNotifications(pushMessages).catch((err) => log.error({ err }, 'Group push failed'));
       }
     } else {
       // 1:1 DM notifications — existing behavior
