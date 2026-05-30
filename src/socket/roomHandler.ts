@@ -3,11 +3,11 @@ import logger from '../lib/logger';
 import { db } from '../db';
 
 const log = logger.child({ module: 'socket:room' });
-import { messages, userProfiles, notifications, notificationPreferences, blockedUsers } from '../db/schema';
-import { and, eq, inArray, ne, isNotNull, or } from 'drizzle-orm';
+import { messages, userProfiles, notifications } from '../db/schema';
+import { and, eq, inArray } from 'drizzle-orm';
 import { moderateMessage } from '../services/claude';
 import { moderateMessageImages } from '../services/imageModeration';
-import { sendPushToUser, sendPushNotifications, shouldSendPush, getUnreadBadgeCounts } from '../services/pushNotifications';
+import { sendPushToUser, shouldSendPush } from '../services/pushNotifications';
 import type { ChatNotificationPayload } from '../types/chatNotification';
 import { getZoneForTimezone } from '../config/timezoneZones';
 
@@ -190,142 +190,5 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
       }
     }
 
-    // ── Timezone chat push notifications ──────────────────────────────────
-    // Send to other users in the same timezone who have timezoneChatPush
-    // enabled. Skip sender, mentioned users (already notified), and blocked
-    // pairs. Fire-and-forget — does not block the message broadcast.
-    (async () => {
-      try {
-        // Find all users in this timezone with a push token (excluding sender)
-        const candidates = await db
-          .select({
-            userId: userProfiles.userId,
-            expoPushToken: userProfiles.expoPushToken,
-          })
-          .from(userProfiles)
-          .where(
-            and(
-              eq(userProfiles.timezone, timezone),
-              ne(userProfiles.userId, userId),
-              isNotNull(userProfiles.expoPushToken),
-            ),
-          );
-
-        if (candidates.length === 0) return;
-
-        const candidateIds = candidates.map((c) => c.userId);
-
-        // Fetch preferences for all candidates in one query
-        const prefs = await db
-          .select({
-            userId: notificationPreferences.userId,
-            timezoneChatPush: notificationPreferences.timezoneChatPush,
-          })
-          .from(notificationPreferences)
-          .where(inArray(notificationPreferences.userId, candidateIds));
-
-        const prefMap = new Map(prefs.map((p) => [p.userId, p.timezoneChatPush]));
-
-        // Fetch block relationships (either direction)
-        const blocks = await db
-          .select({
-            userId: blockedUsers.userId,
-            blockedUserId: blockedUsers.blockedUserId,
-          })
-          .from(blockedUsers)
-          .where(
-            or(
-              and(eq(blockedUsers.userId, userId), inArray(blockedUsers.blockedUserId, candidateIds)),
-              and(eq(blockedUsers.blockedUserId, userId), inArray(blockedUsers.userId, candidateIds)),
-            ),
-          );
-
-        const blockedSet = new Set<number>();
-        for (const b of blocks) {
-          blockedSet.add(b.userId === userId ? b.blockedUserId : b.userId);
-        }
-
-        // Skip both @mentions AND reply targets — they already got a mention push
-        const alreadyNotified = notifyUserIds;
-
-        const eligible = candidates.filter((c) => {
-          if (blockedSet.has(c.userId)) return false;
-          if (alreadyNotified.has(c.userId)) return false; // already got mention push
-          const allowed = prefMap.has(c.userId) ? prefMap.get(c.userId) : true;
-          return allowed && !!c.expoPushToken;
-        });
-
-        // Fetch unread badge counts for all eligible users in a single query
-        const badgeMap = await getUnreadBadgeCounts(eligible.map((c) => c.userId));
-
-        // ── Phase 10 D-02: insert notifications rows for every eligible Local
-        // Chat recipient. Today this block was push-only; the row insert closes
-        // the gap so the Chats-tab unread badge has a server source of truth.
-        // The `type` column stays 'mention' (D-01 — no migration). The `data`
-        // JSON carries `source: 'local_chat'` so the mobile tap-router can
-        // deep-link to Local Chat.
-        const notifIdByUser = new Map<number, number>();
-        if (eligible.length > 0) {
-          const insertedRows = await db.insert(notifications).values(
-            eligible.map((c) => ({
-              userId: c.userId,
-              type: 'mention' as const,
-              title: `@${handle}`,
-              body: content.slice(0, 100),
-              data: {
-                messageId: msg.id,
-                roomId: timezoneRoom,
-                senderHandle: handle,
-                source: 'local_chat' as const,
-                entityId: timezone,
-                timezoneIana: timezone,
-              },
-            })),
-          ).returning({ id: notifications.id, userId: notifications.userId });
-          for (const row of insertedRows) notifIdByUser.set(row.userId, row.id);
-        }
-
-        // Phase 10 D-03: emit chat:notification per eligible recipient.
-        for (const c of eligible) {
-          const notifId = notifIdByUser.get(c.userId);
-          if (notifId === undefined) continue;
-          io.to(`user:${c.userId}`).emit('chat:notification', {
-            source: 'local_chat',
-            entityId: timezone,
-            timezoneIana: timezone,
-            notificationId: notifId,
-            messageId: msg.id, // Phase 14 D-04
-            title: `@${handle}`,
-            body: content.slice(0, 100),
-            senderHandle: handle,
-          } satisfies ChatNotificationPayload);
-        }
-
-        // Phase 10 D-04: push payload mirrors the socket payload exactly.
-        const pushBatch = eligible.map((c) => ({
-          to: c.expoPushToken as string,
-          title: `@${handle}`,
-          body: content.slice(0, 100),
-          data: {
-            type: 'chat' as const,
-            source: 'local_chat' as const,
-            entityId: timezone,
-            timezoneIana: timezone,
-            notificationId: notifIdByUser.get(c.userId)!,
-            messageId: msg.id, // Phase 14 D-04
-            senderHandle: handle,
-          },
-          sound: 'default' as const,
-          badge: badgeMap.get(c.userId) ?? 0,
-          channelId: 'default',
-        }));
-
-        if (pushBatch.length > 0) {
-          await sendPushNotifications(pushBatch);
-        }
-      } catch (err) {
-        log.error({ err }, 'Timezone chat push delivery failed');
-      }
-    })();
   });
 }
