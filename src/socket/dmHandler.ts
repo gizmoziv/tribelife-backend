@@ -12,7 +12,7 @@ import {
 import { eq, and, isNull, inArray } from 'drizzle-orm';
 import { moderateMessage } from '../services/claude';
 import { moderateMessageImages } from '../services/imageModeration';
-import { sendPushToUser, shouldSendPush } from '../services/pushNotifications';
+import { sendPushNotifications, shouldSendPush, getUnreadBadgeCounts } from '../services/pushNotifications';
 import type { ChatNotificationPayload } from '../types/chatNotification';
 
 const log = logger.child({ module: 'socket:dm' });
@@ -248,9 +248,9 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
       }
       const explicitMentions = new Set(mentionedInGroup);
 
-      // Only mention/reply targets get a stored row + push. Plain group
-      // recipients get nothing on the bell/push side — their bubble is
-      // message-timestamp-driven (NOTIF-01, §J1 LOCKED).
+      // ── Mention / reply notifications (directed targets only) ────────────
+      // M5: directed targets get ONLY the type:'mention' row (DMs tab) — NOT
+      // also a type:'group' row. They are excluded from the group fan-out below.
       for (const targetId of directedTargets) {
         const isReplyTarget = targetId === replyToSenderId && !explicitMentions.has(targetId);
         const title = isReplyTarget ? `@${handle} replied to you` : `@${handle} mentioned you`;
@@ -288,23 +288,134 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
             .from(userProfiles)
             .where(eq(userProfiles.userId, targetId))
             .limit(1);
-          await sendPushToUser(
-            targetProfile?.expoPushToken,
-            title,
-            notifBody,
-            {
-              type: 'chat',
-              source: 'group',
-              entityId: data.conversationId,
-              conversationId: data.conversationId,
-              groupName: groupLabel,
-              notificationId: inserted.id,
-              messageId: msg.id,
-              senderHandle: handle,
-            },
-            targetId,
-          );
+          const token = targetProfile?.expoPushToken;
+          if (token?.startsWith('ExponentPushToken[')) {
+            await sendPushNotifications([{
+              to: token,
+              title,
+              body: notifBody,
+              data: {
+                type: 'chat',
+                source: 'group',
+                entityId: data.conversationId,
+                conversationId: data.conversationId,
+                groupName: groupLabel,
+                notificationId: inserted.id,
+                messageId: msg.id,
+                senderHandle: handle,
+              },
+              sound: 'default',
+            }]);
+          }
         }
+      }
+
+      // ── Plain-message group fan-out (D-13/D-14) ──────────────────────────
+      // All non-sender participants EXCEPT directed targets (M5) get a stored
+      // type:'group' row (source:'group', entityId=conversationId) + groupsPush-
+      // gated push. Runs post-broadcast (fan-out deferred after dm:message emit).
+      // D-16: group join/system messages come from REST (groups.ts:402-430) and
+      // do NOT pass through this handler — no group rows for system messages.
+      // Sender already excluded: recipients = participants \ {sender}.
+      const groupFanRecipients = recipients.filter((p) => !directedTargets.has(p.userId));
+
+      if (groupFanRecipients.length > 0) {
+        setImmediate(async () => {
+          try {
+            const fanRecipientIds = groupFanRecipients.map((p) => p.userId);
+
+            // Batched token fetch in ONE query (M6 — no N selects).
+            const profileRows = await db
+              .select({ userId: userProfiles.userId, expoPushToken: userProfiles.expoPushToken })
+              .from(userProfiles)
+              .where(inArray(userProfiles.userId, fanRecipientIds));
+            const tokenMap = new Map<number, string | null>(
+              profileRows.map((r) => [r.userId, r.expoPushToken ?? null]),
+            );
+
+            // MANDATORY batched notification INSERT (single multi-row insert, M6).
+            // Reuses the exact payload shape from dmHandler.ts:263-283 (group mention path).
+            const insertValues = fanRecipientIds.map((recipientId) => ({
+              userId: recipientId,
+              type: 'group' as const,
+              title: `@${handle}`,
+              body: notifBody,
+              data: {
+                conversationId: data.conversationId,
+                senderHandle: handle,
+                isGroup: true,
+                groupName: groupLabel,
+                source: 'group' as const,
+                entityId: data.conversationId,
+              },
+            }));
+
+            const insertedRows = await db
+              .insert(notifications)
+              .values(insertValues)
+              .returning({ id: notifications.id, userId: notifications.userId });
+
+            const notifIdMap = new Map<number, number>(
+              insertedRows.map((r) => [r.userId, r.id]),
+            );
+
+            // Emit chat:notification to each recipient's personal room.
+            for (const recipientId of fanRecipientIds) {
+              const notifId = notifIdMap.get(recipientId);
+              if (notifId === undefined) continue;
+              io.to(`user:${recipientId}`).emit('chat:notification', {
+                source: 'group',
+                entityId: data.conversationId,
+                conversationId: data.conversationId,
+                groupName: groupLabel,
+                notificationId: notifId,
+                messageId: msg.id,
+                title: `@${handle}`,
+                body: notifBody,
+                senderHandle: handle,
+              } satisfies ChatNotificationPayload);
+            }
+
+            // MANDATORY chunked push — gate on groupsPush, batch via array path (M6).
+            const badgeCounts = await getUnreadBadgeCounts(fanRecipientIds);
+
+            const pushMessages: Array<{ to: string; title: string; body: string; data: Record<string, unknown>; sound: 'default'; badge?: number; channelId: string }> = [];
+            for (const recipientId of fanRecipientIds) {
+              const canPush = await shouldSendPush(recipientId, 'group');
+              if (!canPush) continue;
+              const token = tokenMap.get(recipientId);
+              if (!token?.startsWith('ExponentPushToken[')) continue;
+              const notifId = notifIdMap.get(recipientId);
+              if (notifId === undefined) continue;
+              pushMessages.push({
+                to: token,
+                title: `@${handle}`,
+                body: notifBody,
+                data: {
+                  type: 'chat',
+                  source: 'group',
+                  entityId: data.conversationId,
+                  conversationId: data.conversationId,
+                  groupName: groupLabel,
+                  notificationId: notifId,
+                  messageId: msg.id,
+                  senderHandle: handle,
+                },
+                sound: 'default',
+                badge: (badgeCounts.get(recipientId) ?? 0),
+                channelId: 'default',
+              });
+            }
+
+            // Send in chunks of 100 (Expo push API limit per request).
+            const CHUNK_SIZE = 100;
+            for (let i = 0; i < pushMessages.length; i += CHUNK_SIZE) {
+              await sendPushNotifications(pushMessages.slice(i, i + CHUNK_SIZE));
+            }
+          } catch (err) {
+            log.error({ err }, '[dm group fan-out] group notification fan-out failed');
+          }
+        });
       }
     } else {
       // 1:1 DM notifications — existing behavior
@@ -342,21 +453,24 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
           .limit(1);
 
         if (await shouldSendPush(p.userId, 'dm')) {
-          await sendPushToUser(
-            otherProfile[0]?.expoPushToken,
-            `Message from @${handle}`,
-            content.slice(0, 100),
-            {
-              type: 'chat',
-              source: 'dm',
-              entityId: data.conversationId,
-              conversationId: data.conversationId,
-              notificationId: inserted.id,
-              messageId: msg.id, // Phase 14 D-04
-              senderHandle: handle,
-            },
-            p.userId,
-          );
+          const token = otherProfile[0]?.expoPushToken;
+          if (token?.startsWith('ExponentPushToken[')) {
+            await sendPushNotifications([{
+              to: token,
+              title: `Message from @${handle}`,
+              body: content.slice(0, 100),
+              data: {
+                type: 'chat',
+                source: 'dm',
+                entityId: data.conversationId,
+                conversationId: data.conversationId,
+                notificationId: inserted.id,
+                messageId: msg.id, // Phase 14 D-04
+                senderHandle: handle,
+              },
+              sound: 'default',
+            }]);
+          }
         }
       }
     }
