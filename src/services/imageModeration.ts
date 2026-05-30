@@ -4,9 +4,10 @@ import { deleteObject, cdnUrlToKey } from './storage';
 
 const log = logger.child({ module: 'moderation' });
 import { db } from '../db';
-import { messages } from '../db/schema';
+import { messages, notifications, userProfiles, conversations } from '../db/schema';
 import { eq } from 'drizzle-orm';
 import { Server } from 'socket.io';
+import { sendPushToUser } from './pushNotifications';
 
 // ── Image Moderation Service ───────────────────────────────────────────────
 // Two-pass image moderation: OpenAI Moderation API (fast) + GPT-4o Vision (community-specific).
@@ -180,6 +181,76 @@ export async function moderateMessageImages(
     category,
     message: `Image removed: ${category}. See our community guidelines: tribelife.app/terms`,
   });
+
+  // ── System notification + always-on push to the uploader ─────────────────
+  // Inserts a type:'system' bell row for the uploader only naming the chat.
+  // Push is always-on (bypasses shouldSendPush — account/content notice).
+  // Failure here must NOT abort the media_rejected emit above.
+  try {
+    // Derive a human-readable chat name from the roomId prefix.
+    let chatName: string;
+    if (roomId.startsWith('timezone:')) {
+      chatName = roomId.slice('timezone:'.length);
+    } else if (roomId.startsWith('globe:')) {
+      chatName = roomId.slice('globe:'.length);
+    } else if (roomId.startsWith('conversation:')) {
+      // Attempt a cheap group-name lookup; fall back to "your conversation".
+      const convIdStr = roomId.slice('conversation:'.length);
+      const convId = parseInt(convIdStr, 10);
+      if (!Number.isNaN(convId)) {
+        const [conv] = await db
+          .select({ groupName: conversations.groupName })
+          .from(conversations)
+          .where(eq(conversations.id, convId))
+          .limit(1);
+        chatName = conv?.groupName ?? 'your conversation';
+      } else {
+        chatName = 'your conversation';
+      }
+    } else {
+      chatName = roomId;
+    }
+
+    const title = 'Image removed';
+    const body = `Your image in ${chatName} was removed: ${category}`;
+    const notifData = { source: 'system', kind: 'moderation', roomId, messageId };
+
+    // Insert the System notification row.
+    const [inserted] = await db
+      .insert(notifications)
+      .values({ userId: senderId, type: 'system', title, body, data: notifData })
+      .returning({ id: notifications.id });
+
+    // Fetch the uploader's push token.
+    const [profile] = await db
+      .select({ expoPushToken: userProfiles.expoPushToken })
+      .from(userProfiles)
+      .where(eq(userProfiles.userId, senderId))
+      .limit(1);
+
+    // Always-on push — bypass shouldSendPush (moderation is an account notice).
+    if (profile?.expoPushToken) {
+      await sendPushToUser(
+        profile.expoPushToken,
+        title,
+        body,
+        notifData,
+        senderId,
+      );
+    }
+
+    // Real-time bell update for foregrounded clients.
+    io.to(`user:${senderId}`).emit('notification:new', {
+      id: inserted?.id,
+      type: 'system',
+      title,
+      body,
+      data: notifData,
+      isRead: false,
+    });
+  } catch (err) {
+    log.error({ err, messageId, senderId }, '[moderation-notice] failed to send System notification');
+  }
 
   log.info({ messageId, count: flaggedUrls.length }, 'Removed flagged images from message');
 }
