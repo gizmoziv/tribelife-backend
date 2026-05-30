@@ -1,0 +1,1 @@
+ALTER TABLE "notification_preferences" ADD COLUMN "groups_push" boolean DEFAULT true NOT NULL;
