@@ -134,7 +134,7 @@ export async function sendPushToUser(
 
 export async function shouldSendPush(
   userId: number,
-  notificationType: 'mention' | 'timezone_chat' | 'beacon_match' | 'dm'
+  notificationType: 'mention' | 'beacon_match' | 'dm'
 ): Promise<boolean> {
   const [prefs] = await db
     .select()
@@ -146,7 +146,6 @@ export async function shouldSendPush(
 
   switch (notificationType) {
     case 'mention': return prefs.dmsPush;
-    case 'timezone_chat': return prefs.timezoneChatPush;
     case 'beacon_match': return prefs.beaconMatchesPush;
     case 'dm': return prefs.dmsPush;
   }
