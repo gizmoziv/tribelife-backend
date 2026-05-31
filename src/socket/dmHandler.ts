@@ -338,7 +338,7 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
             const insertValues = fanRecipientIds.map((recipientId) => ({
               userId: recipientId,
               type: 'group' as const,
-              title: `@${handle}`,
+              title: `@${handle} in ${groupLabel}`,
               body: notifBody,
               data: {
                 conversationId: data.conversationId,
@@ -370,7 +370,7 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
                 groupName: groupLabel,
                 notificationId: notifId,
                 messageId: msg.id,
-                title: `@${handle}`,
+                title: `@${handle} in ${groupLabel}`,
                 body: notifBody,
                 senderHandle: handle,
               } satisfies ChatNotificationPayload);
@@ -389,7 +389,7 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
               if (notifId === undefined) continue;
               pushMessages.push({
                 to: token,
-                title: `@${handle}`,
+                title: `@${handle} in ${groupLabel}`,
                 body: notifBody,
                 data: {
                   type: 'chat',
