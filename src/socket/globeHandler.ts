@@ -10,6 +10,8 @@ import { moderateMessageImages } from '../services/imageModeration';
 import { sendPushNotifications, shouldSendPush, getUnreadBadgeCounts } from '../services/pushNotifications';
 import { getGlobeMembershipsForUser, getGlobeMembershipsForRoomSlug } from '../services/globeMembership';
 import type { ChatNotificationPayload } from '../types/chatNotification';
+import { isValidTimezoneRoom, getZoneForTimezone } from '../config/timezoneZones';
+import { timezoneRoomId } from '../lib/timezoneRoomAccess';
 
 // ── Globe Room Event Handlers ───────────────────────────────────────────────
 // Events: globe:join, globe:leave, globe:message, globe:typing
@@ -22,6 +24,20 @@ export function registerGlobeHandlers(io: Server, socket: Socket): void {
   const createdAt: Date = socket.data.createdAt;
   const avatarUrl: string | null = socket.data.avatarUrl;
 
+  // Phase 16 P0 (TZRM send/receive fix): non-native timezone rooms are a PAID
+  // feature. Membership rows survive downgrade (D-09 soft-membership), so a
+  // membership check alone is NOT sufficient — re-check live premium/org-admin
+  // capability at event time. The caller's own (native) zone is always allowed.
+  // Mirrors the auto-join gate in socket/index.ts:263-278 + the REST read gate.
+  const canAccessNonNativeTimezone = (slug: string): boolean => {
+    if (slug === getZoneForTimezone(socket.data.timezone)) return true; // native = implicit access
+    const isPremiumActive =
+      socket.data.isPremium &&
+      (!socket.data.premiumExpiresAt ||
+        (socket.data.premiumExpiresAt as Date) > new Date());
+    return Boolean(isPremiumActive) || Boolean(socket.data.isOrgAdmin);
+  };
+
   // ── Join a Globe room ───────────────────────────────────────────────────
   // Phase 14 Bug 3 fix: two-room model.
   //   - 'globe:<slug>'      = active-viewer PRESENCE (participant counts,
@@ -31,7 +47,14 @@ export function registerGlobeHandlers(io: Server, socket: Socket): void {
   //                           Auto-joined on socket connect for every
   //                           globe_room_memberships row. Survives globe:leave.
   socket.on('globe:join', (data: { slug: string }) => {
-    if (!isValidGlobeRoom(data.slug)) return;
+    const joinIsGlobe = isValidGlobeRoom(data.slug);
+    const joinIsTimezone = isValidTimezoneRoom(data.slug);
+    if (!joinIsGlobe && !joinIsTimezone) return;
+    // Phase 16 P0: gate join to a non-native timezone (paid) room — without this
+    // an active viewer is never added to globe-feed:<slug> and never receives
+    // live messages (receive was broken too), and a free user could otherwise
+    // subscribe to a paid room's feed.
+    if (joinIsTimezone && !canAccessNonNativeTimezone(data.slug)) return;
 
     // Leave previous PRESENCE rooms only — feed subscriptions persist so the
     // user keeps receiving Chats-list updates for every joined globe room.
@@ -75,7 +98,9 @@ export function registerGlobeHandlers(io: Server, socket: Socket): void {
       : [];
     if (!content && mediaUrls.length === 0) return;
     if (content.length > 2000) return;
-    if (!isValidGlobeRoom(data.slug)) return;
+    const isGlobe = isValidGlobeRoom(data.slug);
+    const isTimezone = isValidTimezoneRoom(data.slug);
+    if (!isGlobe && !isTimezone) return;
 
     // Age gate check — accounts less than 24 hours old cannot post
     const accountAge = Date.now() - createdAt.getTime();
@@ -88,7 +113,9 @@ export function registerGlobeHandlers(io: Server, socket: Socket): void {
     }
 
     // Rate limit check — 1 msg/sec per user per room
-    const roomId = 'globe:' + data.slug;
+    // Timezone rooms persist/key on the canonical timezone:<slug> roomId (matches
+    // migration 0019 + the REST read shim in globe.ts:386); globe rooms use globe:<slug>.
+    const roomId = isTimezone ? timezoneRoomId(data.slug) : 'globe:' + data.slug;
     if (!checkRateLimit(userId, roomId)) {
       socket.emit('globe:rate_limited', { retryAfterMs: 1000 });
       return;
@@ -110,6 +137,14 @@ export function registerGlobeHandlers(io: Server, socket: Socket): void {
     const memberships = await getGlobeMembershipsForUser(userId);
     if (!memberships.has(data.slug)) {
       socket.emit('message:rejected', { reason: 'not_a_member' });
+      return;
+    }
+
+    // Phase 16 P0: "Premium + explicitly joined" gate. The membership row above
+    // proves "explicitly joined", but rows survive downgrade (D-09), so re-check
+    // live premium/org-admin for non-native timezone rooms before the DB write.
+    if (isTimezone && !canAccessNonNativeTimezone(data.slug)) {
+      socket.emit('message:rejected', { reason: 'premium_required' });
       return;
     }
 
