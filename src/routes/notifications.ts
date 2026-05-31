@@ -460,19 +460,20 @@ router.put('/read-context', async (req: AuthRequest, res: Response): Promise<voi
     }
   }
 
-  if (groupEntityId !== undefined) {
-    await db
-      .update(notifications)
-      .set({ isRead: true })
-      .where(and(
-        eq(notifications.userId, userId),
-        eq(notifications.type, 'group'),
-        eq(notifications.isRead, false),
-        sql`${notifications.data}->>'entityId' = ${groupEntityId}`,
-      ));
-  }
+  const clearedGroup = groupEntityId !== undefined
+    ? await db
+        .update(notifications)
+        .set({ isRead: true })
+        .where(and(
+          eq(notifications.userId, userId),
+          eq(notifications.type, 'group'),
+          eq(notifications.isRead, false),
+          sql`${notifications.data}->>'entityId' = ${groupEntityId}`,
+        ))
+        .returning({ id: notifications.id })
+    : [];
 
-  res.json({ markedRead: updated.map((r) => r.id) });
+  res.json({ markedRead: [...updated.map((r) => r.id), ...clearedGroup.map((r) => r.id)] });
 });
 
 // ── Get notification preferences ───────────────────────────────────────────
