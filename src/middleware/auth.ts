@@ -21,6 +21,7 @@ export interface AuthUser {
   acceptedTermsAt: Date | null;
   handleUpdatedAt: Date | null;
   bio: string | null;
+  bannedAt: Date | null;
 }
 
 export const HANDLE_COOLDOWN_DAYS = 30;
@@ -58,6 +59,7 @@ export async function loadAuthUser(userId: number): Promise<AuthUser | null> {
       acceptedTermsAt: userProfiles.acceptedTermsAt,
       handleUpdatedAt: userProfiles.handleUpdatedAt,
       bio: userProfiles.bio,
+      bannedAt: users.bannedAt,
     })
     .from(users)
     .leftJoin(userProfiles, eq(users.id, userProfiles.userId))
@@ -86,6 +88,15 @@ export async function requireAuth(
 
     if (!user) {
       res.status(401).json({ error: 'User not found' });
+      return;
+    }
+
+    // Platform ban: a banned user's existing JWT stays cryptographically valid
+    // for its full 30-day life, so we reject here on every authed request —
+    // this is what actually boots an active spammer rather than waiting for the
+    // token to expire.
+    if (user.bannedAt) {
+      res.status(403).json({ error: 'account_suspended' });
       return;
     }
 
