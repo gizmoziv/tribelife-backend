@@ -8,7 +8,7 @@ import { eq, count } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '../db';
 import { users, userProfiles, referrals, messages, globeRoomMemberships } from '../db/schema';
-import { signToken, requireAuth, needsOnboarding, HANDLE_COOLDOWN_DAYS, HANDLE_COOLDOWN_MS, AuthRequest } from '../middleware/auth';
+import { signToken, requireAuth, needsOnboarding, HANDLE_COOLDOWN_DAYS, HANDLE_COOLDOWN_MS, ACCOUNT_SUSPENDED_MESSAGE, AuthRequest } from '../middleware/auth';
 import { computeCapabilities } from '../services/capabilities';
 import { getOrgMembershipsForUser } from '../services/orgMemberships';
 import { bootstrapAutoJoins } from '../services/globeMembership';
@@ -135,7 +135,7 @@ router.post('/google', async (req: Request, res: Response): Promise<void> => {
     // unique google_id stays claimed — this is what stops a banned user from
     // signing back in with the same Google account and minting a fresh session.
     if (user.users.bannedAt) {
-      res.status(403).json({ error: 'account_suspended' });
+      res.status(403).json({ error: ACCOUNT_SUSPENDED_MESSAGE, code: 'account_suspended' });
       return;
     }
 
@@ -310,7 +310,7 @@ router.post('/apple', async (req: Request, res: Response): Promise<void> => {
     // unique apple_id stays claimed — this is what stops a banned user from
     // signing back in with the same Apple account and minting a fresh session.
     if (user.users.bannedAt) {
-      res.status(403).json({ error: 'account_suspended' });
+      res.status(403).json({ error: ACCOUNT_SUSPENDED_MESSAGE, code: 'account_suspended' });
       return;
     }
 
