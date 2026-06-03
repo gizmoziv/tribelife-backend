@@ -131,6 +131,14 @@ router.post('/google', async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
+    // Platform ban: block re-entry. The account row is kept (not deleted) so the
+    // unique google_id stays claimed — this is what stops a banned user from
+    // signing back in with the same Google account and minting a fresh session.
+    if (user.users.bannedAt) {
+      res.status(403).json({ error: 'account_suspended' });
+      return;
+    }
+
     await bootstrapAutoJoins(user.users.id);
     const token = signToken(user.users.id);
     const profile = user.user_profiles;
@@ -295,6 +303,14 @@ router.post('/apple', async (req: Request, res: Response): Promise<void> => {
 
     if (!user) {
       res.status(500).json({ error: 'Failed to create or fetch user' });
+      return;
+    }
+
+    // Platform ban: block re-entry. The account row is kept (not deleted) so the
+    // unique apple_id stays claimed — this is what stops a banned user from
+    // signing back in with the same Apple account and minting a fresh session.
+    if (user.users.bannedAt) {
+      res.status(403).json({ error: 'account_suspended' });
       return;
     }
 

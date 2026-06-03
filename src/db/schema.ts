@@ -24,6 +24,8 @@ export const users = pgTable('users', {
   email: varchar('email', { length: 255 }).notNull().unique(),
   passwordHash: text('password_hash'),            // null for Google-only accounts
   name: varchar('name', { length: 255 }).notNull(),
+  bannedAt: timestamp('banned_at'),               // platform ban: non-null = suspended (blocks sign-in + kills live sessions)
+  banReason: text('ban_reason'),                  // optional admin note for the ban
   createdAt: timestamp('created_at').defaultNow(),
   updatedAt: timestamp('updated_at').defaultNow(),
 });
