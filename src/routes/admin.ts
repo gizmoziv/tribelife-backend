@@ -4,6 +4,7 @@ import { eq, or, ilike } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '../db';
 import { users, userProfiles } from '../db/schema';
+import { announceUserBlocked } from '../services/moderationAnnounce';
 import logger from '../lib/logger';
 
 const log = logger.child({ module: 'admin' });
@@ -77,6 +78,7 @@ router.get('/users/lookup', async (req: Request, res: Response): Promise<void> =
 const banSchema = z.object({
   userId: z.number().int().positive(),
   reason: z.string().max(500).optional(),
+  announce: z.boolean().optional(), // default true — drop "@handle was blocked" notices into their chats
 });
 
 router.post('/users/ban', async (req: Request, res: Response): Promise<void> => {
@@ -85,7 +87,7 @@ router.post('/users/ban', async (req: Request, res: Response): Promise<void> => 
     res.status(400).json({ error: parse.error.errors[0].message });
     return;
   }
-  const { userId, reason } = parse.data;
+  const { userId, reason, announce } = parse.data;
 
   const [updated] = await db
     .update(users)
@@ -98,7 +100,27 @@ router.post('/users/ban', async (req: Request, res: Response): Promise<void> => 
     return;
   }
   log.warn({ userId, reason: reason ?? null }, 'user banned');
-  res.json({ ok: true, user: updated });
+
+  // Drop a "@handle was blocked by our system" system message into every room +
+  // conversation the user posted in (default on; pass announce:false to suppress).
+  // Best-effort — never let an announcement failure fail the ban itself.
+  let announced: { rooms: number; conversations: number } | null = null;
+  if (announce !== false) {
+    const [prof] = await db
+      .select({ handle: userProfiles.handle })
+      .from(userProfiles)
+      .where(eq(userProfiles.userId, userId))
+      .limit(1);
+    if (prof?.handle) {
+      try {
+        announced = await announceUserBlocked(userId, prof.handle);
+      } catch (err) {
+        log.error({ err, userId }, 'user banned but announcement failed');
+      }
+    }
+  }
+
+  res.json({ ok: true, user: updated, announced });
 });
 
 // ── Unban a user ───────────────────────────────────────────────────────────────
