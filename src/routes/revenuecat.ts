@@ -23,6 +23,52 @@ const REVOKE_EVENTS = [
   'SUBSCRIPTION_PAUSED',
 ] as const;
 
+// ── User-id resolution helpers ────────────────────────────────────────────────
+
+/**
+ * Scan candidate fields on a RevenueCat event and return the first value that
+ * parses to a valid positive integer. Strict check — rejects anonymous IDs
+ * like `$RCAnonymousID:…` and any non-integer strings.
+ * Candidates checked in order: app_user_id → aliases[] → original_app_user_id
+ */
+function resolveUserId(event: any): number | null {
+  const candidates: (string | undefined)[] = [
+    event.app_user_id,
+    ...(Array.isArray(event.aliases) ? event.aliases : []),
+    event.original_app_user_id,
+  ];
+
+  for (const candidate of candidates) {
+    if (typeof candidate !== 'string') continue;
+    if (/^\d+$/.test(candidate)) {
+      const parsed = parseInt(candidate, 10);
+      if (parsed > 0) return parsed;
+    }
+  }
+  return null;
+}
+
+/**
+ * For TRANSFER events, scan event.transferred_to (array of app_user_ids) and
+ * return the first value that parses to a valid positive integer.
+ */
+function resolveTransferUserId(event: any): number | null {
+  const candidates: unknown[] = Array.isArray(event.transferred_to)
+    ? event.transferred_to
+    : [];
+
+  for (const candidate of candidates) {
+    if (typeof candidate !== 'string') continue;
+    if (/^\d+$/.test(candidate)) {
+      const parsed = parseInt(candidate, 10);
+      if (parsed > 0) return parsed;
+    }
+  }
+  return null;
+}
+
+// ── Webhook handler ───────────────────────────────────────────────────────────
+
 router.post('/webhook', async (req: Request, res: Response): Promise<void> => {
   // Verify webhook auth
   const secret = req.headers['authorization'];
@@ -40,18 +86,55 @@ router.post('/webhook', async (req: Request, res: Response): Promise<void> => {
     }
 
     const eventType: string = event.type;
-    const appUserId: string | undefined = event.app_user_id;
     const expirationAtMs: number | undefined = event.expiration_at_ms;
 
-    if (!appUserId) {
-      res.status(400).json({ error: 'Missing app_user_id' });
+    // ── TRANSFER: grant premium to the receiving user ─────────────────────────
+    if (eventType === 'TRANSFER') {
+      const userId = resolveTransferUserId(event);
+      if (userId === null) {
+        log.warn(
+          {
+            appUserId: event.app_user_id,
+            eventType,
+            transactionId: event.transaction_id ?? event.id,
+          },
+          'RevenueCat webhook: could not resolve user id — purchase not attributed',
+        );
+        res.json({ ok: true });
+        return;
+      }
+
+      const revenuecatCustomerId = String(
+        event.original_app_user_id ?? event.app_user_id ?? userId,
+      );
+
+      await db
+        .update(userProfiles)
+        .set({
+          isPremium: true,
+          revenuecatCustomerId,
+          updatedAt: new Date(),
+        })
+        .where(eq(userProfiles.userId, userId));
+
+      emitCapabilityInvalidationToUser(userId, 'revenuecat_grant');
+      log.info({ eventType, userId }, 'Granted premium (transfer)');
+      res.json({ ok: true });
       return;
     }
 
-    // RevenueCat app_user_id is our userId (set during SDK configure)
-    const userId = parseInt(appUserId, 10);
-    if (isNaN(userId)) {
-      // Could be a RevenueCat anonymous ID — ignore
+    // ── All other events: resolve user id via aliases / app_user_id ──────────
+    const userId = resolveUserId(event);
+
+    if (userId === null) {
+      log.warn(
+        {
+          appUserId: event.app_user_id,
+          eventType,
+          transactionId: event.transaction_id ?? event.id,
+        },
+        'RevenueCat webhook: could not resolve user id — purchase not attributed',
+      );
       res.json({ ok: true });
       return;
     }
@@ -61,12 +144,16 @@ router.post('/webhook', async (req: Request, res: Response): Promise<void> => {
 
     if (isGrant) {
       const expiresAt = expirationAtMs ? new Date(expirationAtMs) : null;
+      const revenuecatCustomerId = String(
+        event.original_app_user_id ?? event.app_user_id ?? userId,
+      );
 
       await db
         .update(userProfiles)
         .set({
           isPremium: true,
           premiumExpiresAt: expiresAt,
+          revenuecatCustomerId,
           updatedAt: new Date(),
         })
         .where(eq(userProfiles.userId, userId));
@@ -120,7 +207,7 @@ router.post('/webhook', async (req: Request, res: Response): Promise<void> => {
       emitCapabilityInvalidationToUser(userId, 'revenuecat_revoke');
       log.info({ eventType, userId }, 'Revoked premium');
     } else {
-      // CANCELLATION, TRANSFER, etc. — log but no action needed
+      // CANCELLATION, etc. — log but no action needed
       // CANCELLATION just means auto-renew is off; user keeps access until expiration
       log.info({ eventType, userId }, 'No action for event');
     }
