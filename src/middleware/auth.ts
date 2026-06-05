@@ -27,6 +27,14 @@ export interface AuthUser {
 export const HANDLE_COOLDOWN_DAYS = 30;
 export const HANDLE_COOLDOWN_MS = HANDLE_COOLDOWN_DAYS * 24 * 60 * 60 * 1000;
 
+// User-facing message returned (as `error`) on every banned-user 403. The mobile
+// client renders `data.error` verbatim in its "Sign-in Failed" alert, so this is
+// what the user actually reads — and because it's server-controlled, even the
+// already-shipped 1.4.7 app shows it without a new release. The machine-readable
+// `code: 'account_suspended'` rides alongside for future clients to branch on.
+export const ACCOUNT_SUSPENDED_MESSAGE =
+  'Your account has been suspended for violating our community guidelines.';
+
 export function needsOnboarding(user: Pick<AuthUser, 'handle' | 'acceptedTermsAt'>): boolean {
   if (!user.handle) return true;
   if (user.handle.startsWith('_temp_')) return true;
@@ -96,7 +104,7 @@ export async function requireAuth(
     // this is what actually boots an active spammer rather than waiting for the
     // token to expire.
     if (user.bannedAt) {
-      res.status(403).json({ error: 'account_suspended' });
+      res.status(403).json({ error: ACCOUNT_SUSPENDED_MESSAGE, code: 'account_suspended' });
       return;
     }
 
