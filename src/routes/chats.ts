@@ -104,6 +104,7 @@ router.get('/', async (req: AuthRequest, res: Response): Promise<void> => {
     type: 'local_chat',
     roomSlug: 'local',
     timezoneIana: userTimezone,
+    timezoneZone: localZoneSlug,
     unreadCount: Math.min(localUnread?.c ?? 0, 99),
     lastMessage: localLastMsg
       ? { preview: localLastMsg.content ?? '', at: (localLastMsg.createdAt as Date).toISOString() }

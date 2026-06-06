@@ -45,6 +45,7 @@ export type ChatNotificationPayload =
       source: 'local_chat';
       entityId: string;
       timezoneIana: string;
+      timezoneZone?: string;
     });
 
 // The push `data` field shape — same as ChatNotificationPayload PLUS the

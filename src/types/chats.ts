@@ -22,6 +22,7 @@ export type ChatsRow =
       type: 'local_chat';
       roomSlug: 'local';
       timezoneIana: string;
+      timezoneZone?: string;
       unreadCount: number;
       lastMessage: ChatsRowLastMessage | null;
     }

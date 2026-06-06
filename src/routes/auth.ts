@@ -173,6 +173,7 @@ router.post('/google', async (req: Request, res: Response): Promise<void> => {
         avatarUrl: profile?.avatarUrl ?? null,
         // isPremium removed (TIER-03) — consumers read capabilities.isPremium
         timezone: profile?.timezone ?? null,
+        timezoneZone: getZoneForTimezone(profile?.timezone ?? 'UTC'),
         acceptedTermsAt: profile?.acceptedTermsAt ?? null,
         handleUpdatedAt: profile?.handleUpdatedAt ?? null,
         bio: profile?.bio ?? null,
@@ -348,6 +349,7 @@ router.post('/apple', async (req: Request, res: Response): Promise<void> => {
         avatarUrl: profile?.avatarUrl ?? null,
         // isPremium removed (TIER-03) — consumers read capabilities.isPremium
         timezone: profile?.timezone ?? null,
+        timezoneZone: getZoneForTimezone(profile?.timezone ?? 'UTC'),
         acceptedTermsAt: profile?.acceptedTermsAt ?? null,
         handleUpdatedAt: profile?.handleUpdatedAt ?? null,
         bio: profile?.bio ?? null,
@@ -714,6 +716,7 @@ router.get('/me', requireAuth, async (req: AuthRequest, res: Response): Promise<
       avatarUrl: req.user!.avatarUrl,
       // isPremium deliberately omitted (TIER-03) — consumers read capabilities.isPremium
       timezone: req.user!.timezone,
+      timezoneZone: getZoneForTimezone(req.user!.timezone ?? 'UTC'),
       acceptedTermsAt: req.user!.acceptedTermsAt,
       handleUpdatedAt: req.user!.handleUpdatedAt,
       bio: req.user!.bio ?? null,

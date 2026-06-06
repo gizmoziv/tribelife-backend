@@ -153,6 +153,7 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
           source: 'local_chat' as const,
           entityId: timezone,
           timezoneIana: timezone,
+          timezoneZone: zoneSlug,
         },
       }).returning({ id: notifications.id });
 
@@ -164,6 +165,7 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
         source: 'local_chat',
         entityId: timezone,
         timezoneIana: timezone,
+        timezoneZone: zoneSlug,
         notificationId: inserted.id,
         messageId: msg.id, // Phase 14 D-04
         title,
@@ -190,6 +192,7 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
               source: 'local_chat',
               entityId: timezone,
               timezoneIana: timezone,
+              timezoneZone: zoneSlug,
               notificationId: inserted.id,
               messageId: msg.id, // Phase 14 D-04
               senderHandle: handle,
@@ -245,6 +248,7 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
             source: 'local_chat' as const,
             entityId: timezone,
             timezoneIana: timezone,
+            timezoneZone: zoneSlug,
           },
         }));
 
@@ -266,6 +270,7 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
             source: 'local_chat',
             entityId: timezone,
             timezoneIana: timezone,
+            timezoneZone: zoneSlug,
             notificationId: notifId,
             messageId: msg.id,
             title: groupTitle,
@@ -295,6 +300,7 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
               source: 'local_chat',
               entityId: timezone,
               timezoneIana: timezone,
+              timezoneZone: zoneSlug,
               notificationId: notifId,
               messageId: msg.id,
               senderHandle: handle,

@@ -1,11 +1,12 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { timingSafeEqual } from 'crypto';
-import { eq, or, ilike } from 'drizzle-orm';
+import { eq, or, ilike, sql, isNotNull } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '../db';
 import { users, userProfiles } from '../db/schema';
 import { announceUserBlocked } from '../services/moderationAnnounce';
 import logger from '../lib/logger';
+import { classifyZoneResolution, getTimezoneZone } from '../config/timezoneZones';
 
 const log = logger.child({ module: 'admin' });
 const router = Router();
@@ -147,6 +148,68 @@ router.post('/users/unban', async (req: Request, res: Response): Promise<void> =
   }
   log.warn({ userId }, 'user unbanned');
   res.json({ ok: true, user: updated });
+});
+
+// ── Timezone coverage report ───────────────────────────────────────────────
+// GET /api/admin/timezone-coverage
+// Returns every distinct user_profiles.timezone classified as explicit |
+// offset_fallback | utc_fallback, with per-timezone user counts, the resolved
+// slug, displayName, and a recommended action for degraded rows.
+// Single read-only GROUP BY aggregate — no per-row queries, no writes.
+// Gated by requireAdmin (x-admin-key) inherited from router.use(requireAdmin).
+router.get('/timezone-coverage', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const rows = await db
+      .select({
+        timezone: userProfiles.timezone,
+        count: sql<number>`count(*)::int`,
+      })
+      .from(userProfiles)
+      .where(isNotNull(userProfiles.timezone))
+      .groupBy(userProfiles.timezone);
+
+    let explicit = 0;
+    let offset_fallback = 0;
+    let utc_fallback = 0;
+    let totalProfiles = 0;
+
+    const classified = rows.map((row) => {
+      const iana = row.timezone as string;
+      const { kind, slug } = classifyZoneResolution(iana);
+      const displayName = getTimezoneZone(slug)?.displayName ?? null;
+
+      let recommendedAction: string | null = null;
+      if (kind === 'offset_fallback') {
+        recommendedAction = `add to TIMEZONE_ZONES['${slug}'].members + backend deploy (closes push fan-out)`;
+      } else if (kind === 'utc_fallback') {
+        recommendedAction = 'no named zone for this offset — add a named zone or accept utc';
+      }
+
+      if (kind === 'explicit') explicit += row.count;
+      else if (kind === 'offset_fallback') offset_fallback += row.count;
+      else utc_fallback += row.count;
+      totalProfiles += row.count;
+
+      return { timezone: iana, count: row.count, kind, slug, displayName, recommendedAction };
+    });
+
+    // Sort by count desc (highest-traffic timezones first).
+    classified.sort((a, b) => b.count - a.count);
+
+    res.json({
+      summary: {
+        explicit,
+        offset_fallback,
+        utc_fallback,
+        totalProfiles,
+        distinctTimezones: rows.length,
+      },
+      rows: classified,
+    });
+  } catch (err) {
+    log.error({ err }, 'timezone-coverage query failed');
+    res.status(500).json({ error: 'failed to fetch timezone coverage' });
+  }
 });
 
 export default router;
