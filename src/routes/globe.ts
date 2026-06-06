@@ -72,6 +72,261 @@ const aroundMessageSchema = z.object({
   after: beforeAfterCount,
 });
 
+// ── Per-row enrichment helpers ───────────────────────────────────────────────
+// Shared by the combined legacy `GET /rooms` path and the Phase 18 per-section
+// paginated path (`?section=…`). Single source of truth for each row shape so
+// the two code paths can never drift. Pure extractions of the original inline
+// map bodies — behavior is byte-identical to the pre-Phase-18 handler.
+
+async function enrichRegionRow(
+  io: Server,
+  room: (typeof GLOBE_ROOMS)[number],
+  suggestedRegion: string | null,
+  memberSlugs: Set<string>,
+) {
+  const realCount = io.sockets.adapter.rooms.get(room.roomId)?.size ?? 0;
+  const participantCount =
+    realCount > 0 ? realCount : Math.floor(Math.random() * 10) + 1;
+
+  const [lastMsg] = await db
+    .select({
+      content: messages.content,
+      createdAt: messages.createdAt,
+      senderHandle: userProfiles.handle,
+    })
+    .from(messages)
+    .leftJoin(userProfiles, eq(userProfiles.userId, messages.senderId))
+    .where(eq(messages.roomId, room.roomId))
+    .orderBy(desc(messages.createdAt))
+    .limit(1);
+
+  return {
+    kind: 'globe_room' as const,
+    slug: room.slug,
+    displayName: room.displayName,
+    participantCount,
+    lastMessage: lastMsg
+      ? {
+          content: lastMsg.content,
+          createdAt: lastMsg.createdAt,
+          senderHandle: lastMsg.senderHandle,
+        }
+      : null,
+    isSuggested: room.slug === suggestedRegion,
+    isGlobal: room.isGlobal,
+    sortOrder: room.sortOrder,
+    welcomeMessage: room.welcomeMessage,
+    isMember: memberSlugs.has(room.slug),
+    autoJoin: room.autoJoin,
+  };
+}
+
+async function enrichGroupRow(
+  row: {
+    conversationId: number;
+    name: string | null;
+    iconUrl: string | null;
+    inviteSlug: string | null;
+    memberCount: number;
+  },
+  isMember: boolean,
+) {
+  const [lastMsg] = await db
+    .select({
+      content: messages.content,
+      createdAt: messages.createdAt,
+      senderHandle: userProfiles.handle,
+    })
+    .from(messages)
+    .leftJoin(userProfiles, eq(userProfiles.userId, messages.senderId))
+    .where(and(eq(messages.conversationId, row.conversationId), isNull(messages.deletedAt)))
+    .orderBy(desc(messages.createdAt))
+    .limit(1);
+  return {
+    kind: 'group' as const,
+    conversationId: row.conversationId,
+    name: row.name ?? 'Group',
+    iconUrl: row.iconUrl ?? null,
+    inviteSlug: row.inviteSlug ?? '',
+    memberCount: Number(row.memberCount ?? 0),
+    isMember,
+    lastMessage: lastMsg
+      ? {
+          content: lastMsg.content,
+          createdAt: (lastMsg.createdAt as Date).toISOString(),
+          senderHandle: lastMsg.senderHandle ?? '',
+        }
+      : null,
+  };
+}
+
+async function enrichTimezoneRow(
+  z: (typeof TIMEZONE_ZONES)[number],
+  callerCanAccess: boolean,
+  joinedTimezoneSlugs: Set<string>,
+) {
+  const roomId = timezoneRoomId(z.slug);
+
+  // memberCount: native TZ membership is IMPLICIT via user_profiles.timezone;
+  // explicit cross-zone retainer rows live in globe_room_memberships. Sum both,
+  // deduping the rare overlap via the notInArray subquery. (See the original
+  // inline block for the full rationale — Phase 15 TZRM-02.)
+  const implicitNativeUserIds = db
+    .select({ userId: userProfiles.userId })
+    .from(userProfiles)
+    .where(inArray(userProfiles.timezone, z.members));
+  const [implicitCount, explicitCount] = await Promise.all([
+    db
+      .select({ c: count() })
+      .from(userProfiles)
+      .where(inArray(userProfiles.timezone, z.members)),
+    db
+      .select({ c: count() })
+      .from(globeRoomMemberships)
+      .where(and(
+        eq(globeRoomMemberships.roomSlug, z.slug),
+        notInArray(globeRoomMemberships.userId, implicitNativeUserIds),
+      )),
+  ]);
+  const memberCount =
+    Number(implicitCount[0]?.c ?? 0) + Number(explicitCount[0]?.c ?? 0);
+
+  // lastMessage: D-03 — free callers always get null (no preview);
+  // premium/org_admin get the real last-message preview.
+  let lastMessage:
+    | { content: string; createdAt: string; senderHandle: string }
+    | null = null;
+  if (callerCanAccess) {
+    const [lastMsg] = await db
+      .select({
+        content: messages.content,
+        createdAt: messages.createdAt,
+        senderHandle: userProfiles.handle,
+      })
+      .from(messages)
+      .leftJoin(userProfiles, eq(userProfiles.userId, messages.senderId))
+      .where(eq(messages.roomId, roomId))
+      .orderBy(desc(messages.createdAt))
+      .limit(1);
+    if (lastMsg) {
+      lastMessage = {
+        content: lastMsg.content ?? '',
+        createdAt: (lastMsg.createdAt as Date).toISOString(),
+        senderHandle: lastMsg.senderHandle ?? '',
+      };
+    }
+  }
+
+  return {
+    kind: 'timezone_room' as const,
+    slug: z.slug,
+    displayName: z.displayName,
+    memberCount,
+    lastMessage,
+    isMember: joinedTimezoneSlugs.has(z.slug),
+    paywalled: !callerCanAccess,
+  };
+}
+
+// ── Phase 18: per-section Chevra pagination ──────────────────────────────────
+// Additive discovery surface. Each section is its own horizontal carousel on the
+// mobile client; this returns one offset/limit page of a single section plus a
+// `hasMore` flag. Unlike the legacy combined path, the discovery sections EXCLUDE
+// rooms the caller has already joined (and Town Square), so `hasMore`/counts
+// reflect what's actually offered. Enrichment runs on the page only — far cheaper
+// than the legacy "enrich everything" path.
+type ChevraSectionName = 'regions' | 'chavurot' | 'timezones';
+
+async function buildChevraSection(opts: {
+  section: ChevraSectionName;
+  limit: number;
+  offset: number;
+  q: string;
+  io: Server;
+  userId: number;
+  profileTimezone: string;
+  memberSlugs: Set<string>;
+  suggestedRegion: string | null;
+  req: AuthRequest;
+}) {
+  const { section, limit, offset, q, io, userId, profileTimezone, memberSlugs, suggestedRegion, req } = opts;
+
+  if (section === 'regions') {
+    // Discovery = non-Town-Square regions the caller has NOT joined.
+    const all = GLOBE_ROOMS.filter(
+      (r) => r.slug !== 'town-square' && !memberSlugs.has(r.slug),
+    )
+      .filter((r) => !q || r.displayName.toLowerCase().includes(q.toLowerCase()))
+      .sort((a, b) => {
+        const aSug = a.slug === suggestedRegion ? 1 : 0;
+        const bSug = b.slug === suggestedRegion ? 1 : 0;
+        if (aSug !== bSug) return bSug - aSug;
+        return a.sortOrder - b.sortOrder;
+      });
+    const pageItems = all.slice(offset, offset + limit);
+    const rows = await Promise.all(
+      pageItems.map((room) => enrichRegionRow(io, room, suggestedRegion, memberSlugs)),
+    );
+    return { section, rows, offset, limit, hasMore: offset + pageItems.length < all.length };
+  }
+
+  if (section === 'chavurot') {
+    // Public groups the caller is NOT a member of, paginated by lastMessageAt DESC.
+    // The non-member predicate is enforced in SQL (NOT EXISTS) so `hasMore` is
+    // accurate. We over-fetch one row (limit+1) to derive hasMore without a
+    // separate COUNT query. ORDER BY lastMessageAt DESC shifts as people post —
+    // acceptable for a discovery surface at this scale (keyset is the upgrade path).
+    const raw = await db
+      .select({
+        conversationId: conversations.id,
+        name: conversations.groupName,
+        iconUrl: conversations.groupIconUrl,
+        inviteSlug: conversations.inviteSlug,
+        memberCount: sql<number>`(
+          SELECT count(*)::int FROM conversation_participants cp2
+          WHERE cp2.conversation_id = conversations.id AND cp2.left_at IS NULL
+        )`,
+      })
+      .from(conversations)
+      .where(and(
+        eq(conversations.isGroup, true),
+        eq(conversations.isPublic, true),
+        isNull(conversations.archivedAt),
+        ...(q ? [sql`group_name ILIKE ${'%' + q + '%'}`] : []),
+        sql`NOT EXISTS (
+          SELECT 1 FROM conversation_participants cpm
+          WHERE cpm.conversation_id = conversations.id
+            AND cpm.user_id = ${userId}
+            AND cpm.left_at IS NULL
+        )`,
+      ))
+      .orderBy(desc(conversations.lastMessageAt))
+      .limit(limit + 1)
+      .offset(offset);
+    const hasMore = raw.length > limit;
+    const pageRaw = hasMore ? raw.slice(0, limit) : raw;
+    const rows = await Promise.all(pageRaw.map((row) => enrichGroupRow(row, false)));
+    return { section, rows, offset, limit, hasMore };
+  }
+
+  // section === 'timezones'
+  const caps = await getCapabilities(req);
+  const callerCanAccess = callerCanAccessNonNativeTimezone(caps);
+  const callerNativeSlug = getZoneForTimezone(profileTimezone);
+  const joinedTimezoneSlugs = new Set(
+    [...memberSlugs].filter((s) => isValidTimezoneRoom(s)),
+  );
+  const all = TIMEZONE_ZONES.filter((z) => z.slug !== callerNativeSlug)
+    .filter((z) => z.slug !== 'utc')
+    .filter((z) => (callerCanAccess ? !joinedTimezoneSlugs.has(z.slug) : true))
+    .filter((z) => !q || z.displayName.toLowerCase().includes(q.toLowerCase()));
+  const pageItems = all.slice(offset, offset + limit);
+  const rows = await Promise.all(
+    pageItems.map((z) => enrichTimezoneRow(z, callerCanAccess, joinedTimezoneSlugs)),
+  );
+  return { section, rows, offset, limit, hasMore: offset + pageItems.length < all.length };
+}
+
 // ── List all Globe rooms with live metadata ─────────────────────────────────
 router.get('/rooms', async (req: AuthRequest, res: Response): Promise<void> => {
   const io = req.app.get('io') as Server;
@@ -97,6 +352,43 @@ router.get('/rooms', async (req: AuthRequest, res: Response): Promise<void> => {
     .where(eq(globeRoomMemberships.userId, userId));
   const memberSlugs = new Set(memberships.map((m) => m.roomSlug));
 
+  // ── Phase 18: optional per-section pagination ──────────────────────────────
+  // Additive. When ?section is one of the three discovery carousels we return a
+  // single paginated section and stop. When ?section is absent the handler falls
+  // through to the byte-identical legacy combined response below, so old clients
+  // (MIN_CLIENT_VERSION-gated) are completely unaffected.
+  const sectionParam = (req.query.section ?? '').toString().trim();
+  const section: ChevraSectionName | null =
+    sectionParam === 'regions' || sectionParam === 'chavurot' || sectionParam === 'timezones'
+      ? sectionParam
+      : null;
+  if (section !== null) {
+    const limit = Math.min(
+      Math.max(parseInt((req.query.limit as string) || '12', 10) || 12, 1),
+      30,
+    );
+    const offset = Math.max(parseInt((req.query.offset as string) || '0', 10) || 0, 0);
+    const page = await buildChevraSection({
+      section,
+      limit,
+      offset,
+      q,
+      io,
+      userId,
+      profileTimezone: profile?.timezone ?? 'UTC',
+      memberSlugs,
+      suggestedRegion,
+      req,
+    });
+    if (q) {
+      console.info(
+        '[globe] section=' + section + ' q=' + JSON.stringify(q) + ' results=' + page.rows.length,
+      );
+    }
+    res.json(page);
+    return;
+  }
+
   // SRCH-03: in-memory filter on GLOBE_ROOMS config (no globe_rooms table — RESEARCH delta #1).
   // O(8) — negligible. Empty q → matchingGlobeRooms === GLOBE_ROOMS (no-op filter).
   const matchingGlobeRooms = q
@@ -104,45 +396,9 @@ router.get('/rooms', async (req: AuthRequest, res: Response): Promise<void> => {
     : GLOBE_ROOMS;
 
   const rooms = await Promise.all(
-    matchingGlobeRooms.map(async (room) => {
-      const realCount = io.sockets.adapter.rooms.get(room.roomId)?.size ?? 0;
-      const participantCount =
-        realCount > 0 ? realCount : Math.floor(Math.random() * 10) + 1;
-
-      // Get last message preview
-      const [lastMsg] = await db
-        .select({
-          content: messages.content,
-          createdAt: messages.createdAt,
-          senderHandle: userProfiles.handle,
-        })
-        .from(messages)
-        .leftJoin(userProfiles, eq(userProfiles.userId, messages.senderId))
-        .where(eq(messages.roomId, room.roomId))
-        .orderBy(desc(messages.createdAt))
-        .limit(1);
-
-      return {
-        kind: 'globe_room' as const,
-        slug: room.slug,
-        displayName: room.displayName,
-        participantCount,
-        lastMessage: lastMsg
-          ? {
-              content: lastMsg.content,
-              createdAt: lastMsg.createdAt,
-              senderHandle: lastMsg.senderHandle,
-            }
-          : null,
-        isSuggested: room.slug === suggestedRegion,
-        isGlobal: room.isGlobal,
-        sortOrder: room.sortOrder,
-        welcomeMessage: room.welcomeMessage,
-        // Phase 11 D-03 + D-05:
-        isMember: memberSlugs.has(room.slug),
-        autoJoin: room.autoJoin,
-      };
-    }),
+    matchingGlobeRooms.map((room) =>
+      enrichRegionRow(io, room, suggestedRegion, memberSlugs),
+    ),
   );
 
   // Phase 11 D-06: server-owned ordering — user's region first (per
@@ -207,35 +463,9 @@ router.get('/rooms', async (req: AuthRequest, res: Response): Promise<void> => {
 
   // Last-message preview per group (N+1 — mirrors chats.ts group N+1 pattern)
   const publicGroupRows = await Promise.all(
-    publicGroupsRaw.map(async (row) => {
-      const [lastMsg] = await db
-        .select({
-          content: messages.content,
-          createdAt: messages.createdAt,
-          senderHandle: userProfiles.handle,
-        })
-        .from(messages)
-        .leftJoin(userProfiles, eq(userProfiles.userId, messages.senderId))
-        .where(and(eq(messages.conversationId, row.conversationId), isNull(messages.deletedAt)))
-        .orderBy(desc(messages.createdAt))
-        .limit(1);
-      return {
-        kind: 'group' as const,
-        conversationId: row.conversationId,
-        name: row.name ?? 'Group',
-        iconUrl: row.iconUrl ?? null,
-        inviteSlug: row.inviteSlug ?? '',
-        memberCount: Number(row.memberCount ?? 0),
-        isMember: memberGroupIdSet.has(row.conversationId),
-        lastMessage: lastMsg
-          ? {
-              content: lastMsg.content,
-              createdAt: (lastMsg.createdAt as Date).toISOString(),
-              senderHandle: lastMsg.senderHandle ?? '',
-            }
-          : null,
-      };
-    }),
+    publicGroupsRaw.map((row) =>
+      enrichGroupRow(row, memberGroupIdSet.has(row.conversationId)),
+    ),
   );
 
   // ── Phase 15 TZRM-02: timezone_room variants ─────────────────────────────
@@ -265,76 +495,7 @@ router.get('/rooms', async (req: AuthRequest, res: Response): Promise<void> => {
       })
       // SRCH-03 ?q= filter — in-memory like the globe-room filter.
       .filter((z) => !q || z.displayName.toLowerCase().includes(q.toLowerCase()))
-      .map(async (z) => {
-        const roomId = timezoneRoomId(z.slug);
-
-        // memberCount: native TZ membership is IMPLICIT via user_profiles.timezone
-        // (no globe_room_memberships row gets written for a user's native zone —
-        // those rows only appear for cross-zone retainers from auth.ts tz-change
-        // and explicit globe-room joins). Counting just the table left every
-        // timezone room reading 0. Sum implicit + explicit, deduping the rare
-        // overlap (a premium user with an old preserved row whose timezone is
-        // now back in the same zone) via the notInArray subquery.
-        // Two count() queries via Drizzle ops — avoids the array-binding
-        // pitfall of `sql\`… ANY(${z.members}::text[])\`` (sql template spreads
-        // arrays into N positional params, producing a record that PG refuses
-        // to cast to text[]).
-        const implicitNativeUserIds = db
-          .select({ userId: userProfiles.userId })
-          .from(userProfiles)
-          .where(inArray(userProfiles.timezone, z.members));
-        const [implicitCount, explicitCount] = await Promise.all([
-          db
-            .select({ c: count() })
-            .from(userProfiles)
-            .where(inArray(userProfiles.timezone, z.members)),
-          db
-            .select({ c: count() })
-            .from(globeRoomMemberships)
-            .where(and(
-              eq(globeRoomMemberships.roomSlug, z.slug),
-              notInArray(globeRoomMemberships.userId, implicitNativeUserIds),
-            )),
-        ]);
-        const memberCount =
-          Number(implicitCount[0]?.c ?? 0) + Number(explicitCount[0]?.c ?? 0);
-
-        // lastMessage: D-03 — free callers always get null (no preview);
-        // premium/org_admin get the real last-message preview.
-        let lastMessage:
-          | { content: string; createdAt: string; senderHandle: string }
-          | null = null;
-        if (callerCanAccess) {
-          const [lastMsg] = await db
-            .select({
-              content: messages.content,
-              createdAt: messages.createdAt,
-              senderHandle: userProfiles.handle,
-            })
-            .from(messages)
-            .leftJoin(userProfiles, eq(userProfiles.userId, messages.senderId))
-            .where(eq(messages.roomId, roomId))
-            .orderBy(desc(messages.createdAt))
-            .limit(1);
-          if (lastMsg) {
-            lastMessage = {
-              content: lastMsg.content ?? '',
-              createdAt: (lastMsg.createdAt as Date).toISOString(),
-              senderHandle: lastMsg.senderHandle ?? '',
-            };
-          }
-        }
-
-        return {
-          kind: 'timezone_room' as const,
-          slug: z.slug,
-          displayName: z.displayName,
-          memberCount,
-          lastMessage,
-          isMember: joinedTimezoneSlugs.has(z.slug),
-          paywalled: !callerCanAccess,
-        };
-      }),
+      .map((z) => enrichTimezoneRow(z, callerCanAccess, joinedTimezoneSlugs)),
   );
 
   const responseRows = [...rooms, ...publicGroupRows, ...timezoneRoomRows];
