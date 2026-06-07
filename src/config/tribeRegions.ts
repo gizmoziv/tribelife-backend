@@ -21,23 +21,130 @@ export const REGION_TO_GEONAMEID: Record<string, number> = {
 };
 
 /**
- * Fallback geonameid when no region is known (e.g., Town Square / unknown).
- * Jerusalem is the sensible default for a Jewish community app — also ensures
- * Israel parsha is used as the fallback rather than Diaspora.
+ * Fallback geonameid when no region is known (e.g., Town Square / unknown timezone).
+ * Jerusalem — kept exported so callers that explicitly want the Israel city ID can
+ * import it.  Do NOT use this as a timezone fallback: non-Israel users default to
+ * NYC (Diaspora), not Jerusalem.
  */
 export const DEFAULT_GEONAMEID = 281184; // Jerusalem
 
+// ── Latin-America timezone membership set ─────────────────────────────────────
+// Checked BEFORE the generic America/ prefix so they are not shadowed by
+// the north-america catch-all.
+const LATIN_AMERICA_ZONES = new Set([
+  'America/Argentina/Buenos_Aires',
+  'America/Argentina/Cordoba',
+  'America/Argentina/Mendoza',
+  'America/Argentina/Rosario',
+  'America/Argentina/Salta',
+  'America/Argentina/San_Juan',
+  'America/Argentina/San_Luis',
+  'America/Argentina/Tucuman',
+  'America/Argentina/Ushuaia',
+  'America/Argentina/Jujuy',
+  'America/Argentina/La_Rioja',
+  'America/Argentina/Catamarca',
+  'America/Sao_Paulo',
+  'America/Mexico_City',
+  'America/Bogota',
+  'America/Lima',
+  'America/Santiago',
+  'America/Montevideo',
+  'America/Caracas',
+  'America/Guatemala',
+  'America/Costa_Rica',
+  'America/Panama',
+  'America/La_Paz',
+  'America/Asuncion',
+  'America/Manaus',
+  'America/Recife',
+  'America/Fortaleza',
+  'America/Belem',
+  'America/Cuiaba',
+  'America/Porto_Velho',
+  'America/Rio_Branco',
+  'America/Bahia',
+  'America/Guayaquil',
+  'America/Paramaribo',
+  'America/Cayenne',
+  'America/Noronha',
+]);
+
 /**
  * Derive a representative geonameid from an IANA timezone string.
- * Asia/Jerusalem family → Jerusalem (Israel parsha).
- * All other timezones → DEFAULT_GEONAMEID (Diaspora-safe).
  *
- * This is only used when the caller has no stored candle location, to select
- * parsha branch (Israel vs Diaspora) via a single Hebcal call.
+ * Used only when the caller has no stored candle location — maps the timezone
+ * to a representative city so Hebcal returns the correct parsha branch
+ * (Israel vs Diaspora).
+ *
+ * Rules (evaluated in order):
+ *   Israel family (Asia/Jerusalem etc.)     → Jerusalem  (Israel parsha)
+ *   Latin-America set                       → São Paulo  (Diaspora)
+ *   Any other America/* or Canada/*         → New York   (Diaspora)
+ *   Europe/London, /Dublin, /Belfast, /Isle_of_Man → London (Diaspora)
+ *   Any other Europe/*                      → Paris      (Diaspora)
+ *   Australia/*, Pacific/Auckland, /Chatham → Sydney     (Diaspora)
+ *   Africa/Johannesburg, /Maseru, /Mbabane  → Johannesburg (Diaspora)
+ *   null / undefined / unknown              → New York   (Diaspora-safe default)
  */
 export function geonameidFromTimezone(tzid: string | null | undefined): number {
-  if (tzid && (tzid === 'Asia/Jerusalem' || tzid === 'Asia/Tel_Aviv' || tzid === 'Asia/Gaza' || tzid === 'Asia/Hebron')) {
+  if (!tzid) {
+    return REGION_TO_GEONAMEID['north-america']; // NYC — Diaspora default
+  }
+
+  // Israel
+  if (
+    tzid === 'Asia/Jerusalem' ||
+    tzid === 'Asia/Tel_Aviv' ||
+    tzid === 'Asia/Gaza' ||
+    tzid === 'Asia/Hebron'
+  ) {
     return REGION_TO_GEONAMEID['israel'];
   }
-  return DEFAULT_GEONAMEID;
+
+  // Latin America — must come before generic America/ check
+  if (LATIN_AMERICA_ZONES.has(tzid)) {
+    return REGION_TO_GEONAMEID['latin-america'];
+  }
+
+  // North America (remaining America/* and Canada/*)
+  if (tzid.startsWith('America/') || tzid.startsWith('Canada/')) {
+    return REGION_TO_GEONAMEID['north-america'];
+  }
+
+  // UK & Ireland
+  if (
+    tzid === 'Europe/London' ||
+    tzid === 'Europe/Dublin' ||
+    tzid === 'Europe/Belfast' ||
+    tzid === 'Europe/Isle_of_Man'
+  ) {
+    return REGION_TO_GEONAMEID['uk-ireland'];
+  }
+
+  // Rest of Europe
+  if (tzid.startsWith('Europe/')) {
+    return REGION_TO_GEONAMEID['europe'];
+  }
+
+  // Australia / New Zealand
+  if (
+    tzid.startsWith('Australia/') ||
+    tzid === 'Pacific/Auckland' ||
+    tzid === 'Pacific/Chatham'
+  ) {
+    return REGION_TO_GEONAMEID['australia-nz'];
+  }
+
+  // South Africa
+  if (
+    tzid === 'Africa/Johannesburg' ||
+    tzid === 'Africa/Maseru' ||
+    tzid === 'Africa/Mbabane'
+  ) {
+    return REGION_TO_GEONAMEID['south-africa'];
+  }
+
+  // Unknown / unrecognised timezone → Diaspora-safe default (NYC, NOT Jerusalem)
+  return REGION_TO_GEONAMEID['north-america'];
 }
