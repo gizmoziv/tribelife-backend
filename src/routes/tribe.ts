@@ -144,7 +144,9 @@ router.get('/today', async (req: AuthRequest, res): Promise<void> => {
     });
 
     const today = await toWireTodayPayload(internal, now);
-    res.json({ today });
+    // Return the raw payload (NOT enveloped) — mobile tribeApi.today is typed
+    // request<TodayPayload> and reads data.shabbat / data.needsLocation directly.
+    res.json(today);
   } catch (err) {
     console.error('[tribe/today]', err);
     res.status(503).json({ error: 'Today data temporarily unavailable' });
