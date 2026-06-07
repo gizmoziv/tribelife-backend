@@ -16,6 +16,7 @@ import { eq } from 'drizzle-orm';
 import { requireAuth, type AuthRequest } from '../middleware/auth';
 import { searchCities } from '../services/tribe/geonames';
 import { getToday } from '../services/tribe/todayService';
+import { toWireTodayPayload } from '../services/tribe/todayWire';
 
 const router = Router();
 
@@ -133,14 +134,16 @@ router.get('/today', async (req: AuthRequest, res): Promise<void> => {
   const user = req.user!;
 
   try {
-    const today = await getToday({
+    const now = new Date();
+    const internal = await getToday({
       geonameid: user.candleGeonameid ?? undefined,
       lat: user.candleLat ?? undefined,
       lon: user.candleLon ?? undefined,
       tzid: user.timezone ?? 'UTC',
-      nowIso: new Date().toISOString(),
+      nowIso: now.toISOString(),
     });
 
+    const today = await toWireTodayPayload(internal, now);
     res.json({ today });
   } catch (err) {
     console.error('[tribe/today]', err);
