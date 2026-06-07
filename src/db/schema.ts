@@ -63,7 +63,7 @@ export const conversations = pgTable('conversations', {
   lastMessageAt: timestamp('last_message_at').defaultNow(),
   isGroup: boolean('is_group'),                             // SCHM-04: nullable, null = legacy 1:1 DM
   groupName: varchar('group_name', { length: 100 }),        // SCHM-04: nullable, only set for groups
-  createdById: integer('created_by_id').references(() => users.id),
+  createdById: integer('created_by_id').references(() => users.id, { onDelete: 'set null' }),
   groupIconUrl: text('group_icon_url'),
   inviteSlug: varchar('invite_slug', { length: 50 }).unique(),
   maxMembers: integer('max_members').default(200),
@@ -278,8 +278,8 @@ export const contentReports = pgTable('content_reports', {
 // ─────────────────────────────────────────────
 export const referrals = pgTable('referrals', {
   id: serial('id').primaryKey(),
-  referrerId: integer('referrer_id').notNull().references(() => users.id),
-  referredUserId: integer('referred_user_id').references(() => users.id),
+  referrerId: integer('referrer_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  referredUserId: integer('referred_user_id').references(() => users.id, { onDelete: 'cascade' }),
   referralCode: varchar('referral_code', { length: 50 }).notNull(),
   status: varchar('status', { length: 20 }).notNull().default('pending'),
   source: varchar('source', { length: 20 }).notNull().default('handle_code'),
@@ -296,8 +296,8 @@ export const referrals = pgTable('referrals', {
 // ─────────────────────────────────────────────
 export const attributionConversions = pgTable('attribution_conversions', {
   id: serial('id').primaryKey(),
-  referredUserId: integer('referred_user_id').notNull().references(() => users.id),
-  referrerUserId: integer('referrer_user_id').references(() => users.id),
+  referredUserId: integer('referred_user_id').references(() => users.id, { onDelete: 'set null' }),
+  referrerUserId: integer('referrer_user_id').references(() => users.id, { onDelete: 'set null' }),
   source: varchar('source', { length: 20 }).notNull(),
   plan: varchar('plan', { length: 50 }),
   occurredAt: timestamp('occurred_at').notNull().defaultNow(),
