@@ -13,6 +13,7 @@ import {
   uniqueIndex,
   check,
   pgEnum,
+  doublePrecision,
 } from 'drizzle-orm/pg-core';
 import { relations, sql } from 'drizzle-orm';
 
@@ -47,6 +48,12 @@ export const userProfiles = pgTable('user_profiles', {
   acceptedTermsAt: timestamp('accepted_terms_at'),               // null = onboarding not complete
   handleUpdatedAt: timestamp('handle_updated_at'),               // null = handle never changed since onboarding (no cooldown active)
   bio: text('bio'),
+  // ── Candle-lighting location (TRIBE-06) — all nullable, additive ──────────
+  candleGeonameid: integer('candle_geonameid'),                    // GeoNames city id (manual pick)
+  candleLat: doublePrecision('candle_lat'),                        // coarse GPS latitude
+  candleLon: doublePrecision('candle_lon'),                        // coarse GPS longitude
+  candleLabel: text('candle_label'),                               // display name of chosen city
+  candleSource: varchar('candle_source', { length: 10 }),          // 'manual' | 'gps'
   createdAt: timestamp('created_at').defaultNow(),
   updatedAt: timestamp('updated_at').defaultNow(),
 }, (t) => ({
