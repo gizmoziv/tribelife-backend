@@ -86,7 +86,11 @@ export function parseHebcalShabbat(json: HebcalJson, now: Date): ShabbatInfo {
   // "Parashat Korach" → "Korach"
   const rawParsha = parshatItem?.title?.replace(/^Parashat\s+/, '') ?? null;
   const parsha = rawParsha;
-  const parshaHebrew = rawParsha ? (PARSHA_HEBREW[rawParsha] ?? null) : null;
+  // Hebcal may return curly/right-single-quote (U+2019, U+02BC, U+05F3) in parsha
+  // names like "Sh’lach", "Re’eh", "Beha’alotcha". Normalize to a
+  // straight ASCII apostrophe so the PARSHA_HEBREW lookup keys always match.
+  const lookupKey = rawParsha ? rawParsha.replace(/['ʼ׳]/g, "'") : null;
+  const parshaHebrew = lookupKey ? (PARSHA_HEBREW[lookupKey] ?? null) : null;
 
   const locationLabel = json.location?.title ?? null;
 

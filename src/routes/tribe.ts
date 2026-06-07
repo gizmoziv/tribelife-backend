@@ -141,6 +141,7 @@ router.get('/today', async (req: AuthRequest, res): Promise<void> => {
       lon: user.candleLon ?? undefined,
       tzid: user.timezone ?? 'UTC',
       nowIso: now.toISOString(),
+      label: user.candleLabel ?? undefined,
     });
 
     const today = await toWireTodayPayload(internal, now);

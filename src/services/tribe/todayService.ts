@@ -13,6 +13,7 @@
  * - NEVER throws to the caller.
  */
 
+import tzlookup from 'tz-lookup';
 import { fetchShabbatByGeonameid, fetchShabbatByLatLon, type ShabbatInfo } from './hebcal';
 import { fetchDafYomi, type DafYomi } from './sefaria';
 import { geonameidFromTimezone } from '../../config/tribeRegions';
@@ -30,6 +31,12 @@ export interface TodayOptions {
   tzid: string;
   /** Current time as ISO string (for daily cache key + pure-function boundary) */
   nowIso: string;
+  /**
+   * Human-readable location label stored on user_profiles (e.g. "Tel Aviv, Israel").
+   * When present and non-empty, overrides Hebcal's raw location title (which can be
+   * ugly raw coords like "37°19'N 122°1'W America/New_York" for lat/lon queries).
+   */
+  label?: string;
 }
 
 export interface TodayPayload {
@@ -113,8 +120,19 @@ async function getShabbatByLatLon(
   const cached = cacheGet<ShabbatInfo>(key, now);
   if (cached !== undefined) return cached;
 
+  // Derive the timezone from GPS coordinates so Hebcal returns candle times
+  // adjusted for the physical location — not the user's profile timezone.
+  // Falls back to the profile tzid when coords are out of range.
+  const resolvedTz = (() => {
+    try {
+      return tzlookup(lat, lon);
+    } catch {
+      return tzid;
+    }
+  })();
+
   try {
-    const result = await fetchShabbatByLatLon(lat, lon, tzid, now);
+    const result = await fetchShabbatByLatLon(lat, lon, resolvedTz, now);
     cacheSet(key, result, now);
     return result;
   } catch (err) {
@@ -196,6 +214,14 @@ export async function getToday(opts: TodayOptions): Promise<TodayPayload> {
           havdalah: null,
         };
       }
+    }
+
+    // Override Hebcal's raw location title (which can be ugly lat/lon coords)
+    // with the user's stored human-readable label (e.g. "Tel Aviv, Israel").
+    // Only applies when a location is stored; the no-location fallback path
+    // intentionally has no label to show.
+    if (shabbatResult && opts.label && opts.label.trim().length > 0) {
+      shabbatResult = { ...shabbatResult, locationLabel: opts.label };
     }
 
     return { shabbat: shabbatResult, daf, needsLocation };
