@@ -22,6 +22,12 @@ export interface AuthUser {
   handleUpdatedAt: Date | null;
   bio: string | null;
   bannedAt: Date | null;
+  // ── Candle-lighting location (TRIBE-06) ───────────────────────────────────
+  candleGeonameid: number | null;
+  candleLat: number | null;
+  candleLon: number | null;
+  candleLabel: string | null;
+  candleSource: string | null;
 }
 
 export const HANDLE_COOLDOWN_DAYS = 30;
@@ -68,6 +74,11 @@ export async function loadAuthUser(userId: number): Promise<AuthUser | null> {
       handleUpdatedAt: userProfiles.handleUpdatedAt,
       bio: userProfiles.bio,
       bannedAt: users.bannedAt,
+      candleGeonameid: userProfiles.candleGeonameid,
+      candleLat: userProfiles.candleLat,
+      candleLon: userProfiles.candleLon,
+      candleLabel: userProfiles.candleLabel,
+      candleSource: userProfiles.candleSource,
     })
     .from(users)
     .leftJoin(userProfiles, eq(users.id, userProfiles.userId))
