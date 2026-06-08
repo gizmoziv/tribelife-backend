@@ -538,6 +538,60 @@ export const newsConfig = pgTable('news_config', {
 });
 
 // ─────────────────────────────────────────────
+// SURVEY — Tables
+// ─────────────────────────────────────────────
+export const surveys = pgTable('surveys', {
+  id: serial('id').primaryKey(),
+  questionText: text('question_text').notNull(),
+  active: boolean('active').notNull().default(false),
+  createdAt: timestamp('created_at').defaultNow(),
+}, (t) => ({
+  activeIdx: index('surveys_active_idx').on(t.active),
+}));
+
+export const surveyOptions = pgTable('survey_options', {
+  id: serial('id').primaryKey(),
+  surveyId: integer('survey_id').references(() => surveys.id, { onDelete: 'cascade' }).notNull(),
+  label: text('label').notNull(),
+  isOther: boolean('is_other').notNull().default(false),
+  displayOrder: integer('display_order').notNull(),
+  createdAt: timestamp('created_at').defaultNow(),
+}, (t) => ({
+  surveyIdx: index('survey_options_survey_idx').on(t.surveyId),
+}));
+
+export const surveyVotes = pgTable('survey_votes', {
+  id: serial('id').primaryKey(),
+  surveyId: integer('survey_id').references(() => surveys.id, { onDelete: 'cascade' }).notNull(),
+  userId: integer('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
+  optionId: integer('option_id').references(() => surveyOptions.id, { onDelete: 'cascade' }).notNull(),
+  otherText: text('other_text'),
+  createdAt: timestamp('created_at').defaultNow(),
+}, (t) => ({
+  surveyIdx: index('survey_votes_survey_idx').on(t.surveyId),
+  optionIdx: index('survey_votes_option_idx').on(t.optionId),
+  uniqSurveyUser: unique('survey_votes_survey_user_unique').on(t.surveyId, t.userId),
+}));
+
+// ─────────────────────────────────────────────
+// SURVEY — Relations
+// ─────────────────────────────────────────────
+export const surveysRelations = relations(surveys, ({ many }) => ({
+  options: many(surveyOptions),
+  votes: many(surveyVotes),
+}));
+
+export const surveyOptionsRelations = relations(surveyOptions, ({ one }) => ({
+  survey: one(surveys, { fields: [surveyOptions.surveyId], references: [surveys.id] }),
+}));
+
+export const surveyVotesRelations = relations(surveyVotes, ({ one }) => ({
+  survey: one(surveys, { fields: [surveyVotes.surveyId], references: [surveys.id] }),
+  option: one(surveyOptions, { fields: [surveyVotes.optionId], references: [surveyOptions.id] }),
+  user: one(users, { fields: [surveyVotes.userId], references: [users.id] }),
+}));
+
+// ─────────────────────────────────────────────
 // NEWS — Relations
 // ─────────────────────────────────────────────
 export const newsOutletsRelations = relations(newsOutlets, ({ many }) => ({
