@@ -570,7 +570,7 @@ export const surveyVotes = pgTable('survey_votes', {
 }, (t) => ({
   surveyIdx: index('survey_votes_survey_idx').on(t.surveyId),
   optionIdx: index('survey_votes_option_idx').on(t.optionId),
-  uniqSurveyUser: unique('survey_votes_survey_user_unique').on(t.surveyId, t.userId),
+  uniqSurveyUserOption: unique('survey_votes_survey_user_option_unique').on(t.surveyId, t.userId, t.optionId),
 }));
 
 // ─────────────────────────────────────────────

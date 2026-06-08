@@ -14,7 +14,7 @@ CREATE TABLE "survey_votes" (
 	"option_id" integer NOT NULL,
 	"other_text" text,
 	"created_at" timestamp DEFAULT now(),
-	CONSTRAINT "survey_votes_survey_user_unique" UNIQUE("survey_id","user_id")
+	CONSTRAINT "survey_votes_survey_user_option_unique" UNIQUE("survey_id","user_id","option_id")
 );
 --> statement-breakpoint
 CREATE TABLE "surveys" (
