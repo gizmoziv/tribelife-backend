@@ -249,9 +249,9 @@ const voteSchema = z.object({
 
 /**
  * Submit a multi-select immutable vote. Accepts 1..N optionIds in a single
- * atomic request. Inserts one row per (user, option) pair via onConflictDoNothing
- * so re-submitting already-chosen options is idempotent. Returns 409 only when
- * the user has already voted for ALL submitted options (nothing new inserted).
+ * atomic request and inserts one row per (user, option) pair. The vote is
+ * submit-once / locked: if the caller already has any vote for the survey the
+ * whole submission is rejected with 409 (no mutation of the recorded set).
  * If the "Other" option is included, otherText must be non-empty (server-validated).
  * Caller identity is always from JWT (req.user!.id — never from body).
  */
@@ -305,9 +305,29 @@ router.post('/survey/vote', async (req: AuthRequest, res): Promise<void> => {
       }
     }
 
+    // Submit-once / immutable (SPEC R3, CPO multi-select decision): if the caller
+    // already has ANY vote row for this survey, reject the whole submission — a
+    // second submit must never add to or change the recorded set.
+    const [existingVote] = await db
+      .select({ id: surveyVotes.id })
+      .from(surveyVotes)
+      .where(
+        and(
+          eq(surveyVotes.surveyId, activeSurvey.id),
+          eq(surveyVotes.userId, userId),
+        ),
+      )
+      .limit(1);
+
+    if (existingVote) {
+      res.status(409).json({ error: 'Already voted' });
+      return;
+    }
+
     const trimmedOther = hasOther ? (otherText ?? '').trim() : null;
 
-    // Insert one row per option; skip duplicates via onConflictDoNothing.
+    // Insert one row per option; onConflictDoNothing guards a concurrent
+    // double-submit race (the pre-check handles the normal case).
     // otherText is stored only on the Other-option row.
     const rows = optionIds.map((oid) => ({
       surveyId: activeSurvey.id,
