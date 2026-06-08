@@ -1,9 +1,9 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { timingSafeEqual } from 'crypto';
-import { eq, or, ilike, sql, isNotNull } from 'drizzle-orm';
+import { eq, or, ilike, sql, isNotNull, and, desc } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '../db';
-import { users, userProfiles } from '../db/schema';
+import { users, userProfiles, surveys, surveyVotes } from '../db/schema';
 import { announceUserBlocked } from '../services/moderationAnnounce';
 import logger from '../lib/logger';
 import { classifyZoneResolution, getTimezoneZone } from '../config/timezoneZones';
@@ -209,6 +209,57 @@ router.get('/timezone-coverage', async (req: Request, res: Response): Promise<vo
   } catch (err) {
     log.error({ err }, 'timezone-coverage query failed');
     res.status(500).json({ error: 'failed to fetch timezone coverage' });
+  }
+});
+
+// ── GET /api/admin/survey/other-suggestions ────────────────────────────────
+// Returns raw Other free-text suggestions for the active survey, joined to
+// the submitter's handle. Operator-only — inherits requireAdmin from
+// router.use(requireAdmin) above; missing/invalid x-admin-key → 401/503.
+router.get('/survey/other-suggestions', async (req: Request, res: Response): Promise<void> => {
+  try {
+    // Resolve the active survey
+    const [activeSurvey] = await db
+      .select({ id: surveys.id })
+      .from(surveys)
+      .where(eq(surveys.active, true))
+      .orderBy(surveys.id)
+      .limit(1);
+
+    if (!activeSurvey) {
+      res.json({ suggestions: [] });
+      return;
+    }
+
+    // Select Other votes (non-null otherText) joined to userProfiles for handle
+    const rows = await db
+      .select({
+        text: surveyVotes.otherText,
+        handle: userProfiles.handle,
+        userId: surveyVotes.userId,
+        submittedAt: surveyVotes.createdAt,
+      })
+      .from(surveyVotes)
+      .leftJoin(userProfiles, eq(surveyVotes.userId, userProfiles.userId))
+      .where(
+        and(
+          eq(surveyVotes.surveyId, activeSurvey.id),
+          isNotNull(surveyVotes.otherText),
+        ),
+      )
+      .orderBy(desc(surveyVotes.createdAt));
+
+    const suggestions = rows.map((r) => ({
+      text: r.text!,
+      handle: r.handle ?? null,
+      userId: r.userId,
+      submittedAt: r.submittedAt,
+    }));
+
+    res.json({ suggestions });
+  } catch (err) {
+    console.error('[admin/survey/other-suggestions]', err);
+    res.status(500).json({ error: 'Failed to load suggestions' });
   }
 });
 
