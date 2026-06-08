@@ -205,8 +205,8 @@ router.get('/survey', async (req: AuthRequest, res): Promise<void> => {
       countByOptionId.set(row.optionId, Number(row.total));
     }
 
-    // Determine caller vote state
-    const [callerVote] = await db
+    // Determine caller vote state — fetch ALL of this user's votes for multi-select
+    const callerVotes = await db
       .select({ optionId: surveyVotes.optionId })
       .from(surveyVotes)
       .where(
@@ -214,11 +214,10 @@ router.get('/survey', async (req: AuthRequest, res): Promise<void> => {
           eq(surveyVotes.surveyId, activeSurvey.id),
           eq(surveyVotes.userId, userId),
         ),
-      )
-      .limit(1);
+      );
 
-    const hasVoted = callerVote !== undefined;
-    const votedOptionId = callerVote?.optionId ?? null;
+    const votedOptionIds = callerVotes.map((v) => v.optionId);
+    const hasVoted = votedOptionIds.length > 0;
 
     res.json({
       survey: {
@@ -232,7 +231,7 @@ router.get('/survey', async (req: AuthRequest, res): Promise<void> => {
           count: countByOptionId.get(opt.id) ?? 0,
         })),
         hasVoted,
-        votedOptionId,
+        votedOptionIds,
       },
     });
   } catch (err) {
@@ -244,14 +243,17 @@ router.get('/survey', async (req: AuthRequest, res): Promise<void> => {
 // ── POST /api/tribe/survey/vote ────────────────────────────────────────────
 
 const voteSchema = z.object({
-  optionId: z.number().int().positive(),
+  optionIds: z.array(z.number().int().positive()).min(1, 'Select at least one option'),
   otherText: z.string().optional(),
 });
 
 /**
- * Submit a one-time immutable vote. Second submit returns 409 without
- * mutating the stored vote. Selecting the Other option with empty/whitespace
- * otherText returns 400. Caller identity is from JWT (req.user!.id).
+ * Submit a multi-select immutable vote. Accepts 1..N optionIds in a single
+ * atomic request. Inserts one row per (user, option) pair via onConflictDoNothing
+ * so re-submitting already-chosen options is idempotent. Returns 409 only when
+ * the user has already voted for ALL submitted options (nothing new inserted).
+ * If the "Other" option is included, otherText must be non-empty (server-validated).
+ * Caller identity is always from JWT (req.user!.id — never from body).
  */
 router.post('/survey/vote', async (req: AuthRequest, res): Promise<void> => {
   const parse = voteSchema.safeParse(req.body);
@@ -261,7 +263,7 @@ router.post('/survey/vote', async (req: AuthRequest, res): Promise<void> => {
   }
 
   const userId = req.user!.id;
-  const { optionId, otherText } = parse.data;
+  const { optionIds, otherText } = parse.data;
 
   try {
     // Resolve the active survey
@@ -277,25 +279,25 @@ router.post('/survey/vote', async (req: AuthRequest, res): Promise<void> => {
       return;
     }
 
-    // Validate optionId belongs to this survey
-    const [option] = await db
+    // Validate all optionIds belong to this survey
+    const validOptions = await db
       .select({ id: surveyOptions.id, isOther: surveyOptions.isOther })
       .from(surveyOptions)
       .where(
         and(
-          eq(surveyOptions.id, optionId),
+          sql`${surveyOptions.id} = ANY(${sql.raw(`ARRAY[${optionIds.join(',')}]::integer[]`)})`,
           eq(surveyOptions.surveyId, activeSurvey.id),
         ),
-      )
-      .limit(1);
+      );
 
-    if (!option) {
+    if (validOptions.length !== optionIds.length) {
       res.status(400).json({ error: 'Invalid option' });
       return;
     }
 
     // Server-side Other re-validation — never trust the client
-    if (option.isOther) {
+    const hasOther = validOptions.some((o) => o.isOther);
+    if (hasOther) {
       const trimmed = (otherText ?? '').trim();
       if (!trimmed) {
         res.status(400).json({ error: 'Please tell us your suggestion' });
@@ -303,20 +305,24 @@ router.post('/survey/vote', async (req: AuthRequest, res): Promise<void> => {
       }
     }
 
-    const trimmedOther = option.isOther ? (otherText ?? '').trim() : null;
+    const trimmedOther = hasOther ? (otherText ?? '').trim() : null;
 
-    // Insert vote; handle duplicate via onConflictDoNothing + zero-rows → 409
+    // Insert one row per option; skip duplicates via onConflictDoNothing.
+    // otherText is stored only on the Other-option row.
+    const rows = optionIds.map((oid) => ({
+      surveyId: activeSurvey.id,
+      userId,
+      optionId: oid,
+      otherText: validOptions.find((o) => o.id === oid)?.isOther ? trimmedOther : null,
+    }));
+
     const inserted = await db
       .insert(surveyVotes)
-      .values({
-        surveyId: activeSurvey.id,
-        userId,
-        optionId,
-        otherText: trimmedOther,
-      })
+      .values(rows)
       .onConflictDoNothing()
       .returning({ id: surveyVotes.id });
 
+    // All rows conflicted → user had already voted for every submitted option
     if (inserted.length === 0) {
       res.status(409).json({ error: 'Already voted' });
       return;
