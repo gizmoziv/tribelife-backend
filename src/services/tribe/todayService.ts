@@ -8,8 +8,13 @@
  *   or lat/lon). When no location is stored, falls back to a timezone-derived
  *   geonameid so parsha (Israel vs Diaspora) is still correct, but
  *   shabbat.candleLighting is nulled out and needsLocation is set to true.
- * - Cache: daily TTL (expires at next UTC midnight). Promise.allSettled ensures
- *   an upstream failure in either Hebcal or Sefaria degrades to null, not a 500.
+ * - Cache: SHARED across instances via Redis (so horizontally-scaled pods return
+ *   consistent results and don't each hammer upstream). Positive values expire at
+ *   the next UTC midnight; negative (null) results use a short TTL so a transient
+ *   upstream failure self-heals quickly instead of pinning an empty payload for
+ *   the whole day. Promise.allSettled ensures an upstream failure in either Hebcal
+ *   or Sefaria degrades to null, not a 500. If Redis is unavailable the cache is a
+ *   no-op (recompute) — it never breaks the request.
  * - NEVER throws to the caller.
  */
 
@@ -17,6 +22,7 @@ import tzlookup from 'tz-lookup';
 import { fetchShabbatByGeonameid, fetchShabbatByLatLon, type ShabbatInfo } from './hebcal';
 import { fetchDafYomi, type DafYomi } from './sefaria';
 import { geonameidFromTimezone } from '../../config/tribeRegions';
+import { redisGet, redisSet } from '../../lib/redisCache';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -46,31 +52,54 @@ export interface TodayPayload {
   needsLocation: boolean;
 }
 
-// ── Daily in-memory TTL cache ──────────────────────────────────────────────
+// ── Shared (cross-instance) TTL cache via Redis ─────────────────────────────
 
-type CacheEntry = { value: ShabbatInfo | DafYomi | null; expiresAt: number };
-const cache = new Map<string, CacheEntry>();
+/** Namespaced + versioned key prefix (bump v1 to invalidate the whole cache). */
+const CACHE_NS = 'tribe:today:v1:';
+/** Short TTL for cached negative (null) results so a transient blip self-heals. */
+const NEGATIVE_TTL_SECONDS = 300; // 5 minutes
 
-/**
- * Returns the timestamp of the next UTC midnight (cache TTL boundary).
- * Cached values are valid for the current calendar day only.
- */
+/** Timestamp of the next UTC midnight — positive entries live until then. */
 function nextUtcMidnight(now: Date): number {
   const d = new Date(now);
   d.setUTCHours(24, 0, 0, 0);
   return d.getTime();
 }
 
-function cacheGet<T>(key: string, now: Date): T | undefined {
-  const entry = cache.get(key);
-  if (entry && entry.expiresAt > now.getTime()) {
-    return entry.value as T;
-  }
-  return undefined;
+/** Seconds from `now` until the next UTC midnight (>= 1). */
+function ttlToMidnightSeconds(now: Date): number {
+  return Math.max(1, Math.floor((nextUtcMidnight(now) - now.getTime()) / 1000));
 }
 
-function cacheSet(key: string, value: ShabbatInfo | DafYomi | null, now: Date): void {
-  cache.set(key, { value, expiresAt: nextUtcMidnight(now) });
+/**
+ * Shared cache read. Returns:
+ *  - undefined          → cache miss (caller should recompute)
+ *  - { value: T | null }→ cache hit; `value` may be null (a cached negative result)
+ *
+ * The wrapper object lets us distinguish a genuine miss (key absent) from a
+ * deliberately-cached null. Never throws (redisGet degrades to null on error).
+ */
+async function cacheGet<T>(key: string): Promise<{ value: T | null } | undefined> {
+  const raw = await redisGet(CACHE_NS + key);
+  if (raw === null) return undefined;
+  try {
+    return JSON.parse(raw) as { value: T | null };
+  } catch {
+    return undefined; // corrupt entry → treat as miss
+  }
+}
+
+/**
+ * Shared cache write. Positive values expire at the next UTC midnight; null
+ * (negative) results use a short TTL. Never throws (redisSet is a no-op on error).
+ */
+async function cacheSet(
+  key: string,
+  value: ShabbatInfo | DafYomi | null,
+  now: Date,
+): Promise<void> {
+  const ttl = value === null ? NEGATIVE_TTL_SECONDS : ttlToMidnightSeconds(now);
+  await redisSet(CACHE_NS + key, JSON.stringify({ value }), ttl);
 }
 
 // ── Cache key helpers ──────────────────────────────────────────────────────
@@ -95,17 +124,17 @@ function dafKey(dateStr: string): string {
 
 async function getShabbatByGeonameid(geonameid: number, now: Date): Promise<ShabbatInfo | null> {
   const key = shabbatKeyGeonameid(geonameid, dateKey(now));
-  const cached = cacheGet<ShabbatInfo>(key, now);
-  if (cached !== undefined) return cached;
+  const cached = await cacheGet<ShabbatInfo>(key);
+  if (cached !== undefined) return cached.value;
 
   try {
     const result = await fetchShabbatByGeonameid(geonameid, now);
-    cacheSet(key, result, now);
+    await cacheSet(key, result, now);
     return result;
   } catch (err) {
     console.error('[todayService] fetchShabbatByGeonameid failed', err);
-    // Store null so we don't hammer the API on every request during an outage
-    cacheSet(key, null, now);
+    // Store null (short TTL) so we don't hammer the API on every request during a blip
+    await cacheSet(key, null, now);
     return null;
   }
 }
@@ -117,8 +146,8 @@ async function getShabbatByLatLon(
   now: Date,
 ): Promise<ShabbatInfo | null> {
   const key = shabbatKeyLatLon(lat, lon, dateKey(now));
-  const cached = cacheGet<ShabbatInfo>(key, now);
-  if (cached !== undefined) return cached;
+  const cached = await cacheGet<ShabbatInfo>(key);
+  if (cached !== undefined) return cached.value;
 
   // Derive the timezone from GPS coordinates so Hebcal returns candle times
   // adjusted for the physical location — not the user's profile timezone.
@@ -133,27 +162,27 @@ async function getShabbatByLatLon(
 
   try {
     const result = await fetchShabbatByLatLon(lat, lon, resolvedTz, now);
-    cacheSet(key, result, now);
+    await cacheSet(key, result, now);
     return result;
   } catch (err) {
     console.error('[todayService] fetchShabbatByLatLon failed', err);
-    cacheSet(key, null, now);
+    await cacheSet(key, null, now);
     return null;
   }
 }
 
 async function getDafYomiCached(now: Date): Promise<DafYomi | null> {
   const key = dafKey(dateKey(now));
-  const cached = cacheGet<DafYomi>(key, now);
-  if (cached !== undefined) return cached;
+  const cached = await cacheGet<DafYomi>(key);
+  if (cached !== undefined) return cached.value;
 
   try {
     const result = await fetchDafYomi(now);
-    cacheSet(key, result, now);
+    await cacheSet(key, result, now);
     return result;
   } catch (err) {
     console.error('[todayService] fetchDafYomi failed', err);
-    cacheSet(key, null, now);
+    await cacheSet(key, null, now);
     return null;
   }
 }
