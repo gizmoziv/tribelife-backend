@@ -19,7 +19,7 @@
  */
 
 import tzlookup from 'tz-lookup';
-import { fetchShabbatByGeonameid, fetchShabbatByLatLon, type ShabbatInfo } from './hebcal';
+import { fetchShabbatByGeonameid, fetchShabbatByLatLon, computeDaysUntil, type ShabbatInfo } from './hebcal';
 import { fetchDafYomi, type DafYomi } from './sefaria';
 import { geonameidFromTimezone } from '../../config/tribeRegions';
 import { redisGet, redisSet } from '../../lib/redisCache';
@@ -251,6 +251,16 @@ export async function getToday(opts: TodayOptions): Promise<TodayPayload> {
     // intentionally has no label to show.
     if (shabbatResult && opts.label && opts.label.trim().length > 0) {
       shabbatResult = { ...shabbatResult, locationLabel: opts.label };
+    }
+
+    // daysUntil is relative to "now" — recompute it fresh from the (absolute) candle
+    // timestamp. The cached ShabbatInfo is bucketed by UTC day, so a baked daysUntil
+    // would otherwise go stale across the caller's local midnight (off-by-one).
+    if (shabbatResult) {
+      shabbatResult = {
+        ...shabbatResult,
+        daysUntil: computeDaysUntil(shabbatResult.candleLighting, now),
+      };
     }
 
     return { shabbat: shabbatResult, daf, needsLocation };

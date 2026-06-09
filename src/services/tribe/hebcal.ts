@@ -69,6 +69,34 @@ interface HebcalJson {
   items?: HebcalItem[];
 }
 
+/** Parse the trailing UTC offset of an ISO-8601 timestamp into milliseconds. 'Z'/none → 0. */
+function parseIsoOffsetMs(iso: string): number {
+  const m = iso.match(/([+-])(\d{2}):?(\d{2})$/);
+  if (!m) return 0; // ends with 'Z' or has no offset
+  const sign = m[1] === '-' ? -1 : 1;
+  return sign * (parseInt(m[2], 10) * 60 + parseInt(m[3], 10)) * 60_000;
+}
+
+/**
+ * Calendar days from `now` to the candle-lighting date, counted in the LOCATION's
+ * local timezone (derived from the offset embedded in the candle-lighting timestamp,
+ * e.g. "...T19:55:00-04:00"). Returns null when there is no candle-lighting time.
+ *
+ * Exported so the response layer can recompute it FRESH per request: the cached
+ * ShabbatInfo is bucketed by UTC day, so a value baked in at parse time goes stale
+ * across the caller's local midnight (and a UTC-floored "today" over-counts in the
+ * evening for western zones — 20:40 EDT = 00:40 UTC the next day).
+ */
+export function computeDaysUntil(candleLighting: string | null, now: Date): number | null {
+  if (!candleLighting) return null;
+  const candleDay = new Date(candleLighting.split('T')[0] + 'T00:00:00Z');
+  const nowLocal = new Date(now.getTime() + parseIsoOffsetMs(candleLighting));
+  const todayLocal = new Date(
+    Date.UTC(nowLocal.getUTCFullYear(), nowLocal.getUTCMonth(), nowLocal.getUTCDate()),
+  );
+  return Math.round((candleDay.getTime() - todayLocal.getTime()) / 86_400_000);
+}
+
 /**
  * Parse a raw Hebcal JSON response into ShabbatInfo.
  * Pure function — takes `now` as a parameter so it is unit-testable.
@@ -97,15 +125,10 @@ export function parseHebcalShabbat(json: HebcalJson, now: Date): ShabbatInfo {
   // shabbatDate = the date of the parashat item (the Shabbat day itself)
   const shabbatDate = parshatItem?.date ?? (candleItem ? candleItem.date.split('T')[0] : null);
 
-  // daysUntil: calendar days from today to candle-lighting date
-  let daysUntil: number | null = null;
-  if (candleLighting) {
-    const candleDay = new Date(candleLighting.split('T')[0] + 'T00:00:00Z');
-    const todayUTC = new Date(
-      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
-    );
-    daysUntil = Math.round((candleDay.getTime() - todayUTC.getTime()) / 86_400_000);
-  }
+  // daysUntil: location-local calendar days from today to candle-lighting (see
+  // computeDaysUntil). Recomputed fresh per request downstream (todayService) so the
+  // UTC-day-bucketed cache can't serve a stale value across the caller's local midnight.
+  const daysUntil = computeDaysUntil(candleLighting, now);
 
   return { candleLighting, havdalah, parsha, parshaHebrew, locationLabel, shabbatDate, daysUntil };
 }
