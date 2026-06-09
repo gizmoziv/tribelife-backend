@@ -46,6 +46,13 @@ function getClientLazy(): CacheClient | null {
 
   client = createClient({
     url: redisUrl,
+    // Send a PING on the idle connection every 60s. This cache is hit only when
+    // someone loads the Tribe tab, so between requests the connection goes idle and
+    // DO Managed Redis/Valkey closes it at the protocol level (~300s idle timeout) —
+    // surfacing as a recurring "Socket closed unexpectedly" error every ~5 min. TCP
+    // keepAlive does NOT reset Redis's app-level idle timer; an actual PING command
+    // does. 60s is comfortably under the idle window and negligible load.
+    pingInterval: 60_000,
     socket: {
       keepAlive: 30_000,
       reconnectStrategy: (retries: number) => {
