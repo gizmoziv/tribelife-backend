@@ -189,9 +189,13 @@ router.get('/invite', (req: Request, res: Response) => {
   // re-renders this interstitial in a loop. The custom scheme is exempt from
   // that rule and launches the app reliably. Android: intent:// (same idea)
   // with a built-in browser_fallback_url for store routing if app is missing.
+  // iOS custom scheme uses an EMPTY authority (triple slash) so Expo Router keeps
+  // the full path. `tribelife://invite` parses `invite` as the URL HOST and drops
+  // it (router lands on `/` ), whereas `tribelife:///invite` yields path `/invite`
+  // which matches app/invite.tsx.
   const openInAppHref = platform === 'android'
     ? `intent://tribelife.app/invite${ref ? `?ref=${encodeURIComponent(ref)}` : ''}#Intent;scheme=https;package=com.tribelife.app;S.browser_fallback_url=${encodeURIComponent(storeUrl)};end`
-    : `tribelife://invite${ref ? `?ref=${encodeURIComponent(ref)}` : ''}`;
+    : `tribelife:///invite${ref ? `?ref=${encodeURIComponent(ref)}` : ''}`;
   const clipboardPayload = ref ? `tribelife-ref:${ref}` : '';
 
   const html = `<!DOCTYPE html>
@@ -214,17 +218,24 @@ router.get('/invite', (req: Request, res: Response) => {
 <div class="wrap">
   <h1>You're invited to TribeLife</h1>
   <p>Choose how to continue.</p>
-  <a class="btn btn-primary" href="${openInAppHref}">Open in TribeLife</a>
-  <a class="btn btn-secondary" href="${storeUrl}">Download</a>
+  <a class="btn btn-primary" data-clip href="${openInAppHref}">Open in TribeLife</a>
+  <a class="btn btn-secondary" data-clip href="${storeUrl}">Download</a>
 </div>
 <script>
 (function () {
   var clipboardPayload = ${JSON.stringify(clipboardPayload)};
-  // Write referral code to clipboard so the app can recover it after a fresh
-  // install from the store. No auto-redirect — user picks via the buttons.
-  if (clipboardPayload && navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(clipboardPayload).catch(function () { /* user denied */ });
+  function writeClip() {
+    if (clipboardPayload && navigator.clipboard && navigator.clipboard.writeText) {
+      try { navigator.clipboard.writeText(clipboardPayload).catch(function () {}); } catch (e) {}
+    }
   }
+  // iOS Safari blocks clipboard writes that aren't tied to a user gesture, so the
+  // old on-load write silently failed there and the referral code never reached a
+  // fresh install (attribution lost). Bind the write to the button taps (a transient
+  // user activation iOS accepts); still attempt on load for Android / browsers that allow it.
+  writeClip();
+  var btns = document.querySelectorAll('[data-clip]');
+  for (var i = 0; i < btns.length; i++) { btns[i].addEventListener('click', writeClip); }
 })();
 </script>
 </body>
@@ -281,9 +292,13 @@ router.get('/g/:slug', (req: Request, res: Response, next: NextFunction) => {
   // that rule and launches the app reliably. Android: intent:// (same idea)
   // with a built-in browser_fallback_url for store routing if app is missing.
   const refQuery = safeRef ? `?ref=${encodeURIComponent(safeRef)}` : '';
+  // iOS custom scheme uses an EMPTY authority (triple slash) so Expo Router keeps
+  // the full path. `tribelife://g/<slug>` parses `g` as the URL HOST and drops it
+  // (router lands on `/<slug>` with no match → the reported 404), whereas
+  // `tribelife:///g/<slug>` yields path `/g/<slug>` which matches app/g/[slug].tsx.
   const openInAppHref = platform === 'android'
     ? `intent://tribelife.app/g/${safeSlug}${refQuery}#Intent;scheme=https;package=com.tribelife.app;S.browser_fallback_url=${encodeURIComponent(storeUrl)};end`
-    : `tribelife://g/${safeSlug}${refQuery}`;
+    : `tribelife:///g/${safeSlug}${refQuery}`;
   // Clipboard payload format: tribelife-g-ref:<ref>:<slug>. Empty when no
   // ref present so the inline <script> branch becomes a no-op.
   const clipboardPayload = safeRef ? `tribelife-g-ref:${safeRef}:${safeSlug}` : '';
@@ -308,20 +323,24 @@ router.get('/g/:slug', (req: Request, res: Response, next: NextFunction) => {
 <div class="wrap">
   <h1>You're invited to a TribeLife group</h1>
   <p>Choose how to continue.</p>
-  <a class="btn btn-primary" href="${openInAppHref}">Open in TribeLife</a>
-  <a class="btn btn-secondary" href="${storeUrl}">Download</a>
+  <a class="btn btn-primary" data-clip href="${openInAppHref}">Open in TribeLife</a>
+  <a class="btn btn-secondary" data-clip href="${storeUrl}">Download</a>
 </div>
 <script>
 (function () {
   var clipboardPayload = ${JSON.stringify(clipboardPayload)};
-  // Phase 13: write attribution payload to clipboard so the app can recover
-  // both the group slug AND the inviter handle after a fresh install. No
-  // auto-redirect — user picks via the buttons. Previous setTimeout to the
-  // App Store fought iOS Universal Links (Safari tab visibility was unreliable
-  // after UL handoff, so the store was opening on top of the launched app).
-  if (clipboardPayload && navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(clipboardPayload).catch(function () { /* user denied */ });
+  function writeClip() {
+    if (clipboardPayload && navigator.clipboard && navigator.clipboard.writeText) {
+      try { navigator.clipboard.writeText(clipboardPayload).catch(function () {}); } catch (e) {}
+    }
   }
+  // Phase 13: write the attribution payload (group slug + inviter handle) so a fresh
+  // install can recover it. iOS Safari blocks clipboard writes without a user gesture,
+  // so the prior on-load write silently failed there and attribution was lost — bind it
+  // to the button taps; still attempt on load for Android / browsers that allow it.
+  writeClip();
+  var btns = document.querySelectorAll('[data-clip]');
+  for (var i = 0; i < btns.length; i++) { btns[i].addEventListener('click', writeClip); }
 })();
 </script>
 </body>
@@ -377,9 +396,15 @@ router.get('/u/:handle', (req: Request, res: Response, next: NextFunction) => {
   // that rule and launches the app reliably. Android: intent:// (same idea)
   // with a built-in browser_fallback_url for store routing if app is missing.
   const refQuery = safeRef ? `?ref=${encodeURIComponent(safeRef)}` : '';
+  // iOS custom scheme uses an EMPTY authority (triple slash) so Expo Router keeps
+  // the full path. `tribelife://u/<handle>` parses `u` as the URL HOST and drops it
+  // (router lands on `/<handle>` with no match → the reported `tribelife:///sagie`
+  // 404), whereas `tribelife:///u/<handle>` yields path `/u/<handle>` which matches
+  // app/u/[handle].tsx. This also restores attribution: _layout.tsx keys source off
+  // path.startsWith('u/'), which is only true when the `u/` segment survives.
   const openInAppHref = platform === 'android'
     ? `intent://tribelife.app/u/${safeHandle}${refQuery}#Intent;scheme=https;package=com.tribelife.app;S.browser_fallback_url=${encodeURIComponent(storeUrl)};end`
-    : `tribelife://u/${safeHandle}${refQuery}`;
+    : `tribelife:///u/${safeHandle}${refQuery}`;
   // Clipboard payload format: tribelife-u-ref:<ref>:<handle>.
   const clipboardPayload = safeRef ? `tribelife-u-ref:${safeRef}:${safeHandle}` : '';
 
@@ -403,19 +428,24 @@ router.get('/u/:handle', (req: Request, res: Response, next: NextFunction) => {
 <div class="wrap">
   <h1>View this profile on TribeLife</h1>
   <p>Choose how to continue.</p>
-  <a class="btn btn-primary" href="${openInAppHref}">Open in TribeLife</a>
-  <a class="btn btn-secondary" href="${storeUrl}">Download</a>
+  <a class="btn btn-primary" data-clip href="${openInAppHref}">Open in TribeLife</a>
+  <a class="btn btn-secondary" data-clip href="${storeUrl}">Download</a>
 </div>
 <script>
 (function () {
   var clipboardPayload = ${JSON.stringify(clipboardPayload)};
-  // Phase 13: write attribution payload to clipboard so the app can recover
-  // both the profile handle AND the inviter handle after a fresh install. No
-  // auto-redirect — user picks via the buttons (the prior setTimeout to the
-  // App Store fought iOS Universal Links).
-  if (clipboardPayload && navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(clipboardPayload).catch(function () { /* user denied */ });
+  function writeClip() {
+    if (clipboardPayload && navigator.clipboard && navigator.clipboard.writeText) {
+      try { navigator.clipboard.writeText(clipboardPayload).catch(function () {}); } catch (e) {}
+    }
   }
+  // Phase 13: write the attribution payload (profile handle + inviter handle) so a fresh
+  // install can recover it. iOS Safari blocks clipboard writes without a user gesture, so
+  // the prior on-load write silently failed there and attribution was lost — bind it to the
+  // button taps; still attempt on load for Android / browsers that allow it.
+  writeClip();
+  var btns = document.querySelectorAll('[data-clip]');
+  for (var i = 0; i < btns.length; i++) { btns[i].addEventListener('click', writeClip); }
 })();
 </script>
 </body>
