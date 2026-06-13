@@ -9,7 +9,7 @@ import {
   notifications,
   blockedUsers,
 } from '../db/schema';
-import { eq, and, isNull, inArray } from 'drizzle-orm';
+import { eq, and, isNull, isNotNull, ne, inArray } from 'drizzle-orm';
 import { moderateMessage } from '../services/claude';
 import { moderateMessageImages } from '../services/imageModeration';
 import { sendPushNotifications, shouldSendPush, getUnreadBadgeCounts } from '../services/pushNotifications';
@@ -140,6 +140,20 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
       .update(conversationParticipants)
       .set({ hiddenAt: null })
       .where(eq(conversationParticipants.conversationId, data.conversationId));
+
+    // Auto-unarchive: clear archivedAt for non-sender participants who had it set,
+    // so the conversation resurfaces in their main Chats list before chat:notification fires.
+    // The sender's own archivedAt is intentionally preserved (ne excludes sender).
+    await db
+      .update(conversationParticipants)
+      .set({ archivedAt: null })
+      .where(
+        and(
+          eq(conversationParticipants.conversationId, data.conversationId),
+          ne(conversationParticipants.userId, userId),
+          isNotNull(conversationParticipants.archivedAt)
+        )
+      );
 
     // Build replyTo preview if this is a reply, and capture the original sender
     let replyTo: { id: number; content: string; senderHandle: string } | null = null;
