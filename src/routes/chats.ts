@@ -290,6 +290,7 @@ router.get('/', async (req: AuthRequest, res: Response): Promise<void> => {
       eq(conversationParticipants.userId, userId),
       isNull(conversationParticipants.hiddenAt),
       isNull(conversationParticipants.leftAt),
+      isNull(conversationParticipants.archivedAt),
     ));
 
   const dmsAndGroups: ChatsRow[] = [];
@@ -409,6 +410,7 @@ router.get('/', async (req: AuthRequest, res: Response): Promise<void> => {
           lastMessage: lastMsg
             ? { preview: lastMsg.content ?? '', at: (lastMsg.createdAt as Date).toISOString() }
             : null,
+          isUserArchived: false,
           lastMessageAt: row.lastMessageAt ?? null,
         };
       }),
@@ -433,6 +435,7 @@ router.get('/', async (req: AuthRequest, res: Response): Promise<void> => {
           lastMessage: lastMsg
             ? { preview: lastMsg.content ?? '', at: (lastMsg.createdAt as Date).toISOString() }
             : null,
+          isUserArchived: false,
           lastMessageAt: row.lastMessageAt ?? null,
           // Phase 12 D-11: public/archive fields
           isPublic: row.isPublic ?? false,
@@ -472,6 +475,193 @@ router.get('/', async (req: AuthRequest, res: Response): Promise<void> => {
   const rows: ChatsRow[] = [localChatRow, townSquareRow, ...dmsAndGroups];
   const body: ChatsListResponse = { rows };
   res.json(body);
+});
+
+// ── GET /api/chats/archived — caller's archived dm + group rows ───────────
+// Returns only dm + group conversations where the caller's participant row has
+// archived_at IS NOT NULL. Room types (local_chat, town_square, globe_room,
+// timezone_room) are never archivable and are never returned here.
+// Response shape is identical to GET /api/chats (ChatsListResponse { rows }).
+router.get('/archived', async (req: AuthRequest, res: Response): Promise<void> => {
+  const userId = req.user!.id;
+
+  // ── 1. Participations where archived_at IS NOT NULL ─────────────────────
+  const participations = await db
+    .select({ conversationId: conversationParticipants.conversationId })
+    .from(conversationParticipants)
+    .where(and(
+      eq(conversationParticipants.userId, userId),
+      isNull(conversationParticipants.leftAt),
+      sql`${conversationParticipants.archivedAt} IS NOT NULL`,
+    ));
+
+  const rows: ChatsRow[] = [];
+
+  if (participations.length === 0) {
+    res.json({ rows } as ChatsListResponse);
+    return;
+  }
+
+  const convIds = participations.map((p) => p.conversationId);
+
+  // ── 2. Unread aggregate ──────────────────────────────────────────────────
+  const unreadRows = await db
+    .select({
+      conversationId: messages.conversationId,
+      unread: sql<number>`count(*)::int`,
+    })
+    .from(messages)
+    .innerJoin(
+      conversationParticipants,
+      and(
+        eq(conversationParticipants.conversationId, messages.conversationId),
+        eq(conversationParticipants.userId, userId),
+      ),
+    )
+    .where(
+      and(
+        inArray(messages.conversationId, convIds),
+        ne(messages.senderId, userId),
+        or(
+          isNull(conversationParticipants.lastReadAt),
+          gt(messages.createdAt, conversationParticipants.lastReadAt),
+        ),
+      ),
+    )
+    .groupBy(messages.conversationId);
+  const unreadMap = new Map<number, number>(
+    unreadRows
+      .filter((r) => r.conversationId !== null)
+      .map((r) => [r.conversationId as number, Number(r.unread)]),
+  );
+
+  // ── 3. Blocked-user IDs (excluded from DM rows) ─────────────────────────
+  const blockedRows = await db
+    .select({ blockedUserId: blockedUsers.blockedUserId })
+    .from(blockedUsers)
+    .where(eq(blockedUsers.userId, userId));
+  const blockedIds = blockedRows.map((r) => r.blockedUserId);
+
+  // ── 4. 1-on-1 DMs ────────────────────────────────────────────────────────
+  const dmResult = await db
+    .select({
+      conversationId: conversations.id,
+      lastMessageAt: conversations.lastMessageAt,
+      participantId: conversationParticipants.userId,
+      participantHandle: userProfiles.handle,
+      participantAvatar: userProfiles.avatarUrl,
+    })
+    .from(conversations)
+    .innerJoin(
+      conversationParticipants,
+      and(
+        eq(conversationParticipants.conversationId, conversations.id),
+        sql`${conversationParticipants.userId} != ${userId}`,
+      ),
+    )
+    .innerJoin(users, eq(users.id, conversationParticipants.userId))
+    .leftJoin(userProfiles, eq(userProfiles.userId, conversationParticipants.userId))
+    .where(
+      and(
+        inArray(conversations.id, convIds),
+        sql`${conversations.isGroup} IS NOT TRUE`,
+        ...(blockedIds.length > 0 ? [notInArray(conversationParticipants.userId, blockedIds)] : []),
+      ),
+    )
+    .orderBy(desc(conversations.lastMessageAt));
+
+  // ── 5. Groups ─────────────────────────────────────────────────────────────
+  const groupResult = await db
+    .select({
+      conversationId: conversations.id,
+      groupName: conversations.groupName,
+      groupIconUrl: conversations.groupIconUrl,
+      lastMessageAt: conversations.lastMessageAt,
+      memberCount: sql<number>`(SELECT count(*)::int FROM conversation_participants cp WHERE cp.conversation_id = conversations.id AND cp.left_at IS NULL)`,
+      isPublic: conversations.isPublic,
+      isArchived: sql<boolean>`${conversations.archivedAt} IS NOT NULL`,
+    })
+    .from(conversations)
+    .where(
+      and(
+        inArray(conversations.id, convIds),
+        eq(conversations.isGroup, true),
+      ),
+    )
+    .orderBy(desc(conversations.lastMessageAt));
+
+  // ── 6. Last-message previews for DMs ─────────────────────────────────────
+  const dmRows: Array<ChatsRow & { lastMessageAt: Date | null }> = await Promise.all(
+    dmResult.map(async (row) => {
+      const [lastMsg] = await db
+        .select({ content: messages.content, createdAt: messages.createdAt })
+        .from(messages)
+        .where(and(eq(messages.conversationId, row.conversationId), isNull(messages.deletedAt)))
+        .orderBy(desc(messages.createdAt))
+        .limit(1);
+      return {
+        type: 'dm' as const,
+        conversationId: row.conversationId,
+        partner: {
+          handle: row.participantHandle ?? '',
+          avatarUrl: row.participantAvatar ?? null,
+        },
+        unreadCount: Math.min(unreadMap.get(row.conversationId) ?? 0, 99),
+        lastMessage: lastMsg
+          ? { preview: lastMsg.content ?? '', at: (lastMsg.createdAt as Date).toISOString() }
+          : null,
+        isUserArchived: true,
+        lastMessageAt: row.lastMessageAt ?? null,
+      };
+    }),
+  );
+
+  // ── 7. Last-message previews for Groups ───────────────────────────────────
+  const groupRows: Array<ChatsRow & { lastMessageAt: Date | null }> = await Promise.all(
+    groupResult.map(async (row) => {
+      const [lastMsg] = await db
+        .select({ content: messages.content, createdAt: messages.createdAt })
+        .from(messages)
+        .where(and(eq(messages.conversationId, row.conversationId), isNull(messages.deletedAt)))
+        .orderBy(desc(messages.createdAt))
+        .limit(1);
+      return {
+        type: 'group' as const,
+        conversationId: row.conversationId,
+        name: row.groupName ?? 'Group',
+        iconUrl: row.groupIconUrl ?? null,
+        memberCount: Number(row.memberCount ?? 0),
+        unreadCount: Math.min(unreadMap.get(row.conversationId) ?? 0, 99),
+        lastMessage: lastMsg
+          ? { preview: lastMsg.content ?? '', at: (lastMsg.createdAt as Date).toISOString() }
+          : null,
+        isUserArchived: true,
+        lastMessageAt: row.lastMessageAt ?? null,
+        isPublic: row.isPublic ?? false,
+        isArchived: Boolean(row.isArchived),
+      };
+    }),
+  );
+
+  // ── 8. Merge + sort (unreadCount DESC, lastMessageAt DESC) ────────────────
+  const merged: Array<ChatsRow & { lastMessageAt: Date | null }> = [
+    ...dmRows,
+    ...groupRows,
+  ];
+  merged.sort((a, b) => {
+    if (b.unreadCount !== a.unreadCount) return b.unreadCount - a.unreadCount;
+    const aTime = a.lastMessageAt?.getTime() ?? 0;
+    const bTime = b.lastMessageAt?.getTime() ?? 0;
+    return bTime - aTime;
+  });
+
+  for (const row of merged) {
+    const { lastMessageAt: _sortKey, ...rowOnly } = row;
+    void _sortKey;
+    rows.push(rowOnly);
+  }
+
+  res.json({ rows } as ChatsListResponse);
 });
 
 // ── Mark a room (Town Square OR Local Chat) as read ────────────────────────
