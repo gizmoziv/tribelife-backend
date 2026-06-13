@@ -38,6 +38,7 @@ export type ChatsRow =
       partner: { handle: string; avatarUrl: string | null };
       unreadCount: number;
       lastMessage: ChatsRowLastMessage | null;
+      isUserArchived?: boolean;
     }
   | {
       type: 'group';
@@ -47,6 +48,7 @@ export type ChatsRow =
       memberCount: number;
       unreadCount: number;
       lastMessage: ChatsRowLastMessage | null;
+      isUserArchived?: boolean;
     }
   | {
       // Phase 11 D-04: joined non-Town-Square Globe room. roomSlug is the

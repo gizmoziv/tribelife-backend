@@ -600,6 +600,86 @@ router.put('/conversations/:id/hide', async (req: AuthRequest, res: Response): P
   res.json({ ok: true });
 });
 
+// ── Archive a DM or group conversation for the caller ─────────────────────
+router.put('/conversations/:id/archive', async (req: AuthRequest, res: Response): Promise<void> => {
+  const userId = req.user!.id;
+  const convId = parseInt(req.params.id as string);
+
+  if (isNaN(convId)) {
+    res.status(400).json({ error: 'Invalid conversation ID' });
+    return;
+  }
+
+  // Verify user is participant
+  const participation = await db
+    .select({ id: conversationParticipants.id })
+    .from(conversationParticipants)
+    .where(
+      and(
+        eq(conversationParticipants.conversationId, convId),
+        eq(conversationParticipants.userId, userId)
+      )
+    )
+    .limit(1);
+
+  if (participation.length === 0) {
+    res.status(403).json({ error: 'Not a participant in this conversation' });
+    return;
+  }
+
+  await db
+    .update(conversationParticipants)
+    .set({ archivedAt: new Date() })
+    .where(
+      and(
+        eq(conversationParticipants.conversationId, convId),
+        eq(conversationParticipants.userId, userId)
+      )
+    );
+
+  res.json({ ok: true });
+});
+
+// ── Unarchive a DM or group conversation for the caller ───────────────────
+router.put('/conversations/:id/unarchive', async (req: AuthRequest, res: Response): Promise<void> => {
+  const userId = req.user!.id;
+  const convId = parseInt(req.params.id as string);
+
+  if (isNaN(convId)) {
+    res.status(400).json({ error: 'Invalid conversation ID' });
+    return;
+  }
+
+  // Verify user is participant
+  const participation = await db
+    .select({ id: conversationParticipants.id })
+    .from(conversationParticipants)
+    .where(
+      and(
+        eq(conversationParticipants.conversationId, convId),
+        eq(conversationParticipants.userId, userId)
+      )
+    )
+    .limit(1);
+
+  if (participation.length === 0) {
+    res.status(403).json({ error: 'Not a participant in this conversation' });
+    return;
+  }
+
+  await db
+    .update(conversationParticipants)
+    .set({ archivedAt: null })
+    .where(
+      and(
+        eq(conversationParticipants.conversationId, convId),
+        eq(conversationParticipants.userId, userId)
+      )
+    );
+
+  res.json({ ok: true });
+});
+
 // ── Get recent location-based (room) chat history ─────────────────────────
 router.get('/room/:roomId/messages', async (req: AuthRequest, res: Response): Promise<void> => {
   const userId = req.user!.id;
