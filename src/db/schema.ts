@@ -90,6 +90,7 @@ export const conversationParticipants = pgTable('conversation_participants', {
   joinedAt: timestamp('joined_at').defaultNow(),
   lastReadAt: timestamp('last_read_at'),
   hiddenAt: timestamp('hidden_at'),
+  archivedAt: timestamp('archived_at'),
   role: varchar('role', { length: 20 }).default('member'),
   leftAt: timestamp('left_at'),
 }, (t) => ({
