@@ -447,13 +447,18 @@ router.post('/onboarding', requireAuth, async (req: AuthRequest, res: Response):
 
   // Track referral if code provided
   if (referralCode) {
+    // Join users table to also fetch bannedAt so we can exclude banned referrers (REF-09)
     const [referrer] = await db
-      .select({ userId: userProfiles.userId })
+      .select({ userId: userProfiles.userId, bannedAt: users.bannedAt })
       .from(userProfiles)
+      .innerJoin(users, eq(users.id, userProfiles.userId))
       .where(eq(userProfiles.handle, referralCode.toLowerCase()))
       .limit(1);
 
-    if (referrer && referrer.userId !== userId) {
+    // Valid referrer: exists, is a different user, and is not banned (REF-09)
+    const isValidReferrer = referrer != null && referrer.userId !== userId && referrer.bannedAt === null;
+
+    if (isValidReferrer) {
       await db.insert(referrals).values({
         referrerId: referrer.userId,
         referredUserId: userId,
@@ -465,7 +470,7 @@ router.post('/onboarding', requireAuth, async (req: AuthRequest, res: Response):
 
       console.log('[attribution]', { userId, referrerId: referrer.userId, source: attributionSource ?? 'handle_code' });
 
-      // Grant referrer premium: 1 referral = 1 month, cap at 12
+      // Grant referrer premium: 1 referral = 1 month, cap at 12 (REF-07 — unchanged)
       const [countResult] = await db
         .select({ total: count() })
         .from(referrals)
@@ -484,6 +489,32 @@ router.post('/onboarding', requireAuth, async (req: AuthRequest, res: Response):
           })
           .where(eq(userProfiles.userId, referrer.userId));
       }
+
+      // Grant joiner premium — net-new users only (REF-06)
+      // Predicate mirrors capabilities.ts: isPremium && (premiumExpiresAt === null || premiumExpiresAt > now)
+      const now = new Date();
+      const joinerHasActivePremium =
+        profile.isPremium &&
+        (profile.premiumExpiresAt === null || profile.premiumExpiresAt > now);
+
+      if (isFirstOnboarding && !joinerHasActivePremium) {
+        const premiumExpiry = new Date(Date.now() + joinerPremiumDays * 86400000);
+        await db
+          .update(userProfiles)
+          .set({
+            isPremium: true,
+            premiumExpiresAt: premiumExpiry,
+            updatedAt: new Date(),
+          })
+          .where(eq(userProfiles.userId, userId));
+        console.log('[attribution] joiner premium granted', { userId, referrerId: referrer.userId, days: joinerPremiumDays });
+      }
+    } else {
+      // Referral miss: code was supplied but did not resolve to a valid different non-banned referrer (REF-09, REF-04)
+      log.warn(
+        { attemptedHandle: referralCode.toLowerCase(), source: attributionSource ?? null, userId },
+        '[attribution] referral miss',
+      );
     }
   }
 
