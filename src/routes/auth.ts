@@ -20,6 +20,9 @@ import { getIO } from '../lib/socketRegistry';
 const router = Router();
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
+// Free-premium days granted to a net-new joiner who provides a valid referrer (REF-06)
+const joinerPremiumDays = parseInt(process.env.REFERRAL_JOINER_PREMIUM_DAYS || '14', 10);
+
 // Apple Sign-In JWKS for token verification
 const appleJWKS = createRemoteJWKSet(new URL('https://appleid.apple.com/auth/keys'));
 
@@ -382,7 +385,7 @@ const onboardingSchema = z.object({
     errorMap: () => ({ message: 'You must accept the Terms of Service to continue' }),
   }),
   referralCode: z.string().max(50).optional(),
-  attributionSource: z.enum(['handle_code', 'profile_share', 'group_invite']).optional(),
+  attributionSource: z.enum(['handle_code', 'profile_share', 'group_invite', 'manual_entry']).optional(),
 });
 
 router.post('/onboarding', requireAuth, async (req: AuthRequest, res: Response): Promise<void> => {
