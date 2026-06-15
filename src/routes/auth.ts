@@ -499,14 +499,19 @@ router.post('/onboarding', requireAuth, async (req: AuthRequest, res: Response):
 
       if (isFirstOnboarding && !joinerHasActivePremium) {
         const premiumExpiry = new Date(Date.now() + joinerPremiumDays * 86400000);
+        const grantedAt = new Date();
         await db
           .update(userProfiles)
           .set({
             isPremium: true,
             premiumExpiresAt: premiumExpiry,
-            updatedAt: new Date(),
+            updatedAt: grantedAt,
           })
           .where(eq(userProfiles.userId, userId));
+        // Sync in-memory profile so res.json({ profile }) reflects the grant
+        profile.isPremium = true;
+        profile.premiumExpiresAt = premiumExpiry;
+        profile.updatedAt = grantedAt;
         console.log('[attribution] joiner premium granted', { userId, referrerId: referrer.userId, days: joinerPremiumDays });
       }
     } else {
