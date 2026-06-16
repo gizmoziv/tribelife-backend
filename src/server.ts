@@ -31,6 +31,7 @@ import tribeRouter from './routes/tribe';
 import reactionsRouter from './routes/reactions';
 import referralsRouter from './routes/referrals';
 import groupsRouter from './routes/groups';
+import pinsRouter from './routes/pins';
 import orgsRouter from './routes/orgs';
 import orgsPublicRouter from './routes/orgsPublic';
 import versionRouter from './routes/version';
@@ -191,6 +192,7 @@ app.use('/api/tribe', tribeRouter);
 app.use('/api/reactions', reactionsRouter);
 app.use('/api/referrals', referralsRouter);
 app.use('/api/chat/groups', groupsRouter);
+app.use('/api/pins', pinsRouter);
 
 // ── Resolve public directory for static files ────────────────────────────
 const fs = require('fs');
