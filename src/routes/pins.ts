@@ -254,8 +254,10 @@ router.post('/', async (req: AuthRequest, res: Response): Promise<void> => {
     },
   };
 
-  // 6. Announce system line + broadcast pin event
-  await announcePinAction({
+  // 6. Announce system line + broadcast pin event. Capture the created system
+  // message so the actor's own client can append it immediately (deduped by id
+  // against the socket echo) — fixes the actor-doesn't-see-own-pin-line bug.
+  const systemMessage = await announcePinAction({
     roomId,
     conversationId,
     userId,
@@ -267,7 +269,7 @@ router.post('/', async (req: AuthRequest, res: Response): Promise<void> => {
   log.warn({ userId, messageId, roomId, conversationId }, 'message pinned');
 
   // 7. Respond
-  res.json({ ok: true, pin: pinRow });
+  res.json({ ok: true, pin: pinRow, systemMessage });
 });
 
 // ── DELETE /api/pins — unpin the current pin ──────────────────────────────
@@ -302,7 +304,7 @@ router.delete('/', async (req: AuthRequest, res: Response): Promise<void> => {
     pin: null,
   };
 
-  await announcePinAction({
+  const systemMessage = await announcePinAction({
     roomId,
     conversationId,
     userId,
@@ -313,7 +315,7 @@ router.delete('/', async (req: AuthRequest, res: Response): Promise<void> => {
 
   log.warn({ userId, roomId, conversationId }, 'message unpinned');
 
-  res.json({ ok: true });
+  res.json({ ok: true, systemMessage });
 });
 
 export default router;
