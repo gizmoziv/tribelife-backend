@@ -184,6 +184,65 @@ router.post(
   },
 );
 
+// ── Grant staff role ──────────────────────────────────────────────────────────
+// POST /api/admin/users/staff  { userId }
+// Sets is_staff = true. Same ADMIN_API_KEY gate as ban/unban (inherited from
+// router.use(requireAdmin)). Staff status grants pin rights in community rooms (D-03).
+const staffSchema = z.object({ userId: z.number().int().positive() });
+
+router.post(
+  '/users/staff',
+  async (req: Request, res: Response): Promise<void> => {
+    const parse = staffSchema.safeParse(req.body);
+    if (!parse.success) {
+      res.status(400).json({ error: parse.error.errors[0].message });
+      return;
+    }
+    const { userId } = parse.data;
+
+    const [updated] = await db
+      .update(users)
+      .set({ isStaff: true, updatedAt: new Date() })
+      .where(eq(users.id, userId))
+      .returning({ id: users.id, email: users.email, isStaff: users.isStaff });
+
+    if (!updated) {
+      res.status(404).json({ error: 'user not found' });
+      return;
+    }
+    log.warn({ userId }, 'user granted staff');
+    res.json({ ok: true, user: updated });
+  },
+);
+
+// ── Revoke staff role ─────────────────────────────────────────────────────────
+// POST /api/admin/users/unstaff  { userId }
+// Sets is_staff = false. Mirrors the grant endpoint exactly.
+router.post(
+  '/users/unstaff',
+  async (req: Request, res: Response): Promise<void> => {
+    const parse = staffSchema.safeParse(req.body);
+    if (!parse.success) {
+      res.status(400).json({ error: parse.error.errors[0].message });
+      return;
+    }
+    const { userId } = parse.data;
+
+    const [updated] = await db
+      .update(users)
+      .set({ isStaff: false, updatedAt: new Date() })
+      .where(eq(users.id, userId))
+      .returning({ id: users.id, email: users.email, isStaff: users.isStaff });
+
+    if (!updated) {
+      res.status(404).json({ error: 'user not found' });
+      return;
+    }
+    log.warn({ userId }, 'user revoked staff');
+    res.json({ ok: true, user: updated });
+  },
+);
+
 // ── Timezone coverage report ───────────────────────────────────────────────
 // GET /api/admin/timezone-coverage
 // Returns every distinct user_profiles.timezone classified as explicit |
