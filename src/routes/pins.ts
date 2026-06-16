@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { eq, and, isNull } from 'drizzle-orm';
+import { eq, and, isNull, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '../db';
 import { messages, conversations, conversationParticipants, pinnedMessages } from '../db/schema';
@@ -221,6 +221,15 @@ router.post('/', async (req: AuthRequest, res: Response): Promise<void> => {
     })
     .onConflictDoUpdate({
       target: roomId != null ? [pinnedMessages.roomId] : [pinnedMessages.conversationId],
+      // Match the PARTIAL unique index predicate (pinned_messages_room_uniq /
+      // pinned_messages_conv_uniq are `WHERE <col> IS NOT NULL`). Without this,
+      // Postgres rejects with "no unique or exclusion constraint matching the
+      // ON CONFLICT specification" because a partial index only infers when the
+      // statement repeats its WHERE clause.
+      targetWhere:
+        roomId != null
+          ? sql`${pinnedMessages.roomId} IS NOT NULL`
+          : sql`${pinnedMessages.conversationId} IS NOT NULL`,
       set: {
         messageId,
         pinnedById: userId,
