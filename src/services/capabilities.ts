@@ -21,6 +21,7 @@ export function computeCapabilities(args: {
   isPremium: boolean;
   premiumExpiresAt: Date | null;
   orgMemberships?: OrgMembership[];
+  isStaff?: boolean;
 }): Capabilities {
   const now = new Date();
   const premiumActive =
@@ -44,11 +45,14 @@ export function computeCapabilities(args: {
   // `tier` is a UI label combining both axes (org_admin > premium > free).
   // It is NOT used as a key into the limits/features table.
 
-  const tier: Tier = isOrgAdmin
-    ? 'org_admin'
-    : premiumActive
-      ? 'premium'
-      : 'free';
+  const isStaff = args.isStaff ?? false;
+  const tier: Tier = isStaff
+    ? 'staff'
+    : isOrgAdmin
+      ? 'org_admin'
+      : premiumActive
+        ? 'premium'
+        : 'free';
 
   // isPremium reflects PAID personal subscription only. An org admin who
   // hasn't paid is NOT premium. This was previously `tier !== 'free'` which
@@ -78,6 +82,7 @@ export function computeCapabilities(args: {
     computedAt: now.toISOString(),
     tier,
     isPremium: isPremiumDerived,
+    isStaff,
     limits,
     features,
     orgs,

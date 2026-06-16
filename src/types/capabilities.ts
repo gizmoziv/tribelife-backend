@@ -38,6 +38,7 @@ export interface Capabilities {
   computedAt: string;
   tier: Tier;
   isPremium: boolean;
+  isStaff: boolean;
   limits: CapabilityLimits;
   features: CapabilityFeatures;
   orgs: OrgMembership[];

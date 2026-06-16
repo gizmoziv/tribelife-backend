@@ -22,6 +22,7 @@ export interface AuthUser {
   handleUpdatedAt: Date | null;
   bio: string | null;
   bannedAt: Date | null;
+  isStaff: boolean;
   // ── Candle-lighting location (TRIBE-06) ───────────────────────────────────
   candleGeonameid: number | null;
   candleLat: number | null;
@@ -74,6 +75,7 @@ export async function loadAuthUser(userId: number): Promise<AuthUser | null> {
       handleUpdatedAt: userProfiles.handleUpdatedAt,
       bio: userProfiles.bio,
       bannedAt: users.bannedAt,
+      isStaff: users.isStaff,
       candleGeonameid: userProfiles.candleGeonameid,
       candleLat: userProfiles.candleLat,
       candleLon: userProfiles.candleLon,
