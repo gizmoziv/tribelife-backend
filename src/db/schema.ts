@@ -27,6 +27,7 @@ export const users = pgTable('users', {
   name: varchar('name', { length: 255 }).notNull(),
   bannedAt: timestamp('banned_at'),               // platform ban: non-null = suspended (blocks sign-in + kills live sessions)
   banReason: text('ban_reason'),                  // optional admin note for the ban
+  isStaff: boolean('is_staff').notNull().default(false), // global staff flag — grants pin rights in community rooms (D-03, D-06)
   createdAt: timestamp('created_at').defaultNow(),
   updatedAt: timestamp('updated_at').defaultNow(),
 });
@@ -370,6 +371,39 @@ export const organizationInvites = pgTable('organization_invites', {
     'organization_invites_role_check',
     sql`${table.role} IN ('admin', 'moderator', 'member')`,
   ),
+}));
+
+// ─────────────────────────────────────────────
+// PINNED MESSAGES — one pin per room/conversation (Phase 22)
+// XOR: exactly one of roomId / conversationId is non-null, mirroring messages.
+// Partial unique indexes enforce ONE pin per room (D-08): a new pin upserts
+// (onConflictDoUpdate) to replace the previous one atomically.
+// ─────────────────────────────────────────────
+export const pinnedMessages = pgTable('pinned_messages', {
+  id: serial('id').primaryKey(),
+  // XOR: exactly one non-null — mirrors messages.roomId / messages.conversationId
+  roomId: varchar('room_id', { length: 100 }),
+  conversationId: integer('conversation_id').references(() => conversations.id, { onDelete: 'cascade' }),
+  messageId: integer('message_id').references(() => messages.id, { onDelete: 'cascade' }).notNull(),
+  pinnedById: integer('pinned_by_id').references(() => users.id, { onDelete: 'set null' }),
+  pinnedAt: timestamp('pinned_at').defaultNow().notNull(),
+  // Denormalized preview — avoids JOIN on every bar render (Q3)
+  previewText: text('preview_text'),
+  pinnedMediaUrl: text('pinned_media_url'),
+  pinnedSenderHandle: varchar('pinned_sender_handle', { length: 50 }),
+}, (t) => ({
+  // Enforces exactly ONE pin per room (D-08): partial unique indexes allow upsert targeting
+  roomUniq: uniqueIndex('pinned_messages_room_uniq').on(t.roomId).where(sql`${t.roomId} IS NOT NULL`),
+  convUniq: uniqueIndex('pinned_messages_conv_uniq').on(t.conversationId).where(sql`${t.conversationId} IS NOT NULL`),
+  // Fast lookup of "current pin for this room/convo"
+  roomIdx: index('pinned_messages_room_idx').on(t.roomId),
+  convIdx: index('pinned_messages_conv_idx').on(t.conversationId),
+}));
+
+export const pinnedMessagesRelations = relations(pinnedMessages, ({ one }) => ({
+  message: one(messages, { fields: [pinnedMessages.messageId], references: [messages.id] }),
+  conversation: one(conversations, { fields: [pinnedMessages.conversationId], references: [conversations.id] }),
+  pinnedBy: one(users, { fields: [pinnedMessages.pinnedById], references: [users.id] }),
 }));
 
 // ─────────────────────────────────────────────
