@@ -1,0 +1,1 @@
+ALTER TABLE "conversation_participants" ADD COLUMN "archived_at" timestamp;
