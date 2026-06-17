@@ -11,6 +11,37 @@ const log = logger.child({ module: 'pins' });
 const router = Router();
 router.use(requireAuth);
 
+/**
+ * CR-01: A single logical timezone zone is addressed by two different roomId
+ * keys depending on the screen — `timezone:<slug>` (Local Chat) vs
+ * `globe:<slug>` (Globe view) — but both share the same `globe-feed:<slug>`
+ * message feed. Canonicalize the pin key to the globe-feed slug identity before
+ * EVERY DB op (GET lookup, POST upsert + onConflict target, DELETE) so a zone
+ * has exactly one pin identity regardless of which screen pinned it. This is
+ * server-side only — the mobile screens keep posting their current roomId and
+ * the server normalizes.
+ */
+function canonicalRoomId(roomId: string): string {
+  if (roomId.startsWith('globe:')) return roomId;
+  if (roomId.startsWith('timezone:')) return 'globe:' + roomId.slice('timezone:'.length);
+  return roomId;
+}
+
+/**
+ * WR-06: Max length of the denormalized pin preview text. The server stores a
+ * preview capped at this length, appending an ellipsis when it truncates, so
+ * the client renders `previewText` verbatim (no client-side re-truncation that
+ * could never fire). Keep this in lock-step with the mobile PIN_PREVIEW_MAX_LEN.
+ */
+const PIN_PREVIEW_MAX_LEN = 60;
+
+function buildPreviewText(content: string | null | undefined): string | null {
+  if (content == null) return null;
+  return content.length > PIN_PREVIEW_MAX_LEN
+    ? content.slice(0, PIN_PREVIEW_MAX_LEN) + '…'
+    : content;
+}
+
 // ── Shared validation ──────────────────────────────────────────────────────
 
 // Base object: roomId XOR conversationId (V5)
@@ -44,13 +75,15 @@ router.get('/', async (req: AuthRequest, res: Response): Promise<void> => {
     return;
   }
   const { roomId, conversationId } = parse.data;
+  // CR-01: collapse timezone:<slug> → globe:<slug> so both screens read one pin.
+  const canonRoomId = roomId != null ? canonicalRoomId(roomId) : undefined;
 
   const rows = await db
     .select()
     .from(pinnedMessages)
     .where(
-      roomId != null
-        ? eq(pinnedMessages.roomId, roomId)
+      canonRoomId != null
+        ? eq(pinnedMessages.roomId, canonRoomId)
         : eq(pinnedMessages.conversationId, conversationId!),
     )
     .limit(1);
@@ -144,6 +177,10 @@ router.post('/', async (req: AuthRequest, res: Response): Promise<void> => {
   }
   const { roomId, conversationId, messageId } = parse.data;
   const userId = req.user!.id;
+  // CR-01: canonical key for storage/upsert. Message-ownership and authority
+  // checks below use the ORIGINAL roomId (that is what messages.roomId carries);
+  // only the pinned_messages row key is normalized to the globe-feed slug.
+  const canonRoomId = roomId != null ? canonicalRoomId(roomId) : undefined;
 
   // 1. Load the target message
   const [message] = await db
@@ -188,8 +225,9 @@ router.post('/', async (req: AuthRequest, res: Response): Promise<void> => {
     return;
   }
 
-  // Derive denormalized preview fields from the loaded message
-  const previewText = message.content?.slice(0, 60) ?? null;
+  // Derive denormalized preview fields from the loaded message (WR-06: the
+  // preview carries an ellipsis when truncated so the client renders it as-is)
+  const previewText = buildPreviewText(message.content);
   const pinnedMediaUrl = message.mediaUrls?.[0] ?? null;
 
   // Load the sender's handle for the preview (best-effort; null if senderId null)
@@ -210,7 +248,7 @@ router.post('/', async (req: AuthRequest, res: Response): Promise<void> => {
   const [pinRow] = await db
     .insert(pinnedMessages)
     .values({
-      roomId: roomId ?? null,
+      roomId: canonRoomId ?? null,
       conversationId: conversationId ?? null,
       messageId,
       pinnedById: userId,
@@ -257,6 +295,17 @@ router.post('/', async (req: AuthRequest, res: Response): Promise<void> => {
   // 6. Announce system line + broadcast pin event. Capture the created system
   // message so the actor's own client can append it immediately (deduped by id
   // against the socket echo) — fixes the actor-doesn't-see-own-pin-line bug.
+  //
+  // WR-05 (best-effort, intentional): the pin row write (step 5) and the
+  // announce system-message insert + conversations.lastMessageAt bump are NOT
+  // wrapped in a single db.transaction. announcePinAction catches its own
+  // errors and returns null, so a failure there leaves the pin persisted with
+  // no system line / bump (systemMessage:null). This is accepted: the pin
+  // itself is the source of truth (the PinnedBar reads the pin row), the system
+  // line is a cosmetic announcement, and every client surface already tolerates
+  // systemMessage:null (globe/local/DM screens early-return on null). A shared
+  // transaction is avoided here because announce performs socket I/O (io.emit)
+  // that must not run inside an open DB transaction.
   const systemMessage = await announcePinAction({
     roomId,
     conversationId,
@@ -266,7 +315,7 @@ router.post('/', async (req: AuthRequest, res: Response): Promise<void> => {
     pinPayload,
   });
 
-  log.warn({ userId, messageId, roomId, conversationId }, 'message pinned');
+  log.info({ userId, messageId, roomId, conversationId }, 'message pinned');
 
   // 7. Respond
   res.json({ ok: true, pin: pinRow, systemMessage });
@@ -282,6 +331,9 @@ router.delete('/', async (req: AuthRequest, res: Response): Promise<void> => {
   }
   const { roomId, conversationId } = parse.data;
   const userId = req.user!.id;
+  // CR-01: delete the canonical row so unpin from either screen clears the
+  // single shared pin (authority check still uses the original roomId).
+  const canonRoomId = roomId != null ? canonicalRoomId(roomId) : undefined;
 
   // Same authority check as POST — same surface = same authority (D-02/D-08)
   const authErr = await checkPinAuthority(req, roomId, conversationId);
@@ -293,8 +345,8 @@ router.delete('/', async (req: AuthRequest, res: Response): Promise<void> => {
   await db
     .delete(pinnedMessages)
     .where(
-      roomId != null
-        ? eq(pinnedMessages.roomId, roomId)
+      canonRoomId != null
+        ? eq(pinnedMessages.roomId, canonRoomId)
         : eq(pinnedMessages.conversationId, conversationId!),
     );
 
@@ -313,7 +365,7 @@ router.delete('/', async (req: AuthRequest, res: Response): Promise<void> => {
     pinPayload,
   });
 
-  log.warn({ userId, roomId, conversationId }, 'message unpinned');
+  log.info({ userId, roomId, conversationId }, 'message unpinned');
 
   res.json({ ok: true, systemMessage });
 });
