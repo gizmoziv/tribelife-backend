@@ -114,8 +114,13 @@ export async function announcePinAction(args: {
         } else if (roomId.startsWith('timezone:')) {
           io.to(roomId).emit('room:message', { ...base, roomId });
           io.to('globe-feed:' + slug).emit('globe:message', { ...base, roomId, slug });
-          // Emit pin event to the timezone room
+          // Emit pin event to the timezone room (Local Chat viewers)
           io.to(roomId).emit('room:pinned', pinPayload);
+          // CR-02: ALSO notify Globe viewers of the same zone — they subscribe
+          // to globe:pinned on globe-feed:<slug>, not room:pinned on the
+          // timezone room. Without this their PinnedBar never updates/clears
+          // until they leave and re-enter the screen.
+          io.to('globe-feed:' + slug).emit('globe:pinned', { ...pinPayload, slug });
         }
       }
 
