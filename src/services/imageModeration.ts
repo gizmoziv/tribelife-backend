@@ -133,8 +133,24 @@ export async function moderateMessageImages(
   io: Server,
   roomId: string
 ): Promise<void> {
+  // ── Skip Giphy CDN URLs ─────────────────────────────────────────────────
+  // Giphy already restricts the picker to pg-rated content, so its GIFs must
+  // never burn an OpenAI vision call nor be eligible for flag/delete. Skip any
+  // *.giphy.com host BEFORE the OpenAI passes. If every URL is Giphy, return
+  // immediately; otherwise moderate only the non-Giphy subset.
+  const isGiphyHost = (url: string): boolean => {
+    try {
+      const host = new URL(url).hostname.toLowerCase();
+      return host === 'giphy.com' || host.endsWith('.giphy.com');
+    } catch {
+      return false;
+    }
+  };
+  const urlsToModerate = mediaUrls.filter((url) => !isGiphyHost(url));
+  if (urlsToModerate.length === 0) return;
+
   const results = await Promise.all(
-    mediaUrls.map(async (url) => ({
+    urlsToModerate.map(async (url) => ({
       url,
       result: await moderateImage(url),
     }))
