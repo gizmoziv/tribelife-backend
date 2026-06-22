@@ -13,6 +13,7 @@ import { eq, and, isNull, isNotNull, ne, inArray } from 'drizzle-orm';
 import { moderateMessage } from '../services/claude';
 import { moderateMessageImages } from '../services/imageModeration';
 import { sendPushNotifications, shouldSendPush, getUnreadBadgeCounts } from '../services/pushNotifications';
+import { isUserActivelyViewing } from './activeViewing';
 import type { ChatNotificationPayload } from '../types/chatNotification';
 
 const log = logger.child({ module: 'socket:dm' });
@@ -265,7 +266,13 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
       // ── Mention / reply notifications (directed targets only) ────────────
       // M5: directed targets get ONLY the type:'mention' row (DMs tab) — NOT
       // also a type:'group' row. They are excluded from the group fan-out below.
+      const dmRoomKey = `conversation:${data.conversationId}`;
+
       for (const targetId of directedTargets) {
+        // 260621-un7: skip all 3 channels (emit + row + push) if the target is
+        // actively viewing this conversation foregrounded.
+        if (await isUserActivelyViewing(io, targetId, dmRoomKey)) continue;
+
         const isReplyTarget = targetId === replyToSenderId && !explicitMentions.has(targetId);
         const title = isReplyTarget ? `@${handle} replied to you` : `@${handle} mentioned you`;
 
@@ -334,9 +341,19 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
       const groupFanRecipients = recipients.filter((p) => !directedTargets.has(p.userId));
 
       if (groupFanRecipients.length > 0) {
+        const groupFanRoomKey = `conversation:${data.conversationId}`;
         setImmediate(async () => {
           try {
-            const fanRecipientIds = groupFanRecipients.map((p) => p.userId);
+            // 260621-un7: drop recipients actively viewing this conversation so
+            // no row is inserted and no emit/push fires for them (all 3 channels
+            // skipped together). One gate filter before the batched insert.
+            const candidateIds = groupFanRecipients.map((p) => p.userId);
+            const fanRecipientIds: number[] = [];
+            for (const rid of candidateIds) {
+              if (await isUserActivelyViewing(io, rid, groupFanRoomKey)) continue;
+              fanRecipientIds.push(rid);
+            }
+            if (fanRecipientIds.length === 0) return;
 
             // Batched token fetch in ONE query (M6 — no N selects).
             const profileRows = await db
@@ -433,7 +450,12 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
       }
     } else {
       // 1:1 DM notifications — existing behavior
+      const dmRoomKey = `conversation:${data.conversationId}`;
       for (const p of recipients) {
+        // 260621-un7: skip emit + row + push if recipient is actively viewing
+        // this conversation foregrounded.
+        if (await isUserActivelyViewing(io, p.userId, dmRoomKey)) continue;
+
         const [inserted] = await db.insert(notifications).values({
           userId: p.userId,
           type: 'new_dm',

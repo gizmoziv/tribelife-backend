@@ -8,6 +8,7 @@ import { and, eq, inArray } from 'drizzle-orm';
 import { moderateMessage } from '../services/claude';
 import { moderateMessageImages } from '../services/imageModeration';
 import { sendPushNotifications, shouldSendPush, getUnreadBadgeCounts } from '../services/pushNotifications';
+import { isUserActivelyViewing, canonicalViewingKey } from './activeViewing';
 import type { ChatNotificationPayload } from '../types/chatNotification';
 import { getZoneForTimezone, getZoneMemberIds } from '../config/timezoneZones';
 
@@ -133,8 +134,15 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
     // ── Mention / reply notifications (directed targets only) ─────────────
     // Each directed target gets a stored type:'mention' row (DMs tab) + push.
     // M5: they do NOT also get a type:'group' row — that would double-notify.
+    // 260621-un7: canonical viewing key for this timezone surface. Mobile
+    // normalizes timezone/local to `globe:<slug>`, so collapse the
+    // `timezone:<slug>` roomId here to match exactly.
+    const viewingRoomKey = canonicalViewingKey(timezoneRoom);
+
     for (const notifyId of directedTargets) {
       if (notifyId === userId) continue;
+      // 260621-un7: skip emit + row + push if actively viewing this zone.
+      if (await isUserActivelyViewing(io, notifyId, viewingRoomKey)) continue;
 
       const isReplyTarget = notifyId === replyToSenderId && !explicitMentions.has(notifyId);
       const title = isReplyTarget ? `@${handle} replied to you` : `@${handle} mentioned you`;
@@ -217,7 +225,16 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
         if (zoneMembers.length === 0) return;
 
         // M5: exclude directed targets — they already got a mention row.
-        const groupRecipients = zoneMembers.filter((id) => !directedTargets.has(id));
+        const groupCandidates = zoneMembers.filter((id) => !directedTargets.has(id));
+        if (groupCandidates.length === 0) return;
+
+        // 260621-un7: drop members actively viewing this zone so no row is
+        // inserted and no emit/push fires (all 3 channels skipped together).
+        const groupRecipients: number[] = [];
+        for (const rid of groupCandidates) {
+          if (await isUserActivelyViewing(io, rid, viewingRoomKey)) continue;
+          groupRecipients.push(rid);
+        }
         if (groupRecipients.length === 0) return;
 
         // Batched token + push-pref fetch in ONE query (M6 — no N selects).

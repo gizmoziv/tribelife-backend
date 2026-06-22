@@ -18,6 +18,7 @@ const redisLog = logger.child({ module: 'socket.redis' });
 import { registerRoomHandlers } from './roomHandler';
 import { registerDmHandlers } from './dmHandler';
 import { registerGlobeHandlers } from './globeHandler';
+import { canonicalViewingKey } from './activeViewing';
 
 // ── CORS Origin Configuration ────────────────────────────────────────────
 const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',').map((o) =>
@@ -237,6 +238,13 @@ export async function createSocketServer(
       socket.data.isPremium = profile[0]?.isPremium ?? false;
       socket.data.premiumExpiresAt = profile[0]?.premiumExpiresAt ?? null;
       socket.data.isOrgAdmin = isOrgAdmin;
+      // 260621-un7: per-socket active-viewing state. `activeRoomKey` is the
+      // canonical roomKey the socket is currently viewing (null = none);
+      // `isForeground` defaults to true on connect (a freshly-connected socket
+      // is foregrounded). Mutated by the viewing:* / app:* handlers below and
+      // read by isUserActivelyViewing() to gate notifications.
+      socket.data.activeRoomKey = null;
+      socket.data.isForeground = true;
       next();
     } catch {
       next(new Error('Invalid token'));
@@ -306,6 +314,33 @@ export async function createSocketServer(
     registerRoomHandlers(io, socket);
     registerDmHandlers(io, socket);
     registerGlobeHandlers(io, socket);
+
+    // ── Active-viewing + foreground signals (260621-un7) ───────────────────
+    // Mobile signals which room this socket is viewing (on screen focus/blur)
+    // and whether the app is foregrounded (single AppState listener). The
+    // backend gates push/bell/unread for the actively-viewed room using this
+    // per-socket state. All keys are canonicalized so timezone:<slug> and
+    // globe:<slug> of one zone share a single viewing identity.
+    socket.on('viewing:set', (data: { roomKey?: string }) => {
+      const raw = data?.roomKey;
+      if (typeof raw !== 'string' || raw.length === 0) return; // no-op on invalid
+      socket.data.activeRoomKey = canonicalViewingKey(raw);
+    });
+
+    socket.on('viewing:clear', () => {
+      socket.data.activeRoomKey = null;
+    });
+
+    socket.on('app:foreground', () => {
+      socket.data.isForeground = true;
+    });
+
+    socket.on('app:background', () => {
+      // Background means not viewing — clearing activeRoomKey here is what makes
+      // push resume immediately even if the chat screen stays mounted.
+      socket.data.isForeground = false;
+      socket.data.activeRoomKey = null;
+    });
 
     // ── Typing indicators ─────────────────────────────────────────────────
     socket.on(

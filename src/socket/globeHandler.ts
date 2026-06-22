@@ -8,6 +8,7 @@ import { isValidGlobeRoom, AGE_GATE_HOURS } from '../config/globeRooms';
 import { moderateMessage } from '../services/claude';
 import { moderateMessageImages } from '../services/imageModeration';
 import { sendPushNotifications, shouldSendPush, getUnreadBadgeCounts } from '../services/pushNotifications';
+import { isUserActivelyViewing } from './activeViewing';
 import { getGlobeMembershipsForUser, getGlobeMembershipsForRoomSlug } from '../services/globeMembership';
 import type { ChatNotificationPayload } from '../types/chatNotification';
 import { isValidTimezoneRoom, getZoneForTimezone } from '../config/timezoneZones';
@@ -247,8 +248,14 @@ export function registerGlobeHandlers(io: Server, socket: Socket): void {
 
     // ── Mention / reply notifications (directed targets only) ─────────────
     // M5: directed targets get ONLY the type:'mention' row — NOT also a group row.
+    // 260621-un7: viewing identity for this globe surface. data.slug is the zone
+    // slug; both Globe and Local Chat of this zone normalize to `globe:<slug>`.
+    const viewingRoomKey = 'globe:' + data.slug;
+
     for (const notifyId of directedTargets) {
       if (notifyId === userId) continue;
+      // 260621-un7: skip emit + row + push if actively viewing this room.
+      if (await isUserActivelyViewing(io, notifyId, viewingRoomKey)) continue;
 
       const isReplyTarget = notifyId === replyToSenderId && !explicitMentions.has(notifyId);
       const title = isReplyTarget ? `@${handle} replied to you` : `@${handle} mentioned you`;
@@ -328,7 +335,16 @@ export function registerGlobeHandlers(io: Server, socket: Socket): void {
         if (roomMemberSet.size === 0) return;
 
         // M5: exclude directed targets — they already got a mention row.
-        const groupRecipients = [...roomMemberSet].filter((id) => !directedTargets.has(id));
+        const groupCandidates = [...roomMemberSet].filter((id) => !directedTargets.has(id));
+        if (groupCandidates.length === 0) return;
+
+        // 260621-un7: drop members actively viewing this room so no row is
+        // inserted and no emit/push fires (all 3 channels skipped together).
+        const groupRecipients: number[] = [];
+        for (const rid of groupCandidates) {
+          if (await isUserActivelyViewing(io, rid, 'globe:' + slug)) continue;
+          groupRecipients.push(rid);
+        }
         if (groupRecipients.length === 0) return;
 
         // Batched token fetch in ONE query (M6 — no N selects).
