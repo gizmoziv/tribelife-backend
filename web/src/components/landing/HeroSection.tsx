@@ -49,9 +49,7 @@ const HeroSection = () => {
           className="text-4xl sm:text-5xl md:text-7xl font-bold leading-tight mb-6 text-balance"
         >
           Our People Are Here.{' '}
-          <span className="gradient-text">
-            Just Say What You Need.
-          </span>
+          <span className="gradient-text">Just Say What You Need.</span>
         </motion.h1>
 
         <motion.p
@@ -80,7 +78,6 @@ const HeroSection = () => {
             onClick={() => trackDownloadClick('android', 'hero_top')}
           />
         </motion.div>
-
       </div>
     </section>
   );
