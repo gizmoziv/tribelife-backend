@@ -182,20 +182,21 @@ router.get('/invite', (req: Request, res: Response) => {
     : 'https://tribelife.app';
   const androidStoreUrl = `https://play.google.com/store/apps/details?id=com.tribelife.app${ref ? `&referrer=${encodeURIComponent(`ref=${ref}`)}` : ''}`;
   const storeUrl = platform === 'ios' ? iosStoreUrl : androidStoreUrl;
-  // "Open in TribeLife" target. iOS: custom `tribelife://` scheme — Apple's
-  // "the app had its chance" rule causes iOS to BYPASS Universal Links when
-  // the foreground app calls openURL() on its own https UL, so users tapping
-  // an in-app link end up in Safari and a re-tap of the same https URL just
-  // re-renders this interstitial in a loop. The custom scheme is exempt from
-  // that rule and launches the app reliably. Android: intent:// (same idea)
-  // with a built-in browser_fallback_url for store routing if app is missing.
-  // iOS custom scheme uses an EMPTY authority (triple slash) so Expo Router keeps
-  // the full path. `tribelife://invite` parses `invite` as the URL HOST and drops
-  // it (router lands on `/` ), whereas `tribelife:///invite` yields path `/invite`
-  // which matches app/invite.tsx.
+  // "Open in TribeLife" target — ANDROID ONLY. The intent:// URL carries a
+  // browser_fallback_url so it opens the app if present, else the Play Store
+  // (no error). iOS is intentionally excluded: the custom `tribelife://` scheme
+  // throws "the address is invalid" in Safari when the app isn't installed and
+  // there's no reliable way to detect installation, so on iOS we drop the
+  // "Open" button entirely and make Download the single primary CTA.
   const openInAppHref = platform === 'android'
     ? `intent://tribelife.app/invite${ref ? `?ref=${encodeURIComponent(ref)}` : ''}#Intent;scheme=https;package=com.tribelife.app;S.browser_fallback_url=${encodeURIComponent(storeUrl)};end`
-    : `tribelife:///invite${ref ? `?ref=${encodeURIComponent(ref)}` : ''}`;
+    : '';
+  // Platform-conditional button set. iOS: single primary Download. Android:
+  // primary "Open in TribeLife" (intent://) + secondary Download.
+  const buttonsHtml = platform === 'android'
+    ? `  <a class="btn btn-primary" data-clip href="${openInAppHref}">Open in TribeLife</a>
+  <a class="btn btn-secondary" data-clip href="${storeUrl}">Download</a>`
+    : `  <a class="btn btn-primary" data-clip href="${storeUrl}">Download</a>`;
   const clipboardPayload = ref ? `tribelife-ref:${ref}` : '';
 
   const html = `<!DOCTYPE html>
@@ -218,8 +219,7 @@ router.get('/invite', (req: Request, res: Response) => {
 <div class="wrap">
   <h1>You're invited to TribeLife</h1>
   <p>Choose how to continue.</p>
-  <a class="btn btn-primary" data-clip href="${openInAppHref}">Open in TribeLife</a>
-  <a class="btn btn-secondary" data-clip href="${storeUrl}">Download</a>
+${buttonsHtml}
 </div>
 <script>
 (function () {
@@ -284,21 +284,21 @@ router.get('/g/:slug', (req: Request, res: Response, next: NextFunction) => {
     : 'https://tribelife.app';
   const androidStoreUrl = 'https://play.google.com/store/apps/details?id=com.tribelife.app';
   const storeUrl = platform === 'ios' ? iosStoreUrl : androidStoreUrl;
-  // "Open in TribeLife" target. iOS: custom `tribelife://` scheme — Apple's
-  // "the app had its chance" rule causes iOS to BYPASS Universal Links when
-  // the foreground app calls openURL() on its own https UL, so users tapping
-  // an in-app link end up in Safari and a re-tap of the same https URL just
-  // re-renders this interstitial in a loop. The custom scheme is exempt from
-  // that rule and launches the app reliably. Android: intent:// (same idea)
-  // with a built-in browser_fallback_url for store routing if app is missing.
   const refQuery = safeRef ? `?ref=${encodeURIComponent(safeRef)}` : '';
-  // iOS custom scheme uses an EMPTY authority (triple slash) so Expo Router keeps
-  // the full path. `tribelife://g/<slug>` parses `g` as the URL HOST and drops it
-  // (router lands on `/<slug>` with no match → the reported 404), whereas
-  // `tribelife:///g/<slug>` yields path `/g/<slug>` which matches app/g/[slug].tsx.
+  // "Open in TribeLife" target — ANDROID ONLY. iOS is intentionally excluded:
+  // the custom `tribelife://` scheme throws "the address is invalid" in Safari
+  // when the app isn't installed, so on iOS we drop the "Open" button and make
+  // Download the single primary CTA. Android's intent:// has a
+  // browser_fallback_url, so it opens the app if present, else the Play Store.
   const openInAppHref = platform === 'android'
     ? `intent://tribelife.app/g/${safeSlug}${refQuery}#Intent;scheme=https;package=com.tribelife.app;S.browser_fallback_url=${encodeURIComponent(storeUrl)};end`
-    : `tribelife:///g/${safeSlug}${refQuery}`;
+    : '';
+  // Platform-conditional button set. iOS: single primary Download. Android:
+  // primary "Open in TribeLife" (intent://) + secondary Download.
+  const buttonsHtml = platform === 'android'
+    ? `  <a class="btn btn-primary" data-clip href="${openInAppHref}">Open in TribeLife</a>
+  <a class="btn btn-secondary" data-clip href="${storeUrl}">Download</a>`
+    : `  <a class="btn btn-primary" data-clip href="${storeUrl}">Download</a>`;
   // Clipboard payload format: tribelife-g-ref:<ref>:<slug>. Empty when no
   // ref present so the inline <script> branch becomes a no-op.
   const clipboardPayload = safeRef ? `tribelife-g-ref:${safeRef}:${safeSlug}` : '';
@@ -323,8 +323,7 @@ router.get('/g/:slug', (req: Request, res: Response, next: NextFunction) => {
 <div class="wrap">
   <h1>You're invited to a TribeLife group</h1>
   <p>Choose how to continue.</p>
-  <a class="btn btn-primary" data-clip href="${openInAppHref}">Open in TribeLife</a>
-  <a class="btn btn-secondary" data-clip href="${storeUrl}">Download</a>
+${buttonsHtml}
 </div>
 <script>
 (function () {
@@ -388,23 +387,22 @@ router.get('/u/:handle', (req: Request, res: Response, next: NextFunction) => {
     : 'https://tribelife.app';
   const androidStoreUrl = 'https://play.google.com/store/apps/details?id=com.tribelife.app';
   const storeUrl = platform === 'ios' ? iosStoreUrl : androidStoreUrl;
-  // "Open in TribeLife" target. iOS: custom `tribelife://` scheme — Apple's
-  // "the app had its chance" rule causes iOS to BYPASS Universal Links when
-  // the foreground app calls openURL() on its own https UL, so users tapping
-  // an in-app link end up in Safari and a re-tap of the same https URL just
-  // re-renders this interstitial in a loop. The custom scheme is exempt from
-  // that rule and launches the app reliably. Android: intent:// (same idea)
-  // with a built-in browser_fallback_url for store routing if app is missing.
   const refQuery = safeRef ? `?ref=${encodeURIComponent(safeRef)}` : '';
-  // iOS custom scheme uses an EMPTY authority (triple slash) so Expo Router keeps
-  // the full path. `tribelife://u/<handle>` parses `u` as the URL HOST and drops it
-  // (router lands on `/<handle>` with no match → the reported `tribelife:///sagie`
-  // 404), whereas `tribelife:///u/<handle>` yields path `/u/<handle>` which matches
-  // app/u/[handle].tsx. This also restores attribution: _layout.tsx keys source off
-  // path.startsWith('u/'), which is only true when the `u/` segment survives.
+  // "Open in TribeLife" target — ANDROID ONLY. iOS is intentionally excluded:
+  // the custom `tribelife://` scheme throws "the address is invalid" in Safari
+  // when the app isn't installed (the reported `tribelife:///sagie` error), so
+  // on iOS we drop the "Open" button and make Download the single primary CTA.
+  // Android's intent:// has a browser_fallback_url, so it opens the app if
+  // present, else the Play Store.
   const openInAppHref = platform === 'android'
     ? `intent://tribelife.app/u/${safeHandle}${refQuery}#Intent;scheme=https;package=com.tribelife.app;S.browser_fallback_url=${encodeURIComponent(storeUrl)};end`
-    : `tribelife:///u/${safeHandle}${refQuery}`;
+    : '';
+  // Platform-conditional button set. iOS: single primary Download. Android:
+  // primary "Open in TribeLife" (intent://) + secondary Download.
+  const buttonsHtml = platform === 'android'
+    ? `  <a class="btn btn-primary" data-clip href="${openInAppHref}">Open in TribeLife</a>
+  <a class="btn btn-secondary" data-clip href="${storeUrl}">Download</a>`
+    : `  <a class="btn btn-primary" data-clip href="${storeUrl}">Download</a>`;
   // Clipboard payload format: tribelife-u-ref:<ref>:<handle>.
   const clipboardPayload = safeRef ? `tribelife-u-ref:${safeRef}:${safeHandle}` : '';
 
@@ -428,8 +426,7 @@ router.get('/u/:handle', (req: Request, res: Response, next: NextFunction) => {
 <div class="wrap">
   <h1>View this profile on TribeLife</h1>
   <p>Choose how to continue.</p>
-  <a class="btn btn-primary" data-clip href="${openInAppHref}">Open in TribeLife</a>
-  <a class="btn btn-secondary" data-clip href="${storeUrl}">Download</a>
+${buttonsHtml}
 </div>
 <script>
 (function () {

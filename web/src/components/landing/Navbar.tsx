@@ -35,9 +35,9 @@ const Navbar = () => {
       initial={{ y: -20, opacity: 0 }}
       animate={{ y: 0, opacity: 1 }}
       transition={{ duration: 0.5 }}
-      className="fixed top-0 left-0 right-0 z-50 backdrop-blur-xl bg-background/70 border-b border-border/50"
+      className="fixed top-0 left-0 right-0 z-50 backdrop-blur-xl bg-background/70"
     >
-      <div className="container mx-auto px-6 py-4 flex items-center justify-between">
+      <div className="container mx-auto px-6 py-4 flex items-center justify-between border-b border-border/50">
         <a href="/" className="flex items-center gap-2">
           <img
             src={logo}
@@ -97,6 +97,14 @@ const Navbar = () => {
             );
           })()}
         </div>
+      </div>
+      <div className="container mx-auto px-6 flex justify-end">
+        <span
+          dir="rtl"
+          className="py-1 text-[10px] font-semibold leading-none text-muted-foreground/70 select-none whitespace-nowrap"
+        >
+          בס״ד
+        </span>
       </div>
     </motion.nav>
   );
