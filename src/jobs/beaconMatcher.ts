@@ -35,10 +35,10 @@ async function runBeaconMatching(): Promise<void> {
       and(
         eq(beacons.isActive, true),
         eq(beacons.isSanitized, true),
-        or(
-          isNull(beacons.expiresAt),
-          sql`${beacons.expiresAt} > NOW()`
-        )
+        // Phase 23: legacy NULL expiresAt ages out at createdAt + 30 days
+        // (same effective-expiry rule used for slot accounting), instead of
+        // matching forever.
+        sql`COALESCE(${beacons.expiresAt}, ${beacons.createdAt} + INTERVAL '30 days') > NOW()`
       )
     );
 
