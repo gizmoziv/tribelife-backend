@@ -691,7 +691,7 @@ export const organizationInvitesRelations = relations(organizationInvites, ({ on
 export const jobPostings = pgTable('job_postings', {
   id:          serial('id').primaryKey(),
   source:      varchar('source', { length: 50 }).notNull(),         // 'jewishjobs' in v1
-  externalRef: varchar('external_ref', { length: 100 }).notNull(),  // alphanumeric, e.g. "3kaetd"
+  externalRef: varchar('external_ref', { length: 100 }).notNull(),  // short stable job id (first URL path segment), e.g. "fhkyf2"
   title:       text('title').notNull(),
   company:     varchar('company', { length: 255 }).notNull(),
   location:    text('location'),                                    // null → mobile renders "Remote"

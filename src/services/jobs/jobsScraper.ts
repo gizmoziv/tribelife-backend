@@ -25,17 +25,31 @@ function parseTile($: cheerio.CheerioAPI, el: AnyNode) {
   // Title and job URL
   const titleAnchor = $el.find('.title a#lnkJobId');
   const title = titleAnchor.text().trim();
-  const href = titleAnchor.attr('href') ?? '';           // e.g. "/job/3kaetd"
-  const externalRef = href.replace(/^\/job\//, '');      // e.g. "3kaetd"
+  const href = titleAnchor.attr('href') ?? '';           // e.g. "/job/fhkyf2/director-…/il/united-states"
+  // external_ref = the SHORT, stable job id only (first path segment after /job/),
+  // NOT the full slug. The title/location slug can change upstream (typo fix, relocation),
+  // but the id is permanent — so it's the correct idempotent dedup key. The full URL is
+  // preserved separately in jobUrl below for the tap-to-open link.
+  const externalRef = href.replace(/^\/job\//, '').split('/')[0];   // e.g. "fhkyf2"
   const jobUrl = `${BASE_URL}${href}`;
 
   if (!title || !externalRef) throw new Error('Missing title or externalRef');
 
-  // Company
-  const company = $el.find('.listColumn.company').text().trim();
-
-  // Location (from tags — null if empty → mobile renders "Remote")
-  const location = $el.find('.tags').text().trim() || null;
+  // Company + location. jewishjobs has no dedicated location element — it embeds
+  // location in the company line as "{Company} - {City, ST, Country}". Split on the
+  // last " - " only when the trailing segment looks like a location (has a comma),
+  // so company names that themselves contain " - " aren't misread as a location.
+  const companyRaw = $el.find('.listColumn.company').text().trim();
+  let company = companyRaw;
+  let location: string | null = null;
+  const dashIdx = companyRaw.lastIndexOf(' - ');
+  if (dashIdx !== -1) {
+    const tail = companyRaw.slice(dashIdx + 3).trim();
+    if (tail.includes(',')) {
+      company = companyRaw.slice(0, dashIdx).trim();
+      location = tail;                                  // null → mobile renders "Remote"
+    }
+  }
 
   // Description abstract
   const description = $el.find('.listColumn.abstract').text().trim() || null;
