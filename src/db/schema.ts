@@ -686,3 +686,24 @@ export const organizationInvitesRelations = relations(organizationInvites, ({ on
     references: [users.id],
   }),
 }));
+
+// ── Phase 24: Job Postings ────────────────────────────────────────────────────
+export const jobPostings = pgTable('job_postings', {
+  id:          serial('id').primaryKey(),
+  source:      varchar('source', { length: 50 }).notNull(),         // 'jewishjobs' in v1
+  externalRef: varchar('external_ref', { length: 100 }).notNull(),  // alphanumeric, e.g. "3kaetd"
+  title:       text('title').notNull(),
+  company:     varchar('company', { length: 255 }).notNull(),
+  location:    text('location'),                                    // null → mobile renders "Remote"
+  postedDate:  varchar('posted_date', { length: 20 }),             // MM/DD/YYYY as scraped
+  description: text('description'),                                // abstract, nullable
+  logoUrl:     text('logo_url'),                                   // nullable
+  viewCount:   integer('view_count').notNull().default(0),
+  jobUrl:      text('job_url').notNull(),
+  createdAt:   timestamp('created_at').notNull().defaultNow(),     // immutable — first seen
+  updatedAt:   timestamp('updated_at').notNull().defaultNow(),     // refreshed on re-scrape
+}, (t) => ({
+  sourceExtRefUniq: unique().on(t.source, t.externalRef),          // dedup key for upsert
+  viewCountIdx:     index('job_postings_view_count_idx').on(t.viewCount),
+  postedDateIdx:    index('job_postings_posted_date_idx').on(t.postedDate),
+}));
