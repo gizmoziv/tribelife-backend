@@ -32,6 +32,7 @@ import reactionsRouter from './routes/reactions';
 import referralsRouter from './routes/referrals';
 import groupsRouter from './routes/groups';
 import pinsRouter from './routes/pins';
+import jobsRouter from './routes/jobs';
 import orgsRouter from './routes/orgs';
 import orgsPublicRouter from './routes/orgsPublic';
 import versionRouter from './routes/version';
@@ -40,6 +41,7 @@ import deepLinkFallbackRouter from './routes/deepLinkFallback';
 import { startBeaconMatcherCron } from './jobs/beaconMatcher';
 import { startNewsIngesterCron } from './jobs/newsIngester';
 import { startNewsPushRetentionCron } from './jobs/newsPushRetention';
+import { startJobsScraperCron } from './jobs/jobsScraper';
 import { createSocketServer } from './socket';
 import { pool } from './db';
 import { registerShutdownSignals } from './lib/shutdown';
@@ -193,6 +195,7 @@ app.use('/api/reactions', reactionsRouter);
 app.use('/api/referrals', referralsRouter);
 app.use('/api/chat/groups', groupsRouter);
 app.use('/api/pins', pinsRouter);
+app.use('/api/jobs', jobsRouter);
 
 // ── Resolve public directory for static files ────────────────────────────
 const fs = require('fs');
@@ -257,6 +260,7 @@ async function bootstrap(): Promise<void> {
     log.info({ port: PORT }, 'TribeLife backend running');
     const beaconMatcherTask = startBeaconMatcherCron();
     const newsPushRetentionTask = startNewsPushRetentionCron();
+    const jobsScraperTask = startJobsScraperCron(); // Phase 24 — hardcoded 04:30 UTC, synchronous
 
     // HARDEN-02: register SIGTERM/SIGINT graceful shutdown.
     // MUST be inside the listen() callback — at this moment all resources
@@ -266,7 +270,7 @@ async function bootstrap(): Promise<void> {
       httpServer,
       io,
       pool,
-      cronTasks: [newsIngesterTask, beaconMatcherTask, newsPushRetentionTask],
+      cronTasks: [newsIngesterTask, beaconMatcherTask, newsPushRetentionTask, jobsScraperTask],
     });
   });
 }
