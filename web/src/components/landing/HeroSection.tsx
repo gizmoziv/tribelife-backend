@@ -48,8 +48,8 @@ const HeroSection = () => {
           transition={{ duration: 0.7, delay: 0.35 }}
           className="text-4xl sm:text-5xl md:text-7xl font-bold leading-tight mb-6 text-balance"
         >
-          Our People Are Here.{' '}
-          <span className="gradient-text">Just Say What You Need.</span>
+          A Platform That is Built for Our Tribe.{' '}
+          <span className="gradient-text">Actually.</span>
         </motion.h1>
 
         <motion.p
@@ -58,9 +58,9 @@ const HeroSection = () => {
           transition={{ duration: 0.7, delay: 0.5 }}
           className="text-lg md:text-xl text-muted-foreground max-w-2xl mx-auto mb-10 leading-relaxed"
         >
-          Need a Shabbat dinner host, a study partner, or someone to split the
-          holidays with? Post a beacon, a short request for what you need, and
-          we'll match you with the right people nearby.
+          Local and global chats. Networking beacons that hunt for what you
+          need. Unique tools for Jewish creators, leaders and allies to build
+          something real. This is our tribe — supercharged.
         </motion.p>
 
         <motion.div
