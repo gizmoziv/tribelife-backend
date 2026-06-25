@@ -260,17 +260,19 @@ async function bootstrap(): Promise<void> {
     log.info({ port: PORT }, 'TribeLife backend running');
     const beaconMatcherTask = startBeaconMatcherCron();
     const newsPushRetentionTask = startNewsPushRetentionCron();
-    const jobsScraperTask = startJobsScraperCron(); // Phase 24 — hardcoded 04:30 UTC, synchronous
+    const jobsScraperTask = startJobsScraperCron(); // Phase 24 — null unless JOBS_SCRAPER_ENABLED=true (paused pending JewishJobs permission)
 
     // HARDEN-02: register SIGTERM/SIGINT graceful shutdown.
     // MUST be inside the listen() callback — at this moment all resources
     // (io, crons, HTTP accepting) are live. Registering earlier would mean
     // httpServer.close() in the handler runs on a server not yet bound.
+    const cronTasks = [newsIngesterTask, beaconMatcherTask, newsPushRetentionTask];
+    if (jobsScraperTask) cronTasks.push(jobsScraperTask); // only when the scraper cron is enabled
     registerShutdownSignals({
       httpServer,
       io,
       pool,
-      cronTasks: [newsIngesterTask, beaconMatcherTask, newsPushRetentionTask, jobsScraperTask],
+      cronTasks,
     });
   });
 }
