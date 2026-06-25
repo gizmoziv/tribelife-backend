@@ -1,5 +1,6 @@
 import { motion } from "framer-motion";
 import { Heart } from "lucide-react";
+import Brand from "./Brand";
 
 const FoundersNote = () => {
   return (
@@ -15,8 +16,11 @@ const FoundersNote = () => {
           <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-primary/10 mb-4">
             <Heart className="w-6 h-6 text-primary" />
           </div>
-          <h2 className="text-3xl md:text-4xl font-display font-bold text-foreground">
-            Why We Built <span className="gradient-text">TribeLife</span>
+          <h2 className="text-3xl md:text-5xl font-display font-bold text-foreground leading-[1.1] lowercase">
+            <span className="normal-case">Why</span> We Built{' '}
+            <span className="gradient-text font-extrabold tracking-tight lowercase">
+              tribelife
+            </span>
           </h2>
         </motion.div>
 
@@ -37,11 +41,11 @@ const FoundersNote = () => {
             <p>
               For thousands of years, shuls were where intentional matches
               happened. Someone knew what you needed and connected you with the
-              right person. TribeLife brings that same spirit online. Post what
+              right person. <Brand /> brings that same spirit online. Post what
               you need, and let our community lift you up.
             </p>
             <p>
-              TribeLife is free. One beacon, every day, at no cost. Need more?
+              <Brand /> is free. One beacon, every day, at no cost. Need more?
               Upgrade for a few dollars a month, or help us{" "}
               <a
                 href="https://apps.apple.com/us/app/tribelife-app/id6759845843"

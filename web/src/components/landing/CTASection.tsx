@@ -7,7 +7,7 @@ const PLAY_STORE_URL = 'https://play.google.com/store/apps/details?id=com.tribel
 
 const CTASection = () => {
   return (
-    <section id="community" aria-label="Download TribeLife" className="py-24 md:py-32 section-gradient">
+    <section id="download" aria-label="Download TribeLife" className="py-24 md:py-32 section-gradient">
       <div className="container mx-auto px-6">
         <motion.div
           initial={{ opacity: 0, y: 20 }}
@@ -20,11 +20,11 @@ const CTASection = () => {
           <div className="absolute top-0 left-1/2 -translate-x-1/2 w-96 h-48 bg-primary/15 blur-3xl rounded-full" />
           
           <div className="relative z-10">
-            <h2 className="text-3xl md:text-5xl font-bold mb-4">
-              Ready to Find Your <span className="gradient-text">Tribe</span>?
+            <h2 className="text-3xl md:text-5xl font-display font-bold text-foreground leading-[1.1] lowercase mb-4">
+              <span className="normal-case">Ready</span> to Find Our <span className="gradient-text">Tribe</span>?
             </h2>
             <p className="text-muted-foreground text-lg mb-10 max-w-lg mx-auto">
-              Your chevra is already here. Come find them.
+              Our chevra is already here.
             </p>
 
             <div className="flex flex-col sm:flex-row items-center justify-center gap-4">

@@ -1,11 +1,17 @@
 import { motion } from 'framer-motion';
+import Brand from './Brand';
 
 const steps = [
   {
     number: '01',
     title: 'Join Your Chevra',
-    description:
-      "Download TribeLife and create your profile in seconds. Your timezone places you in a community of people who are actually around when you are.",
+    description: (
+      <>
+        Download <Brand /> and create your profile in seconds. Your timezone
+        places you in a community of people who are actually around when you
+        are.
+      </>
+    ),
   },
   {
     number: '02',
@@ -16,8 +22,12 @@ const steps = [
   {
     number: '03',
     title: 'Find Your People',
-    description:
-      "Every morning, TribeLife matches your beacon with others in your timezone. Wake up to real connections. Zero noise, zero swiping.",
+    description: (
+      <>
+        Every morning, <Brand /> matches your beacon with others in your
+        timezone. Wake up to real connections. Zero noise, zero swiping.
+      </>
+    ),
   },
 ];
 
@@ -36,8 +46,8 @@ const HowItWorksSection = () => {
           transition={{ duration: 0.6 }}
           className="text-center mb-16"
         >
-          <h2 className="text-3xl md:text-5xl font-bold mb-4">
-            How It <span className="gradient-text">Works</span>
+          <h2 className="text-3xl md:text-5xl font-display font-bold text-foreground leading-[1.1] lowercase mb-4">
+            <span className="normal-case">How</span> It <span className="gradient-text">Works</span>
           </h2>
           <p className="text-muted-foreground text-lg max-w-xl mx-auto">
             Three simple steps to find your chevra.

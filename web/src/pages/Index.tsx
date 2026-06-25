@@ -6,6 +6,7 @@ import AppShowcaseSection from '@/components/landing/AppShowcaseSection';
 import FeaturesSection from '@/components/landing/FeaturesSection';
 import PrivacyCallout from '@/components/landing/PrivacyCallout';
 import SocialProofSection from '@/components/landing/SocialProofSection';
+import WallOfLoveSection from '@/components/landing/WallOfLoveSection';
 import HowItWorksSection from '@/components/landing/HowItWorksSection';
 import FAQSection from '@/components/landing/FAQSection';
 import FoundersNote from '@/components/landing/FoundersNote';
@@ -35,13 +36,14 @@ const Index = () => {
       </Helmet>
       <Navbar />
       <HeroSection />
-      <AppShowcaseSection />
       <FeaturesSection />
-      <PrivacyCallout />
-      <SocialProofSection />
+      <WallOfLoveSection />
+      <AppShowcaseSection />
       <HowItWorksSection />
-      <FAQSection />
       <FoundersNote />
+      <SocialProofSection />
+      <FAQSection />
+      <PrivacyCallout />
       <CTASection />
       <StickyDownloadBar />
       <Footer />

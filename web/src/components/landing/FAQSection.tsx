@@ -1,12 +1,22 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { motion } from 'framer-motion';
 import { ChevronDown } from 'lucide-react';
+import Brand from './Brand';
 
 const faqs = [
   {
-    question: 'Is TribeLife free?',
-    answer:
-      'Yes! TribeLife is completely free to download and use. You get one beacon per day. If you want more, TribeLife Premium lets you post up to three beacons daily for $4.99/month.',
+    question: (
+      <>
+        Is <Brand /> free?
+      </>
+    ),
+    answer: (
+      <>
+        Yes! <Brand /> is completely free to download and use. You get one
+        beacon per day. If you want more, <Brand /> Premium lets you post up to
+        three beacons daily for $4.99/month.
+      </>
+    ),
   },
   {
     question: 'What is a beacon?',
@@ -15,22 +25,51 @@ const faqs = [
   },
   {
     question: 'How does matching work?',
-    answer:
-      "Every day at 6am your local time, TribeLife's AI engine analyzes all active beacons in your timezone and connects you with the most relevant people. You wake up to real, meaningful matches. No swiping, no endless scrolling.",
+    answer: (
+      <>
+        Every day at 6am your local time, <Brand />
+        &apos;s AI engine analyzes all active beacons in your timezone and
+        connects you with the most relevant people. You wake up to real,
+        meaningful matches. No swiping, no endless scrolling.
+      </>
+    ),
   },
   {
-    question: 'Is it safe?',
-    answer:
-      'Safety is a priority. Every user signs in with Google to verify their identity. All beacons are moderated by AI before they go live. We keep our community genuine. Real people, real profiles.',
+    question: 'What security is in place?',
+    answer: (
+      <>
+        Safety is a top priority. <Brand /> markets by invitation only, and
+        every member authenticates when they join. So the community is curated
+        and verified. Additional safeguards are in place within the app to catch
+        and prevent harmful content, with more protections on the way.
+      </>
+    ),
   },
   {
-    question: 'Is TribeLife available on Android?',
-    answer:
-      'Yes! TribeLife is available on both iOS and Android. Download it from the App Store or Google Play.',
+    question: (
+      <>
+        How can I support <Brand />?
+      </>
+    ),
+    answer: (
+      <>
+        <Brand /> is built by a tiny team and free for the community. If
+        you&apos;d like to help keep the lights on, you can{' '}
+        <a
+          href="https://buymeacoffee.com/ubotlabs"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="font-semibold text-primary underline underline-offset-2 hover:opacity-80 transition-opacity"
+        >
+          buy us a coffee ☕
+        </a>
+        . Every bit means the world.
+      </>
+    ),
   },
 ];
 
-const FAQItem = ({ question, answer }: { question: string; answer: string }) => {
+const FAQItem = ({ question, answer }: { question: ReactNode; answer: ReactNode }) => {
   const [open, setOpen] = useState(false);
 
   return (
@@ -68,8 +107,8 @@ const FAQSection = () => {
           transition={{ duration: 0.6 }}
           className="text-center mb-12"
         >
-          <h2 className="text-3xl md:text-5xl font-bold mb-4">
-            Frequently Asked <span className="gradient-text">Questions</span>
+          <h2 className="text-3xl md:text-5xl font-display font-bold text-foreground leading-[1.1] lowercase mb-4">
+            <span className="normal-case">Frequently</span> Asked <span className="gradient-text">Questions</span>
           </h2>
           <p className="text-muted-foreground text-lg">
             Everything you need to know before joining.
@@ -83,8 +122,8 @@ const FAQSection = () => {
           transition={{ duration: 0.5, delay: 0.1 }}
           className="gradient-border rounded-2xl p-6 md:p-8"
         >
-          {faqs.map((faq) => (
-            <FAQItem key={faq.question} question={faq.question} answer={faq.answer} />
+          {faqs.map((faq, i) => (
+            <FAQItem key={i} question={faq.question} answer={faq.answer} />
           ))}
         </motion.div>
       </div>

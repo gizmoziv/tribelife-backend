@@ -1,20 +1,5 @@
 import { motion } from "framer-motion";
-import { ShieldCheck, EyeOff, Lock } from "lucide-react";
-
-const commitments = [
-  {
-    icon: EyeOff,
-    text: "We never sell your data",
-  },
-  {
-    icon: Lock,
-    text: "Conversations stay private",
-  },
-  {
-    icon: ShieldCheck,
-    text: "Every beacon is moderated",
-  },
-];
+import { ShieldCheck } from "lucide-react";
 
 const PrivacyCallout = () => {
   return (
@@ -27,20 +12,16 @@ const PrivacyCallout = () => {
     >
       <div className="container mx-auto px-6">
         <div className="gradient-border rounded-2xl p-6 md:p-8">
-          <div className="flex flex-col md:flex-row items-start md:items-center justify-center gap-4 md:gap-12 max-w-sm md:max-w-none mx-auto">
-            {commitments.map((item) => (
-              <div
-                key={item.text}
-                className="flex items-center gap-3"
-              >
-                <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
-                  <item.icon className="w-5 h-5 text-primary" />
-                </div>
-                <span className="text-sm md:text-base font-medium text-foreground">
-                  {item.text}
-                </span>
-              </div>
-            ))}
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-4 sm:gap-8 max-w-xs sm:max-w-none mx-auto">
+            <span className="text-sm md:text-base font-medium text-foreground lowercase text-center sm:flex-1 sm:text-right">
+              we never sell your data
+            </span>
+            <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
+              <ShieldCheck className="w-6 h-6 text-primary" />
+            </div>
+            <span className="text-sm md:text-base font-medium text-foreground lowercase text-center sm:flex-1 sm:text-left">
+              made with cybersecurity
+            </span>
           </div>
         </div>
       </div>

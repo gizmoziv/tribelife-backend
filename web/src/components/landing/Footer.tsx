@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import logo from '@/assets/tribelife-logo.png';
+import Logo from './Logo';
 import { trackDownloadClick } from '@/lib/analytics';
 
 const APP_STORE_URL = 'https://apps.apple.com/us/app/tribelife-app/id6759845843';
@@ -22,9 +22,9 @@ const Footer = () => {
       <div className="container mx-auto px-6">
         <div className="flex flex-col md:flex-row items-center justify-between gap-8">
           <div className="flex flex-col items-center md:items-start gap-3">
-            <img src={logo} alt="TribeLife" className="h-7" />
+            <Logo iconClassName="h-7" textClassName="text-lg" />
             <p className="text-sm text-muted-foreground">
-              Real users. Real community. Real value.
+              Our tribe, supercharged.
             </p>
           </div>
 
