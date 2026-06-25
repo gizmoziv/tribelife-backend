@@ -25,9 +25,7 @@ const Index = () => {
   return (
     <div className="min-h-screen bg-background">
       <Helmet>
-        <title>
-          TribeLife — Meet Real People in Your Community | Local Matching App
-        </title>
+        <title>Our tribe, supercharged.</title>
         <meta
           name="description"
           content="TribeLife connects you with real people nearby. Create beacons for what you need and get intelligent matches in our community."
