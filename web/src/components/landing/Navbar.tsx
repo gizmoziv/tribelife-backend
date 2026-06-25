@@ -1,6 +1,6 @@
 import { motion } from 'framer-motion';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import logo from '@/assets/tribelife-logo.png';
+import Logo from './Logo';
 import ThemeToggle from './ThemeToggle';
 import { trackDownloadClick, trackNavClick } from '@/lib/analytics';
 
@@ -39,11 +39,7 @@ const Navbar = () => {
     >
       <div className="container mx-auto px-6 py-4 flex items-center justify-between">
         <a href="/" className="flex items-center gap-2">
-          <img
-            src={logo}
-            alt="TribeLife - Local Community Matching App"
-            className="h-12 md:h-20"
-          />
+          <Logo iconClassName="h-11 md:h-16" textClassName="text-2xl md:text-4xl" />
         </a>
 
         <div className="hidden md:flex items-center gap-8 text-sm font-medium text-muted-foreground">

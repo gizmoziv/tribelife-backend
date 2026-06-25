@@ -32,11 +32,13 @@ const AppShowcaseSection = () => {
           transition={{ duration: 0.6 }}
           className="text-center mb-16"
         >
-          <h2 className="text-3xl md:text-4xl font-display font-bold text-foreground mb-4">
-            See TribeLife in Action
+          <h2 className="text-3xl md:text-5xl font-display font-bold text-foreground leading-[1.1] lowercase mb-4">
+            <span className="normal-case">See</span>{' '}
+            <span className="gradient-text font-extrabold tracking-tight lowercase">tribelife</span>{' '}
+            in Action
           </h2>
           <p className="text-lg text-muted-foreground max-w-xl mx-auto">
-            Fun. Valuable. An app built for real connection within our community.
+            Fun. Valuable. One app built intentionally for our community.
           </p>
         </motion.div>
 
@@ -50,10 +52,14 @@ const AppShowcaseSection = () => {
               transition={{ duration: 0.6, delay: i * 0.15 }}
               className="flex flex-col items-center group"
             >
-              {/* Phone frame with gradient border */}
-              <div className="relative p-[3px] rounded-[2.5rem] bg-gradient-to-br from-orange-400 via-pink-500 to-purple-600 shadow-2xl shadow-purple-500/20 group-hover:shadow-purple-500/30 transition-shadow duration-500">
-                {/* Inner container with rounded corners to clip the image */}
-                <div className="rounded-[2.3rem] overflow-hidden bg-background">
+              {/* Modern dark phone case */}
+              <div className="relative rounded-[2.75rem] bg-gradient-to-br from-zinc-600 via-zinc-900 to-zinc-950 p-2 shadow-2xl shadow-black/50 ring-1 ring-white/10 group-hover:shadow-black/60 transition-shadow duration-500">
+                {/* Side buttons (volume + power) */}
+                <span aria-hidden className="absolute -left-[3px] top-[17%] h-[7%] w-[3px] rounded-l-sm bg-zinc-800" />
+                <span aria-hidden className="absolute -left-[3px] top-[26%] h-[7%] w-[3px] rounded-l-sm bg-zinc-800" />
+                <span aria-hidden className="absolute -right-[3px] top-[22%] h-[12%] w-[3px] rounded-r-sm bg-zinc-800" />
+                {/* Screen — rounded corners clip the screenshot */}
+                <div className="rounded-[2.25rem] overflow-hidden bg-black ring-1 ring-inset ring-black/60">
                   <img
                     src={screen.src}
                     alt={screen.alt}
