@@ -148,6 +148,11 @@ export const messages = pgTable('messages', {
   mediaUrls: jsonb('media_urls').$type<string[]>(),         // SCHM-02: nullable JSON array of URLs
   translatedContent: text('translated_content'),
   kind: varchar('kind', { length: 20 }).default('user'),    // 'user' | 'system' (e.g. join announcement)
+  // ── Voice message columns (Phase 25, D-13) — all nullable, additive ──────────
+  voiceUrl: text('voice_url'),                                          // DO Spaces URL for voice audio (never stored in mediaUrls)
+  voiceDurationMs: integer('voice_duration_ms'),                        // duration in milliseconds
+  voiceWaveform: jsonb('voice_waveform').$type<number[]>(),             // amplitude peaks array (precomputed client-side)
+  voiceTranscript: text('voice_transcript'),                            // Whisper transcript cache (instant reveal, D-13)
 }, (t) => ({
   roomIdx: index('messages_room_idx').on(t.roomId),
   convIdx: index('messages_conv_idx').on(t.conversationId),
