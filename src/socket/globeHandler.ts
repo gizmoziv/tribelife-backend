@@ -459,8 +459,13 @@ export function registerGlobeHandlers(io: Server, socket: Socket): void {
   const VOICE_FALLBACK = '🎤 Voice message — update to listen';
 
   socket.on('globe:voice', async (data: { slug: string; cdnUrl: string; durationMs: number; waveform: number[]; replyToId?: number }) => {
-    // D-14: enforce 2-minute cap server-side
-    if (!data.cdnUrl || typeof data.durationMs !== 'number' || data.durationMs > 120000) return;
+    // D-14: enforce valid range server-side (positive, ≤ 2 min)
+    if (
+      !data.cdnUrl ||
+      typeof data.durationMs !== 'number' ||
+      data.durationMs <= 0 ||
+      data.durationMs > 120_000
+    ) return;
 
     const isGlobe = isValidGlobeRoom(data.slug);
     const isTimezone = isValidTimezoneRoom(data.slug);

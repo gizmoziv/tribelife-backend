@@ -540,8 +540,13 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
   const VOICE_FALLBACK = '🎤 Voice message — update to listen';
 
   socket.on('dm:voice', async (data: { conversationId: number; cdnUrl: string; durationMs: number; waveform: number[]; replyToId?: number }) => {
-    // D-14: enforce 2-minute cap server-side
-    if (!data.cdnUrl || typeof data.durationMs !== 'number' || data.durationMs > 120000) return;
+    // D-14: enforce valid range server-side (positive, ≤ 2 min)
+    if (
+      !data.cdnUrl ||
+      typeof data.durationMs !== 'number' ||
+      data.durationMs <= 0 ||
+      data.durationMs > 120_000
+    ) return;
 
     // Verify sender is an active participant (mirrors dm:message membership check)
     const participation = await db

@@ -348,8 +348,13 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
   const VOICE_FALLBACK = '🎤 Voice message — update to listen';
 
   socket.on('room:voice', async (data: { cdnUrl: string; durationMs: number; waveform: number[]; replyToId?: number }) => {
-    // D-14: enforce 2-minute cap server-side
-    if (!data.cdnUrl || typeof data.durationMs !== 'number' || data.durationMs > 120000) return;
+    // D-14: enforce valid range server-side (positive, ≤ 2 min)
+    if (
+      !data.cdnUrl ||
+      typeof data.durationMs !== 'number' ||
+      data.durationMs <= 0 ||
+      data.durationMs > 120_000
+    ) return;
 
     // Persist message — content = fallback string (NOT NULL), voice columns set, no mediaUrls
     const [msg] = await db
