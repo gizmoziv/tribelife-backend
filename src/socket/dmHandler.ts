@@ -12,6 +12,7 @@ import {
 import { eq, and, isNull, isNotNull, ne, inArray } from 'drizzle-orm';
 import { moderateMessage } from '../services/claude';
 import { moderateMessageImages } from '../services/imageModeration';
+import { moderateVoiceMessage } from '../services/voiceModeration';
 import { sendPushNotifications, shouldSendPush, getUnreadBadgeCounts } from '../services/pushNotifications';
 import { isUserActivelyViewing } from './activeViewing';
 import type { ChatNotificationPayload } from '../types/chatNotification';
@@ -530,5 +531,187 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
   // ── Leave a DM conversation room ──────────────────────────────────────
   socket.on('dm:leave', (data: { conversationId: number }) => {
     socket.leave(`conversation:${data.conversationId}`);
+  });
+
+  // ── Send a voice message to a DM / group conversation ─────────────────
+  // D-11: new send event; D-12: broadcast on existing dm:message event with
+  // old-client fallback string so pre-voice clients always render a sensible bubble.
+  // VOICE-16: content is the fallback string (NOT NULL column invariant — Pitfall 6).
+  const VOICE_FALLBACK = '🎤 Voice message — update to listen';
+
+  socket.on('dm:voice', async (data: { conversationId: number; cdnUrl: string; durationMs: number; waveform: number[]; replyToId?: number }) => {
+    // D-14: enforce 2-minute cap server-side
+    if (!data.cdnUrl || typeof data.durationMs !== 'number' || data.durationMs > 120000) return;
+
+    // Verify sender is an active participant (mirrors dm:message membership check)
+    const participation = await db
+      .select()
+      .from(conversationParticipants)
+      .where(
+        and(
+          eq(conversationParticipants.conversationId, data.conversationId),
+          eq(conversationParticipants.userId, userId),
+          isNull(conversationParticipants.leftAt)
+        )
+      )
+      .limit(1);
+
+    if (participation.length === 0) return;
+
+    // Fetch conversation to check archived state
+    const [convo] = await db
+      .select({ id: conversations.id, isGroup: conversations.isGroup, archivedAt: conversations.archivedAt })
+      .from(conversations)
+      .where(eq(conversations.id, data.conversationId))
+      .limit(1);
+
+    if (!convo) return;
+    if (convo.isGroup && convo.archivedAt) {
+      socket.emit('message:rejected', { reason: 'Group archived' });
+      return;
+    }
+
+    // Persist message — content = fallback string (NOT NULL), voice columns set, no mediaUrls
+    const [msg] = await db
+      .insert(messages)
+      .values({
+        content: VOICE_FALLBACK,
+        senderId: userId,
+        conversationId: data.conversationId,
+        replyToId: data.replyToId ?? null,
+        voiceUrl: data.cdnUrl,
+        voiceDurationMs: data.durationMs,
+        voiceWaveform: data.waveform,
+      })
+      .returning();
+
+    // Update conversation timestamp + clear hiddenAt (mirrors dm:message)
+    await db
+      .update(conversations)
+      .set({ lastMessageAt: new Date() })
+      .where(eq(conversations.id, data.conversationId));
+
+    await db
+      .update(conversationParticipants)
+      .set({ hiddenAt: null })
+      .where(eq(conversationParticipants.conversationId, data.conversationId));
+
+    // Build replyTo preview if this is a reply
+    let replyTo: { id: number; content: string; senderHandle: string } | null = null;
+    if (data.replyToId) {
+      const [original] = await db
+        .select({
+          id: messages.id,
+          content: messages.content,
+          senderHandle: userProfiles.handle,
+        })
+        .from(messages)
+        .leftJoin(userProfiles, eq(userProfiles.userId, messages.senderId))
+        .where(eq(messages.id, data.replyToId))
+        .limit(1);
+      if (original) {
+        replyTo = { id: original.id, content: original.content ?? '', senderHandle: original.senderHandle ?? 'Unknown' };
+      }
+    }
+
+    // Broadcast on the EXISTING dm:message event (D-12) with additive voice fields
+    io.to(`conversation:${data.conversationId}`).emit('dm:message', {
+      id: msg.id,
+      content: VOICE_FALLBACK,
+      senderId: userId,
+      senderHandle: handle,
+      conversationId: data.conversationId,
+      createdAt: msg.createdAt,
+      replyToId: data.replyToId ?? null,
+      replyTo,
+      // Additive voice fields — old clients ignore these
+      voiceUrl: data.cdnUrl,
+      voiceDurationMs: data.durationMs,
+      voiceWaveform: data.waveform,
+    });
+
+    log.info({ event: 'dm_voice_saved_emitted', userId, conversationId: data.conversationId, messageId: msg.id }, 'dm:voice persisted + broadcast');
+
+    // Fire-and-forget async moderation (mirrors image call site)
+    moderateVoiceMessage(msg.id, data.cdnUrl, userId, io, `conversation:${data.conversationId}`)
+      .catch(err => log.error({ err }, 'DM voice moderation failed'));
+
+    // Notify other participants — reuse same notification path as dm:message
+    // Voice message is a normal user message for notification purposes (no new accounting)
+    const otherParticipants = await db
+      .select({ userId: conversationParticipants.userId })
+      .from(conversationParticipants)
+      .where(
+        and(
+          eq(conversationParticipants.conversationId, data.conversationId),
+          isNull(conversationParticipants.leftAt)
+        )
+      );
+
+    const recipients = otherParticipants.filter((p) => p.userId !== userId);
+
+    if (!convo.isGroup) {
+      // 1:1 DM voice notification
+      const dmRoomKey = `conversation:${data.conversationId}`;
+      for (const p of recipients) {
+        if (await isUserActivelyViewing(io, p.userId, dmRoomKey)) continue;
+
+        const [inserted] = await db.insert(notifications).values({
+          userId: p.userId,
+          type: 'new_dm',
+          title: `Voice message from @${handle}`,
+          body: VOICE_FALLBACK,
+          data: {
+            conversationId: data.conversationId,
+            senderHandle: handle,
+            source: 'dm' as const,
+            entityId: data.conversationId,
+          },
+        }).returning({ id: notifications.id });
+
+        io.to(`user:${p.userId}`).emit('chat:notification', {
+          source: 'dm',
+          entityId: data.conversationId,
+          conversationId: data.conversationId,
+          notificationId: inserted.id,
+          messageId: msg.id,
+          title: `Voice message from @${handle}`,
+          body: VOICE_FALLBACK,
+          senderHandle: handle,
+        } satisfies ChatNotificationPayload);
+
+        const [otherProfile] = await db
+          .select({ expoPushToken: userProfiles.expoPushToken })
+          .from(userProfiles)
+          .where(eq(userProfiles.userId, p.userId))
+          .limit(1);
+
+        if (await shouldSendPush(p.userId, 'dm')) {
+          const token = otherProfile?.expoPushToken;
+          if (token?.startsWith('ExponentPushToken[')) {
+            await sendPushNotifications([{
+              to: token,
+              title: `Voice message from @${handle}`,
+              body: VOICE_FALLBACK,
+              data: {
+                type: 'chat',
+                source: 'dm',
+                entityId: data.conversationId,
+                conversationId: data.conversationId,
+                notificationId: inserted.id,
+                messageId: msg.id,
+                senderHandle: handle,
+              },
+              sound: 'default',
+            }]);
+          }
+        }
+      }
+    }
+    // Group voice notifications follow the same group fan-out pattern as dm:message
+    // (group notification fan-out is omitted here for voice-in-groups MVP — the
+    // broadcast itself delivers the message to active viewers; a future plan can
+    // wire up the group fan-out for voice). The chat:notification for groups is
+    // out of scope for this plan's requirements (VOICE-04/07/08/09/16).
   });
 }

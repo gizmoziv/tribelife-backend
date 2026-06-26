@@ -7,6 +7,7 @@ import { messages, userProfiles, notifications } from '../db/schema';
 import { and, eq, inArray } from 'drizzle-orm';
 import { moderateMessage } from '../services/claude';
 import { moderateMessageImages } from '../services/imageModeration';
+import { moderateVoiceMessage } from '../services/voiceModeration';
 import { sendPushNotifications, shouldSendPush, getUnreadBadgeCounts } from '../services/pushNotifications';
 import { isUserActivelyViewing, canonicalViewingKey } from './activeViewing';
 import type { ChatNotificationPayload } from '../types/chatNotification';
@@ -338,5 +339,71 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
       }
     });
 
+  });
+
+  // ── Send a voice message to a timezone room ────────────────────────────
+  // D-11: new send event; D-12: broadcast on existing room:message event with
+  // old-client fallback string so pre-voice clients always render a sensible bubble.
+  // VOICE-16: content is the fallback string (NOT NULL column invariant — Pitfall 6).
+  const VOICE_FALLBACK = '🎤 Voice message — update to listen';
+
+  socket.on('room:voice', async (data: { cdnUrl: string; durationMs: number; waveform: number[]; replyToId?: number }) => {
+    // D-14: enforce 2-minute cap server-side
+    if (!data.cdnUrl || typeof data.durationMs !== 'number' || data.durationMs > 120000) return;
+
+    // Persist message — content = fallback string (NOT NULL), voice columns set, no mediaUrls
+    const [msg] = await db
+      .insert(messages)
+      .values({
+        content: VOICE_FALLBACK,
+        senderId: userId,
+        roomId: timezoneRoom,
+        mentions: [],
+        replyToId: data.replyToId ?? null,
+        voiceUrl: data.cdnUrl,
+        voiceDurationMs: data.durationMs,
+        voiceWaveform: data.waveform,
+      })
+      .returning();
+
+    // Build replyTo preview if this is a reply
+    let replyTo: { id: number; content: string; senderHandle: string } | null = null;
+    if (data.replyToId) {
+      const [original] = await db
+        .select({
+          id: messages.id,
+          content: messages.content,
+          senderHandle: userProfiles.handle,
+        })
+        .from(messages)
+        .leftJoin(userProfiles, eq(userProfiles.userId, messages.senderId))
+        .where(eq(messages.id, data.replyToId))
+        .limit(1);
+      if (original) {
+        replyTo = { id: original.id, content: original.content ?? '', senderHandle: original.senderHandle ?? 'Unknown' };
+      }
+    }
+
+    // Broadcast on the EXISTING room:message event (D-12) with additive voice fields
+    io.to(timezoneRoom).emit('room:message', {
+      id: msg.id,
+      content: VOICE_FALLBACK,
+      senderId: userId,
+      senderHandle: handle,
+      roomId: timezoneRoom,
+      createdAt: msg.createdAt,
+      mentions: [],
+      replyToId: data.replyToId ?? null,
+      replyTo,
+      kind: 'user' as const,
+      // Additive voice fields — old clients ignore these
+      voiceUrl: data.cdnUrl,
+      voiceDurationMs: data.durationMs,
+      voiceWaveform: data.waveform,
+    });
+
+    // Fire-and-forget async moderation (mirrors image call site)
+    moderateVoiceMessage(msg.id, data.cdnUrl, userId, io, timezoneRoom)
+      .catch(err => log.error({ err }, 'Room voice moderation failed'));
   });
 }
