@@ -159,13 +159,14 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
       );
 
     // Build replyTo preview if this is a reply, and capture the original sender
-    let replyTo: { id: number; content: string; senderHandle: string } | null = null;
+    let replyTo: { id: number; content: string; senderHandle: string; voiceDurationMs: number | null } | null = null;
     let replyToSenderId: number | null = null;
     if (data.replyToId) {
       const [original] = await db
         .select({
           id: messages.id,
           content: messages.content,
+          voiceDurationMs: messages.voiceDurationMs,
           senderHandle: userProfiles.handle,
           senderId: messages.senderId,
         })
@@ -174,7 +175,7 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
         .where(eq(messages.id, data.replyToId))
         .limit(1);
       if (original) {
-        replyTo = { id: original.id, content: original.content ?? '', senderHandle: original.senderHandle ?? 'Unknown' };
+        replyTo = { id: original.id, content: original.content ?? '', senderHandle: original.senderHandle ?? 'Unknown', voiceDurationMs: original.voiceDurationMs ?? null };
         replyToSenderId = original.senderId;
       }
     }
@@ -637,12 +638,13 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
       .where(eq(conversationParticipants.conversationId, data.conversationId));
 
     // Build replyTo preview if this is a reply
-    let replyTo: { id: number; content: string; senderHandle: string } | null = null;
+    let replyTo: { id: number; content: string; senderHandle: string; voiceDurationMs: number | null } | null = null;
     if (data.replyToId) {
       const [original] = await db
         .select({
           id: messages.id,
           content: messages.content,
+          voiceDurationMs: messages.voiceDurationMs,
           senderHandle: userProfiles.handle,
         })
         .from(messages)
@@ -650,7 +652,7 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
         .where(eq(messages.id, data.replyToId))
         .limit(1);
       if (original) {
-        replyTo = { id: original.id, content: original.content ?? '', senderHandle: original.senderHandle ?? 'Unknown' };
+        replyTo = { id: original.id, content: original.content ?? '', senderHandle: original.senderHandle ?? 'Unknown', voiceDurationMs: original.voiceDurationMs ?? null };
       }
     }
 

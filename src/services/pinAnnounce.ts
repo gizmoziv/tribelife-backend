@@ -22,6 +22,9 @@ export interface PinEventPayload {
     previewText: string | null;
     pinnedMediaUrl: string | null;
     pinnedSenderHandle: string | null;
+    // D-05: additive nullable voice-message duration carried through the pin
+    // payload only (not persisted). null for non-voice pins.
+    voiceDurationMs: number | null;
   } | null;
 }
 

@@ -78,9 +78,26 @@ router.get('/', async (req: AuthRequest, res: Response): Promise<void> => {
   // CR-01: collapse timezone:<slug> → globe:<slug> so both screens read one pin.
   const canonRoomId = roomId != null ? canonicalRoomId(roomId) : undefined;
 
+  // Left-join messages so the hydrated pin carries the additive nullable
+  // voiceDurationMs (D-05). The pinned_messages row has no voice column (no
+  // migration); duration is read live from the original message. null for
+  // non-voice pins or when the message row is gone. All existing pinned_messages
+  // fields are selected explicitly to keep the returned shape unchanged.
   const rows = await db
-    .select()
+    .select({
+      id: pinnedMessages.id,
+      roomId: pinnedMessages.roomId,
+      conversationId: pinnedMessages.conversationId,
+      messageId: pinnedMessages.messageId,
+      pinnedById: pinnedMessages.pinnedById,
+      pinnedAt: pinnedMessages.pinnedAt,
+      previewText: pinnedMessages.previewText,
+      pinnedMediaUrl: pinnedMessages.pinnedMediaUrl,
+      pinnedSenderHandle: pinnedMessages.pinnedSenderHandle,
+      voiceDurationMs: messages.voiceDurationMs,
+    })
     .from(pinnedMessages)
+    .leftJoin(messages, eq(messages.id, pinnedMessages.messageId))
     .where(
       canonRoomId != null
         ? eq(pinnedMessages.roomId, canonRoomId)
@@ -191,6 +208,7 @@ router.post('/', async (req: AuthRequest, res: Response): Promise<void> => {
       conversationId: messages.conversationId,
       content: messages.content,
       mediaUrls: messages.mediaUrls,
+      voiceDurationMs: messages.voiceDurationMs,
       senderId: messages.senderId,
     })
     .from(messages)
@@ -229,6 +247,9 @@ router.post('/', async (req: AuthRequest, res: Response): Promise<void> => {
   // preview carries an ellipsis when truncated so the client renders it as-is)
   const previewText = buildPreviewText(message.content);
   const pinnedMediaUrl = message.mediaUrls?.[0] ?? null;
+  // D-05: carry the voice duration through the in-memory pin payload only (NOT
+  // persisted as a pinned_messages column — no migration). null for non-voice.
+  const pinnedVoiceDurationMs = message.voiceDurationMs ?? null;
 
   // Load the sender's handle for the preview (best-effort; null if senderId null)
   let pinnedSenderHandle: string | null = null;
@@ -289,6 +310,7 @@ router.post('/', async (req: AuthRequest, res: Response): Promise<void> => {
       previewText: pinRow.previewText,
       pinnedMediaUrl: pinRow.pinnedMediaUrl,
       pinnedSenderHandle: pinRow.pinnedSenderHandle,
+      voiceDurationMs: pinnedVoiceDurationMs,
     },
   };
 
