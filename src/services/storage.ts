@@ -144,6 +144,50 @@ export async function deleteObject(key: string): Promise<void> {
 }
 
 /**
+ * Generate a pre-signed PUT URL for voice message upload.
+ * Key format: {env}/voice/{userId}/{uuid}.m4a
+ * ContentType is intentionally omitted — the client sets it on PUT.
+ */
+export async function generateVoiceUploadUrl(userId: number): Promise<{
+  uploadUrl: string;
+  key: string;
+  cdnUrl: string;
+}> {
+  const key = `${PREFIX}/voice/${userId}/${crypto.randomUUID()}.m4a`;
+
+  const command = new PutObjectCommand({
+    Bucket: BUCKET,
+    Key: key,
+  });
+
+  const uploadUrl = await getSignedUrl(s3, command, { expiresIn: 300 });
+  const cdnUrl = `${CDN_URL}/${key}`;
+
+  return { uploadUrl, key, cdnUrl };
+}
+
+/**
+ * Inspect a voice object's metadata via HeadObject.
+ * Returns exists=false on any error (missing key, network, etc.).
+ */
+export async function headVoiceObject(key: string): Promise<{
+  exists: boolean;
+  contentType?: string;
+  contentLength?: number;
+}> {
+  try {
+    const response = await s3.send(new HeadObjectCommand({ Bucket: BUCKET, Key: key }));
+    return {
+      exists: true,
+      contentType: response.ContentType,
+      contentLength: response.ContentLength,
+    };
+  } catch {
+    return { exists: false };
+  }
+}
+
+/**
  * Extract the object key from a CDN URL. Returns null if URL doesn't match.
  */
 export function cdnUrlToKey(cdnUrl: string): string | null {
