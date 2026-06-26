@@ -8,6 +8,7 @@ import { and, eq, inArray } from 'drizzle-orm';
 import { moderateMessage } from '../services/claude';
 import { moderateMessageImages } from '../services/imageModeration';
 import { moderateVoiceMessage } from '../services/voiceModeration';
+import { cdnUrlToKey } from '../services/storage';
 import { sendPushNotifications, shouldSendPush, getUnreadBadgeCounts } from '../services/pushNotifications';
 import { isUserActivelyViewing, canonicalViewingKey } from './activeViewing';
 import type { ChatNotificationPayload } from '../types/chatNotification';
@@ -355,6 +356,11 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
       data.durationMs <= 0 ||
       data.durationMs > 120_000
     ) return;
+
+    // CR-01: validate cdnUrl belongs to this user's voice prefix (T-25-11 mitigation)
+    const voiceKeyPrefix = `${process.env.DO_SPACES_PREFIX || 'prod'}/voice/${userId}/`;
+    const voiceKey = cdnUrlToKey(data.cdnUrl);
+    if (!voiceKey || !voiceKey.startsWith(voiceKeyPrefix)) return;
 
     // Persist message — content = fallback string (NOT NULL), voice columns set, no mediaUrls
     const [msg] = await db

@@ -8,6 +8,7 @@ import { isValidGlobeRoom, AGE_GATE_HOURS } from '../config/globeRooms';
 import { moderateMessage } from '../services/claude';
 import { moderateMessageImages } from '../services/imageModeration';
 import { moderateVoiceMessage } from '../services/voiceModeration';
+import { cdnUrlToKey } from '../services/storage';
 import { sendPushNotifications, shouldSendPush, getUnreadBadgeCounts } from '../services/pushNotifications';
 import { isUserActivelyViewing } from './activeViewing';
 import { getGlobeMembershipsForUser, getGlobeMembershipsForRoomSlug } from '../services/globeMembership';
@@ -466,6 +467,11 @@ export function registerGlobeHandlers(io: Server, socket: Socket): void {
       data.durationMs <= 0 ||
       data.durationMs > 120_000
     ) return;
+
+    // CR-01: validate cdnUrl belongs to this user's voice prefix (T-25-11 mitigation)
+    const voiceKeyPrefix = `${process.env.DO_SPACES_PREFIX || 'prod'}/voice/${userId}/`;
+    const voiceKey = cdnUrlToKey(data.cdnUrl);
+    if (!voiceKey || !voiceKey.startsWith(voiceKeyPrefix)) return;
 
     const isGlobe = isValidGlobeRoom(data.slug);
     const isTimezone = isValidTimezoneRoom(data.slug);
