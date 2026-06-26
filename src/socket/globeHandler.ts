@@ -7,6 +7,7 @@ import { checkRateLimit } from './rateLimit';
 import { isValidGlobeRoom, AGE_GATE_HOURS } from '../config/globeRooms';
 import { moderateMessage } from '../services/claude';
 import { moderateMessageImages } from '../services/imageModeration';
+import { moderateVoiceMessage } from '../services/voiceModeration';
 import { sendPushNotifications, shouldSendPush, getUnreadBadgeCounts } from '../services/pushNotifications';
 import { isUserActivelyViewing } from './activeViewing';
 import { getGlobeMembershipsForUser, getGlobeMembershipsForRoomSlug } from '../services/globeMembership';
@@ -447,6 +448,114 @@ export function registerGlobeHandlers(io: Server, socket: Socket): void {
       moderateMessageImages(msg.id, mediaUrls, userId, io, roomId)
         .catch(err => log.error({ err }, 'Globe image check failed'));
     }
+  });
+
+  // ── Send a voice message to a Globe room ────────────────────────────────
+  // D-11: new send event; D-12: broadcast on existing globe:message event with
+  // old-client fallback string so pre-voice clients always render a sensible bubble.
+  // VOICE-16: content is the fallback string (NOT NULL column invariant — Pitfall 6).
+  // Pitfall 3: moderation must receive the globe-feed:<slug> key (NOT roomId) so
+  // the message:voice_removed event reaches the same subscribers that got the broadcast.
+  const VOICE_FALLBACK = '🎤 Voice message — update to listen';
+
+  socket.on('globe:voice', async (data: { slug: string; cdnUrl: string; durationMs: number; waveform: number[]; replyToId?: number }) => {
+    // D-14: enforce 2-minute cap server-side
+    if (!data.cdnUrl || typeof data.durationMs !== 'number' || data.durationMs > 120000) return;
+
+    const isGlobe = isValidGlobeRoom(data.slug);
+    const isTimezone = isValidTimezoneRoom(data.slug);
+    if (!isGlobe && !isTimezone) return;
+
+    // Age gate check (mirrors globe:message)
+    const accountAge = Date.now() - createdAt.getTime();
+    const ageGateMs = AGE_GATE_HOURS * 3600000;
+    if (accountAge < ageGateMs) {
+      socket.emit('globe:age_gated', {
+        hoursRemaining: Math.ceil((ageGateMs - accountAge) / 3600000),
+      });
+      return;
+    }
+
+    // Rate limit check (mirrors globe:message)
+    const roomId = isTimezone ? timezoneRoomId(data.slug) : 'globe:' + data.slug;
+    if (!checkRateLimit(userId, roomId)) {
+      socket.emit('globe:rate_limited', { retryAfterMs: 1000 });
+      return;
+    }
+
+    // Membership gate (mirrors globe:message)
+    const memberships = await getGlobeMembershipsForUser(userId);
+    if (!memberships.has(data.slug)) {
+      socket.emit('message:rejected', { reason: 'not_a_member' });
+      return;
+    }
+
+    // Phase 16 P0: premium gate for non-native timezone rooms
+    if (isTimezone && !canAccessNonNativeTimezone(data.slug)) {
+      socket.emit('message:rejected', { reason: 'premium_required' });
+      return;
+    }
+
+    // Persist message — content = fallback string (NOT NULL), voice columns set, no mediaUrls
+    const [msg] = await db
+      .insert(messages)
+      .values({
+        content: VOICE_FALLBACK,
+        senderId: userId,
+        roomId,
+        mentions: [],
+        replyToId: data.replyToId ?? null,
+        voiceUrl: data.cdnUrl,
+        voiceDurationMs: data.durationMs,
+        voiceWaveform: data.waveform,
+      })
+      .returning();
+
+    // Build replyTo preview if this is a reply
+    let replyTo: { id: number; content: string; senderHandle: string } | null = null;
+    if (data.replyToId) {
+      const [original] = await db
+        .select({
+          id: messages.id,
+          content: messages.content,
+          senderHandle: userProfiles.handle,
+        })
+        .from(messages)
+        .leftJoin(userProfiles, eq(userProfiles.userId, messages.senderId))
+        .where(eq(messages.id, data.replyToId))
+        .limit(1);
+      if (original) {
+        replyTo = { id: original.id, content: original.content ?? '', senderHandle: original.senderHandle ?? 'Unknown' };
+      }
+    }
+
+    // Broadcast on the EXISTING globe:message event (D-12) to the FEED room.
+    // Phase 14 Bug 3: broadcast target is globe-feed:<slug> (NOT roomId) so all
+    // subscribers — active viewers and Chats-tab members — receive the message.
+    const feedRoom = 'globe-feed:' + data.slug;
+    io.to(feedRoom).emit('globe:message', {
+      id: msg.id,
+      content: VOICE_FALLBACK,
+      senderId: userId,
+      senderHandle: handle,
+      senderAvatar: avatarUrl,
+      roomId,
+      slug: data.slug,
+      createdAt: msg.createdAt,
+      mentions: [],
+      replyToId: data.replyToId ?? null,
+      replyTo,
+      // Additive voice fields — old clients ignore these
+      voiceUrl: data.cdnUrl,
+      voiceDurationMs: data.durationMs,
+      voiceWaveform: data.waveform,
+    });
+
+    // Fire-and-forget async moderation.
+    // CRITICAL (Pitfall 3): pass feedRoom ('globe-feed:<slug>'), NOT roomId.
+    // The removal event must reach the same socket room that received the broadcast.
+    moderateVoiceMessage(msg.id, data.cdnUrl, userId, io, feedRoom)
+      .catch(err => log.error({ err }, 'Globe voice moderation failed'));
   });
 
   // ── Typing indicator ────────────────────────────────────────────────────
