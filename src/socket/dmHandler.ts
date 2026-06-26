@@ -582,6 +582,35 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
       return;
     }
 
+    // CR-02: block check — only for 1:1 DMs (mirrors dm:message logic exactly)
+    if (!convo.isGroup) {
+      const allParticipants = await db
+        .select({ userId: conversationParticipants.userId })
+        .from(conversationParticipants)
+        .where(eq(conversationParticipants.conversationId, data.conversationId));
+
+      const otherParticipantIds = allParticipants
+        .map((p) => p.userId)
+        .filter((id) => id !== userId);
+
+      for (const otherId of otherParticipantIds) {
+        const block = await db
+          .select({ id: blockedUsers.id })
+          .from(blockedUsers)
+          .where(
+            and(
+              eq(blockedUsers.userId, otherId),
+              eq(blockedUsers.blockedUserId, userId)
+            )
+          )
+          .limit(1);
+        if (block.length > 0) {
+          socket.emit('message:rejected', { reason: 'You cannot message this user' });
+          return;
+        }
+      }
+    }
+
     // Persist message — content = fallback string (NOT NULL), voice columns set, no mediaUrls
     const [msg] = await db
       .insert(messages)
