@@ -8,7 +8,7 @@ import { db } from '../db';
 import { userProfiles, conversations, conversationParticipants, organizations, organizationMemberships } from '../db/schema';
 import { and, isNull } from 'drizzle-orm';
 import { requireAuth, AuthRequest } from '../middleware/auth';
-import { generateAvatarUploadUrl, generateGroupIconUploadUrl, generateOrgIconUploadUrl, generateMediaUploadUrls, objectExists, deleteObject, cdnUrlToKey, setPublicRead } from '../services/storage';
+import { generateAvatarUploadUrl, generateGroupIconUploadUrl, generateOrgIconUploadUrl, generateMediaUploadUrls, generateVoiceUploadUrl, headVoiceObject, objectExists, deleteObject, cdnUrlToKey, setPublicRead } from '../services/storage';
 
 const router = Router();
 
@@ -388,6 +388,77 @@ router.post('/org-icon-confirm', requireAuth, async (req: AuthRequest, res: Resp
     res.json({ iconUrl: cdnUrl });
   } catch (err) {
     log.error({ err }, '[upload/org-icon-confirm] failed');
+    res.status(500).json({ error: 'Failed to confirm upload' });
+  }
+});
+
+// ── Voice upload constants ───────────────────────────────────────────────────
+const VOICE_MAX_BYTES = 5 * 1024 * 1024; // 5 MB — D-14 gate
+
+// ── POST /voice-url — Generate pre-signed PUT URL for voice audio ────────────
+router.post('/voice-url', requireAuth, async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    if (!checkUploadRateLimit(req.user!.id)) {
+      res.status(429).json({ error: 'Upload rate limit exceeded. Try again later.' });
+      return;
+    }
+
+    const result = await generateVoiceUploadUrl(req.user!.id);
+    res.json(result);
+  } catch (err) {
+    log.error({ err }, '[upload/voice-url] failed');
+    res.status(500).json({ error: 'Failed to generate upload URL' });
+  }
+});
+
+// ── POST /voice-confirm — Validate voice object and grant public-read ────────
+const voiceConfirmSchema = z.object({
+  key: z.string().min(1),
+});
+
+router.post('/voice-confirm', requireAuth, async (req: AuthRequest, res: Response): Promise<void> => {
+  const parse = voiceConfirmSchema.safeParse(req.body);
+  if (!parse.success) {
+    res.status(400).json({ error: parse.error.errors[0].message });
+    return;
+  }
+
+  const { key } = parse.data;
+  const prefix = process.env.DO_SPACES_PREFIX || 'prod';
+
+  try {
+    // (a) Ownership check — key must belong to the requesting user
+    if (!key.startsWith(`${prefix}/voice/${req.user!.id}/`)) {
+      res.status(403).json({ error: 'Key does not belong to this user' });
+      return;
+    }
+
+    // (b) Existence check via HeadObject
+    const head = await headVoiceObject(key);
+    if (!head.exists) {
+      res.status(400).json({ error: 'Object not found at key' });
+      return;
+    }
+
+    // (c) Size gate — D-14: reject if > 5 MB
+    if ((head.contentLength ?? 0) > VOICE_MAX_BYTES) {
+      res.status(413).json({ error: 'Audio file exceeds the 5 MB limit' });
+      return;
+    }
+
+    // (d) Content-type gate — D-14: must be audio/*
+    if (!head.contentType?.startsWith('audio/')) {
+      res.status(415).json({ error: 'File must be an audio type' });
+      return;
+    }
+
+    // Grant public-read so the async moderation service can fetch the CDN URL (Assumption A3)
+    await setPublicRead(key);
+
+    const cdnUrl = `${process.env.DO_SPACES_CDN_URL}/${key}`;
+    res.json({ cdnUrl });
+  } catch (err) {
+    log.error({ err, key }, '[upload/voice-confirm] failed');
     res.status(500).json({ error: 'Failed to confirm upload' });
   }
 });
