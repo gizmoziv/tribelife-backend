@@ -39,7 +39,7 @@ const CATEGORY_MAP: Record<string, string> = {
   'illicit/violent': 'Illicit violent content',
 };
 
-function humanizeCategory(category: string): string {
+export function humanizeCategory(category: string): string {
   return CATEGORY_MAP[category] ?? category.replace(/[/_-]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 }
 
