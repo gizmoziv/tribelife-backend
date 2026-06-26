@@ -31,6 +31,7 @@ export interface CapabilityFeatures {
   canSendDM: boolean;
   canPostBeacon: boolean;
   canTranslateMessages: boolean;
+  canSendVoiceMessages: boolean;  // Phase 25 D-10: true for all tiers at launch; flip to premiumActive to gate premium-only
 }
 
 export interface Capabilities {
