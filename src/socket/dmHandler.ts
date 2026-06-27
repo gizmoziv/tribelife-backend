@@ -221,7 +221,7 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
 
     // Notify other participants
     const otherParticipants = await db
-      .select({ userId: conversationParticipants.userId })
+      .select({ userId: conversationParticipants.userId, mutedAt: conversationParticipants.mutedAt })
       .from(conversationParticipants)
       .where(
         and(
@@ -452,63 +452,76 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
         });
       }
     } else {
-      // 1:1 DM notifications — existing behavior
+      // 1:1 DM notifications
       const dmRoomKey = `conversation:${data.conversationId}`;
       for (const p of recipients) {
         // 260621-un7: skip emit + row + push if recipient is actively viewing
         // this conversation foregrounded.
         if (await isUserActivelyViewing(io, p.userId, dmRoomKey)) continue;
 
-        const [inserted] = await db.insert(notifications).values({
-          userId: p.userId,
-          type: 'new_dm',
-          title: `Message from @${handle}`,
-          body: content.slice(0, 100),
-          data: {
-            conversationId: data.conversationId,
-            senderHandle: handle,
-            // Phase 10 D-01 additive (10-CONTEXT.md):
-            source: 'dm' as const,
-            entityId: data.conversationId,
-          },
-        }).returning({ id: notifications.id });
+        // MUTE-03 / MUTE-04: muted recipients skip bell-row insert + push but
+        // STILL receive chat:notification so unread count/dot keeps updating.
+        const isRecipientMuted = p.mutedAt !== null;
+
+        // Bell-row insert — gated on mute (MUTE-03).
+        let notifId = 0;
+        if (!isRecipientMuted) {
+          const [inserted] = await db.insert(notifications).values({
+            userId: p.userId,
+            type: 'new_dm',
+            title: `Message from @${handle}`,
+            body: content.slice(0, 100),
+            data: {
+              conversationId: data.conversationId,
+              senderHandle: handle,
+              // Phase 10 D-01 additive (10-CONTEXT.md):
+              source: 'dm' as const,
+              entityId: data.conversationId,
+            },
+          }).returning({ id: notifications.id });
+          notifId = inserted.id;
+        }
 
         // Phase 10 D-03: chat-type notifications fan to `chat:notification`.
+        // UNGATED — fires for muted and unmuted recipients alike (MUTE-04).
         io.to(`user:${p.userId}`).emit('chat:notification', {
           source: 'dm',
           entityId: data.conversationId,
           conversationId: data.conversationId,
-          notificationId: inserted.id,
+          notificationId: notifId,
           messageId: msg.id, // Phase 14 D-04: deep-link to the new message
           title: `Message from @${handle}`,
           body: content.slice(0, 100),
           senderHandle: handle,
         } satisfies ChatNotificationPayload);
 
-        const otherProfile = await db
-          .select({ expoPushToken: userProfiles.expoPushToken })
-          .from(userProfiles)
-          .where(eq(userProfiles.userId, p.userId))
-          .limit(1);
+        // Push — gated on mute (MUTE-03).
+        if (!isRecipientMuted) {
+          const otherProfile = await db
+            .select({ expoPushToken: userProfiles.expoPushToken })
+            .from(userProfiles)
+            .where(eq(userProfiles.userId, p.userId))
+            .limit(1);
 
-        if (await shouldSendPush(p.userId, 'dm')) {
-          const token = otherProfile[0]?.expoPushToken;
-          if (token?.startsWith('ExponentPushToken[')) {
-            await sendPushNotifications([{
-              to: token,
-              title: `Message from @${handle}`,
-              body: content.slice(0, 100),
-              data: {
-                type: 'chat',
-                source: 'dm',
-                entityId: data.conversationId,
-                conversationId: data.conversationId,
-                notificationId: inserted.id,
-                messageId: msg.id, // Phase 14 D-04
-                senderHandle: handle,
-              },
-              sound: 'default',
-            }]);
+          if (await shouldSendPush(p.userId, 'dm')) {
+            const token = otherProfile[0]?.expoPushToken;
+            if (token?.startsWith('ExponentPushToken[')) {
+              await sendPushNotifications([{
+                to: token,
+                title: `Message from @${handle}`,
+                body: content.slice(0, 100),
+                data: {
+                  type: 'chat',
+                  source: 'dm',
+                  entityId: data.conversationId,
+                  conversationId: data.conversationId,
+                  notificationId: notifId,
+                  messageId: msg.id, // Phase 14 D-04
+                  senderHandle: handle,
+                },
+                sound: 'default',
+              }]);
+            }
           }
         }
       }
