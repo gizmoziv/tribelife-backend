@@ -575,6 +575,8 @@ router.get('/:id/members', async (req: AuthRequest, res: Response): Promise<void
       avatarUrl: userProfiles.avatarUrl,
       role: conversationParticipants.role,
       joinedAt: conversationParticipants.joinedAt,
+      lastDeliveredAt: conversationParticipants.lastDeliveredAt, // D-01a: cold-open receipt hydration
+      lastReadAt: conversationParticipants.lastReadAt, // D-01a: cold-open receipt hydration
     })
     .from(conversationParticipants)
     .innerJoin(users, eq(users.id, conversationParticipants.userId))
