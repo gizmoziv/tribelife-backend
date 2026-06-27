@@ -92,6 +92,7 @@ export const conversationParticipants = pgTable('conversation_participants', {
   lastReadAt: timestamp('last_read_at'),
   hiddenAt: timestamp('hidden_at'),
   archivedAt: timestamp('archived_at'),
+  mutedAt: timestamp('muted_at'),                            // null = not muted; a timestamp = muted-since (MUTE-02)
   role: varchar('role', { length: 20 }).default('member'),
   leftAt: timestamp('left_at'),
 }, (t) => ({
