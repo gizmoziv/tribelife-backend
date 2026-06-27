@@ -713,7 +713,7 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
     // Notify other participants — reuse same notification path as dm:message
     // Voice message is a normal user message for notification purposes (no new accounting)
     const otherParticipants = await db
-      .select({ userId: conversationParticipants.userId })
+      .select({ userId: conversationParticipants.userId, mutedAt: conversationParticipants.mutedAt })
       .from(conversationParticipants)
       .where(
         and(
@@ -730,54 +730,67 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
       for (const p of recipients) {
         if (await isUserActivelyViewing(io, p.userId, dmRoomKey)) continue;
 
-        const [inserted] = await db.insert(notifications).values({
-          userId: p.userId,
-          type: 'new_dm',
-          title: `Voice message from @${handle}`,
-          body: VOICE_FALLBACK,
-          data: {
-            conversationId: data.conversationId,
-            senderHandle: handle,
-            source: 'dm' as const,
-            entityId: data.conversationId,
-          },
-        }).returning({ id: notifications.id });
+        // MUTE-03 / MUTE-04: same gate as text DM path — muted recipients skip
+        // bell-row insert + push but STILL receive chat:notification (MUTE-04).
+        const isRecipientMuted = p.mutedAt !== null;
 
+        // Bell-row insert — gated on mute (MUTE-03).
+        let notifId = 0;
+        if (!isRecipientMuted) {
+          const [inserted] = await db.insert(notifications).values({
+            userId: p.userId,
+            type: 'new_dm',
+            title: `Voice message from @${handle}`,
+            body: VOICE_FALLBACK,
+            data: {
+              conversationId: data.conversationId,
+              senderHandle: handle,
+              source: 'dm' as const,
+              entityId: data.conversationId,
+            },
+          }).returning({ id: notifications.id });
+          notifId = inserted.id;
+        }
+
+        // UNGATED — fires for muted and unmuted recipients alike (MUTE-04).
         io.to(`user:${p.userId}`).emit('chat:notification', {
           source: 'dm',
           entityId: data.conversationId,
           conversationId: data.conversationId,
-          notificationId: inserted.id,
+          notificationId: notifId,
           messageId: msg.id,
           title: `Voice message from @${handle}`,
           body: VOICE_FALLBACK,
           senderHandle: handle,
         } satisfies ChatNotificationPayload);
 
-        const [otherProfile] = await db
-          .select({ expoPushToken: userProfiles.expoPushToken })
-          .from(userProfiles)
-          .where(eq(userProfiles.userId, p.userId))
-          .limit(1);
+        // Push — gated on mute (MUTE-03).
+        if (!isRecipientMuted) {
+          const [otherProfile] = await db
+            .select({ expoPushToken: userProfiles.expoPushToken })
+            .from(userProfiles)
+            .where(eq(userProfiles.userId, p.userId))
+            .limit(1);
 
-        if (await shouldSendPush(p.userId, 'dm')) {
-          const token = otherProfile?.expoPushToken;
-          if (token?.startsWith('ExponentPushToken[')) {
-            await sendPushNotifications([{
-              to: token,
-              title: `Voice message from @${handle}`,
-              body: VOICE_FALLBACK,
-              data: {
-                type: 'chat',
-                source: 'dm',
-                entityId: data.conversationId,
-                conversationId: data.conversationId,
-                notificationId: inserted.id,
-                messageId: msg.id,
-                senderHandle: handle,
-              },
-              sound: 'default',
-            }]);
+          if (await shouldSendPush(p.userId, 'dm')) {
+            const token = otherProfile?.expoPushToken;
+            if (token?.startsWith('ExponentPushToken[')) {
+              await sendPushNotifications([{
+                to: token,
+                title: `Voice message from @${handle}`,
+                body: VOICE_FALLBACK,
+                data: {
+                  type: 'chat',
+                  source: 'dm',
+                  entityId: data.conversationId,
+                  conversationId: data.conversationId,
+                  notificationId: notifId,
+                  messageId: msg.id,
+                  senderHandle: handle,
+                },
+                sound: 'default',
+              }]);
+            }
           }
         }
       }
