@@ -19,6 +19,7 @@ import { registerRoomHandlers } from './roomHandler';
 import { registerDmHandlers } from './dmHandler';
 import { registerGlobeHandlers } from './globeHandler';
 import { canonicalViewingKey } from './activeViewing';
+import { backfillDeliveryOnConnect } from './receipts';
 
 // ── CORS Origin Configuration ────────────────────────────────────────────
 const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',').map((o) =>
@@ -257,6 +258,12 @@ export async function createSocketServer(
 
     socket.join(`user:${userId}`); // personal room for targeted events
     socket.join('globe-signals'); // fan-out room for globe unread signals — every connected user joins so they can increment tab badges for rooms they haven't explicitly entered
+
+    // RCPT-02 / D-04: reconnect delivery back-fill. Fire-and-forget AFTER the
+    // user:<id> join above (so back-fill emits land + the user is reachable) so a
+    // back-fill error can never block connection setup or tear down the socket.
+    // NO fetchSockets on this path — the reconnecting socket is provably online.
+    backfillDeliveryOnConnect(io, userId).catch((err) => console.error('[receipts/backfill]', err));
 
     // LIVE-01 (D-10): auto-subscribe to all globe rooms the user is a member of.
     // Sits AFTER globe-signals join and BEFORE registerXHandlers so that the
