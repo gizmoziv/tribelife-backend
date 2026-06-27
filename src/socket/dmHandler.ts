@@ -358,45 +358,63 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
             }
             if (fanRecipientIds.length === 0) return;
 
+            // MUTE-03 / MUTE-04: batch-fetch mute state for all fan recipients
+            // so bell insert + push can be skipped for muted members while
+            // chat:notification still fires for the full fanRecipientIds set.
+            const muteRows = await db
+              .select({ userId: conversationParticipants.userId, mutedAt: conversationParticipants.mutedAt })
+              .from(conversationParticipants)
+              .where(and(
+                eq(conversationParticipants.conversationId, data.conversationId),
+                inArray(conversationParticipants.userId, fanRecipientIds),
+              ));
+            const mutedSet = new Set<number>(muteRows.filter((r) => r.mutedAt !== null).map((r) => r.userId));
+            const unmutedFanIds = fanRecipientIds.filter((id) => !mutedSet.has(id));
+
             // Batched token fetch in ONE query (M6 — no N selects).
+            // Only needed for unmuted recipients (push candidates).
             const profileRows = await db
               .select({ userId: userProfiles.userId, expoPushToken: userProfiles.expoPushToken })
               .from(userProfiles)
-              .where(inArray(userProfiles.userId, fanRecipientIds));
+              .where(inArray(userProfiles.userId, unmutedFanIds.length > 0 ? unmutedFanIds : [-1]));
             const tokenMap = new Map<number, string | null>(
               profileRows.map((r) => [r.userId, r.expoPushToken ?? null]),
             );
 
-            // MANDATORY batched notification INSERT (single multi-row insert, M6).
+            // MANDATORY batched notification INSERT — unmuted recipients only (MUTE-03).
             // Reuses the exact payload shape from dmHandler.ts:263-283 (group mention path).
-            const insertValues = fanRecipientIds.map((recipientId) => ({
-              userId: recipientId,
-              type: 'group' as const,
-              title: `@${handle}`,
-              body: notifBody,
-              data: {
-                conversationId: data.conversationId,
-                senderHandle: handle,
-                isGroup: true,
-                groupName: groupLabel,
-                source: 'group' as const,
-                entityId: data.conversationId,
-              },
-            }));
+            const notifIdMap = new Map<number, number>();
+            if (unmutedFanIds.length > 0) {
+              const insertValues = unmutedFanIds.map((recipientId) => ({
+                userId: recipientId,
+                type: 'group' as const,
+                title: `@${handle}`,
+                body: notifBody,
+                data: {
+                  conversationId: data.conversationId,
+                  senderHandle: handle,
+                  isGroup: true,
+                  groupName: groupLabel,
+                  source: 'group' as const,
+                  entityId: data.conversationId,
+                },
+              }));
 
-            const insertedRows = await db
-              .insert(notifications)
-              .values(insertValues)
-              .returning({ id: notifications.id, userId: notifications.userId });
+              const insertedRows = await db
+                .insert(notifications)
+                .values(insertValues)
+                .returning({ id: notifications.id, userId: notifications.userId });
 
-            const notifIdMap = new Map<number, number>(
-              insertedRows.map((r) => [r.userId, r.id]),
-            );
+              for (const r of insertedRows) {
+                notifIdMap.set(r.userId, r.id);
+              }
+            }
 
-            // Emit chat:notification to each recipient's personal room.
+            // Emit chat:notification to ALL fan recipients (muted + unmuted) — MUTE-04.
+            // Muted recipients get notifId=0 (no bell row) but still receive the emit
+            // so the unread count/dot updates on their Chats tab.
             for (const recipientId of fanRecipientIds) {
-              const notifId = notifIdMap.get(recipientId);
-              if (notifId === undefined) continue;
+              const notifId = notifIdMap.get(recipientId) ?? 0;
               io.to(`user:${recipientId}`).emit('chat:notification', {
                 source: 'group',
                 entityId: data.conversationId,
@@ -410,11 +428,12 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
               } satisfies ChatNotificationPayload);
             }
 
-            // MANDATORY chunked push — gate on groupsPush, batch via array path (M6).
-            const badgeCounts = await getUnreadBadgeCounts(fanRecipientIds);
+            // MANDATORY chunked push — unmuted recipients only (MUTE-03).
+            // Gate on groupsPush, batch via array path (M6).
+            const badgeCounts = await getUnreadBadgeCounts(unmutedFanIds.length > 0 ? unmutedFanIds : []);
 
             const pushMessages: Array<{ to: string; title: string; body: string; data: Record<string, unknown>; sound: 'default'; badge?: number; channelId: string }> = [];
-            for (const recipientId of fanRecipientIds) {
+            for (const recipientId of unmutedFanIds) {
               const canPush = await shouldSendPush(recipientId, 'group');
               if (!canPush) continue;
               const token = tokenMap.get(recipientId);
