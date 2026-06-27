@@ -18,6 +18,8 @@ import { attachReactions } from '../utils/attachReactions';
 import { attachReplyTo } from '../utils/attachReplyTo';
 import { translateMessage } from '../services/translation';
 import { moderateMessage } from '../services/claude';
+import { getIO } from '../lib/socketRegistry';
+import { emitReadForConversation, emitReadForConversations } from '../socket/receipts';
 import type { Server } from 'socket.io';
 import logger from '../lib/logger';
 import type { SearchResult, SearchResponse } from '../types/searchResult';
@@ -358,6 +360,23 @@ router.put('/conversations/mark-all-read', async (req: AuthRequest, res: Respons
     .update(conversationParticipants)
     .set({ lastReadAt: new Date() })
     .where(eq(conversationParticipants.userId, userId));
+
+  // Emit message:read for every read-advanced conversation (RCPT-06/07). The
+  // bulk update has no convId param, so resolve the user's active conversations
+  // and let the helper apply the per-conversation DM/group privacy gate.
+  const io = getIO();
+  if (io) {
+    const active = await db
+      .select({ conversationId: conversationParticipants.conversationId })
+      .from(conversationParticipants)
+      .where(and(
+        eq(conversationParticipants.userId, userId),
+        isNull(conversationParticipants.leftAt),
+      ));
+    await emitReadForConversations(io, active.map((r) => r.conversationId), userId)
+      .catch((err) => console.error('[receipts/read]', err));
+  }
+
   res.json({ ok: true });
 });
 
@@ -429,6 +448,14 @@ router.get('/conversations/:id/messages', async (req: AuthRequest, res: Response
           eq(conversationParticipants.userId, userId)
         )
       );
+
+    // Read state advanced → emit message:read (RCPT-06/07). Only inside this
+    // branch: a non-member preview read advances no watermark and emits nothing.
+    const io = getIO();
+    if (io) {
+      await emitReadForConversation(io, convId, userId)
+        .catch((err) => console.error('[receipts/read]', err));
+    }
   }
 
   // ── aroundMessageId path (D-04) ────────────────────────────────────────────
