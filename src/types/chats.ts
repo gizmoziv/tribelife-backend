@@ -39,6 +39,7 @@ export type ChatsRow =
       unreadCount: number;
       lastMessage: ChatsRowLastMessage | null;
       isUserArchived?: boolean;
+      isMuted?: boolean;
     }
   | {
       type: 'group';
@@ -49,6 +50,7 @@ export type ChatsRow =
       unreadCount: number;
       lastMessage: ChatsRowLastMessage | null;
       isUserArchived?: boolean;
+      isMuted?: boolean;
     }
   | {
       // Phase 11 D-04: joined non-Town-Square Globe room. roomSlug is the

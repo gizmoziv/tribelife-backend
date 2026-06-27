@@ -284,7 +284,7 @@ router.get('/', async (req: AuthRequest, res: Response): Promise<void> => {
 
   // ── 5. DMs + Groups: list of participations + blocked filter ────────────
   const participations = await db
-    .select({ conversationId: conversationParticipants.conversationId })
+    .select({ conversationId: conversationParticipants.conversationId, mutedAt: conversationParticipants.mutedAt })
     .from(conversationParticipants)
     .where(and(
       eq(conversationParticipants.userId, userId),
@@ -329,6 +329,10 @@ router.get('/', async (req: AuthRequest, res: Response): Promise<void> => {
       unreadRows
         .filter((r) => r.conversationId !== null)
         .map((r) => [r.conversationId as number, Number(r.unread)]),
+    );
+    // MUTE-05 / MUTE-07: computed from participant rows already fetched above.
+    const mutedMap = new Map<number, boolean>(
+      participations.map((p) => [p.conversationId, p.mutedAt !== null]),
     );
 
     // ── 5b. Blocked-user IDs (excluded from DM rows) ──────────────────────
@@ -411,6 +415,7 @@ router.get('/', async (req: AuthRequest, res: Response): Promise<void> => {
             ? { preview: lastMsg.content ?? '', at: (lastMsg.createdAt as Date).toISOString() }
             : null,
           isUserArchived: false,
+          isMuted: mutedMap.get(row.conversationId) ?? false,
           lastMessageAt: row.lastMessageAt ?? null,
         };
       }),
@@ -436,6 +441,7 @@ router.get('/', async (req: AuthRequest, res: Response): Promise<void> => {
             ? { preview: lastMsg.content ?? '', at: (lastMsg.createdAt as Date).toISOString() }
             : null,
           isUserArchived: false,
+          isMuted: mutedMap.get(row.conversationId) ?? false,
           lastMessageAt: row.lastMessageAt ?? null,
           // Phase 12 D-11: public/archive fields
           isPublic: row.isPublic ?? false,
@@ -487,7 +493,7 @@ router.get('/archived', async (req: AuthRequest, res: Response): Promise<void> =
 
   // ── 1. Participations where archived_at IS NOT NULL ─────────────────────
   const participations = await db
-    .select({ conversationId: conversationParticipants.conversationId })
+    .select({ conversationId: conversationParticipants.conversationId, mutedAt: conversationParticipants.mutedAt })
     .from(conversationParticipants)
     .where(and(
       eq(conversationParticipants.userId, userId),
@@ -533,6 +539,10 @@ router.get('/archived', async (req: AuthRequest, res: Response): Promise<void> =
     unreadRows
       .filter((r) => r.conversationId !== null)
       .map((r) => [r.conversationId as number, Number(r.unread)]),
+  );
+  // MUTE-05 / MUTE-07: muted+archived is a valid combo (RESEARCH Pitfall 6).
+  const mutedMap = new Map<number, boolean>(
+    participations.map((p) => [p.conversationId, p.mutedAt !== null]),
   );
 
   // ── 3. Blocked-user IDs (excluded from DM rows) ─────────────────────────
@@ -611,6 +621,7 @@ router.get('/archived', async (req: AuthRequest, res: Response): Promise<void> =
           ? { preview: lastMsg.content ?? '', at: (lastMsg.createdAt as Date).toISOString() }
           : null,
         isUserArchived: true,
+        isMuted: mutedMap.get(row.conversationId) ?? false,
         lastMessageAt: row.lastMessageAt ?? null,
       };
     }),
@@ -636,6 +647,7 @@ router.get('/archived', async (req: AuthRequest, res: Response): Promise<void> =
           ? { preview: lastMsg.content ?? '', at: (lastMsg.createdAt as Date).toISOString() }
           : null,
         isUserArchived: true,
+        isMuted: mutedMap.get(row.conversationId) ?? false,
         lastMessageAt: row.lastMessageAt ?? null,
         isPublic: row.isPublic ?? false,
         isArchived: Boolean(row.isArchived),
