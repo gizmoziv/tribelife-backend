@@ -1,6 +1,6 @@
 import { Server } from 'socket.io';
 import { db } from '../db';
-import { conversationParticipants, messages, notificationPreferences } from '../db/schema';
+import { conversationParticipants, conversations, messages, notificationPreferences } from '../db/schema';
 import { and, eq, gt, inArray, isNull, ne, or, sql } from 'drizzle-orm';
 
 // ── Read-receipt helper layer (Phase 28) ─────────────────────────────────────
@@ -208,5 +208,80 @@ export async function backfillDeliveryOnConnect(io: Server, userId: number): Pro
       // Silent-failure socket convention — one bad conversation must not abort the loop.
       console.error('[receipts/backfill]', err);
     }
+  }
+}
+
+/**
+ * Read emit on every `lastReadAt`-advancing site (RCPT-06, RCPT-07, PRIV-02,
+ * PRIV-04, RCPT-09). Single source of truth for the DM-vs-group decision and the
+ * reciprocal privacy gate so they cannot drift across the four call sites
+ * (chat per-conversation open, chat mark-all-read, notifications groups read-all,
+ * notifications read-context cascade).
+ *
+ * Emits `message:read` to each OTHER active participant's `user:<id>` room (the
+ * reader is excluded — Pitfall 1/3), NEVER to the conversation room (would leak
+ * read state to non-authors — RCPT-09).
+ *
+ * - GROUP (`isGroup === true`): ALWAYS emits, regardless of any member's privacy
+ *   flag (PRIV-04, WhatsApp group model). Emits to ALL other members so Phase 29
+ *   can build per-member "Seen by N" (Open Question 1); payload `userId` = reader.
+ * - DM (`isGroup` false OR null — nullable legacy 1:1, schema.ts:72): reciprocally
+ *   gated via `bothAllowReadReceipts` (PRIV-02) — emits only when BOTH the reader
+ *   and that partner have receipts ON.
+ *
+ * A deleted/missing conversation short-circuits (no row → return early). Callers
+ * guard with `.catch` so this is not wrapped in try/catch here.
+ */
+export async function emitReadForConversation(
+  io: Server,
+  conversationId: number,
+  readerId: number,
+): Promise<void> {
+  const [convo] = await db
+    .select({ isGroup: conversations.isGroup })
+    .from(conversations)
+    .where(eq(conversations.id, conversationId))
+    .limit(1);
+  if (!convo) return; // deleted/missing conversation → nothing to emit
+
+  const isGroup = convo.isGroup === true; // null/false → DM (gated)
+
+  const others = await db
+    .select({ userId: conversationParticipants.userId })
+    .from(conversationParticipants)
+    .where(
+      and(
+        eq(conversationParticipants.conversationId, conversationId),
+        isNull(conversationParticipants.leftAt),
+        ne(conversationParticipants.userId, readerId),
+      ),
+    );
+  if (others.length === 0) return;
+
+  const readUpTo = new Date().toISOString();
+  for (const o of others) {
+    // DM path: reciprocal gate (PRIV-02). Group path: always emit (PRIV-04).
+    if (!isGroup && !(await bothAllowReadReceipts(readerId, o.userId))) continue;
+    io.to(`user:${o.userId}`).emit('message:read', {
+      conversationId,
+      userId: readerId,
+      readUpTo,
+    } satisfies MessageReadPayload);
+  }
+}
+
+/**
+ * Thin bulk wrapper used by the two set-based read sites (mark-all-read and the
+ * read-context cascade). Awaits `emitReadForConversation` per id so the single
+ * DM-vs-group gate stays the only source of truth. Each id may be a DM or a group
+ * — the per-conversation helper decides correctly.
+ */
+export async function emitReadForConversations(
+  io: Server,
+  conversationIds: number[],
+  readerId: number,
+): Promise<void> {
+  for (const conversationId of conversationIds) {
+    await emitReadForConversation(io, conversationId, readerId);
   }
 }
