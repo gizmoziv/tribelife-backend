@@ -14,6 +14,8 @@ import {
 } from '../db/schema';
 import { requireAuth, AuthRequest } from '../middleware/auth';
 import { translateLegacyTimezoneRoomId, getZoneForTimezone } from '../config/timezoneZones';
+import { getIO } from '../lib/socketRegistry';
+import { emitReadForConversations } from '../socket/receipts';
 import logger from '../lib/logger';
 
 const router = Router();
@@ -259,6 +261,14 @@ router.put('/read-all', async (req: AuthRequest, res: Response): Promise<void> =
         ));
     }
 
+    // Read state advanced for these GROUP conversations → emit message:read
+    // (RCPT-06/07). All groups → the helper always emits (PRIV-04).
+    const io = getIO();
+    if (io && groupConvIds.length > 0) {
+      await emitReadForConversations(io, groupConvIds, userId)
+        .catch((err) => console.error('[receipts/read]', err));
+    }
+
     res.json({
       clearedConversationIds: groupConvIds,
       clearedGlobeSlugs,
@@ -331,6 +341,16 @@ router.put('/read-all', async (req: AuthRequest, res: Response): Promise<void> =
         eq(conversationParticipants.userId, userId),
         inArray(conversationParticipants.conversationId, conversationIdList),
       ));
+
+    // Read state advanced → emit message:read (RCPT-06/07). conversationIdList
+    // may mix DMs and groups; the helper's per-conversation gate handles each
+    // (DM reciprocal, group always). globe/room read path below emits nothing
+    // (RCPT-09 — rooms have no receipts).
+    const io = getIO();
+    if (io) {
+      await emitReadForConversations(io, conversationIdList, userId)
+        .catch((err) => console.error('[receipts/read]', err));
+    }
   }
 
   const globeSlugList = Array.from(globeSlugs);
@@ -501,16 +521,20 @@ router.put('/preferences', async (req: AuthRequest, res: Response): Promise<void
   const userId = req.user!.id;
   // M3: raw body cast (no zod), matches existing dmsPush/beaconMatchesPush style.
   // groupsPush added per D-15 — gates plain-message group push (16-06 column).
-  const { beaconMatchesPush, dmsPush, groupsPush } = req.body as {
+  // readReceipts added per PRIV-01 — server-side toggle gating DM message:read
+  // (column default stays true; absence here leaves the existing value untouched).
+  const { beaconMatchesPush, dmsPush, groupsPush, readReceipts } = req.body as {
     beaconMatchesPush?: boolean;
     dmsPush?: boolean;
     groupsPush?: boolean;
+    readReceipts?: boolean;
   };
 
   const updates: Partial<typeof notificationPreferences.$inferInsert> = {};
   if (beaconMatchesPush !== undefined) updates.beaconMatchesPush = beaconMatchesPush;
   if (dmsPush !== undefined) updates.dmsPush = dmsPush;
   if (groupsPush !== undefined) updates.groupsPush = groupsPush;
+  if (readReceipts !== undefined) updates.readReceipts = readReceipts;
 
   const existing = await db
     .select({ id: notificationPreferences.id })
