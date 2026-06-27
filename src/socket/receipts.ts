@@ -1,7 +1,7 @@
 import { Server } from 'socket.io';
 import { db } from '../db';
-import { notificationPreferences } from '../db/schema';
-import { inArray } from 'drizzle-orm';
+import { conversationParticipants, messages, notificationPreferences } from '../db/schema';
+import { and, eq, gt, inArray, isNull, ne, or, sql } from 'drizzle-orm';
 
 // ── Read-receipt helper layer (Phase 28) ─────────────────────────────────────
 // Centralizes the two primitives every receipt emission site depends on so the
@@ -83,4 +83,130 @@ export interface MessageReadPayload {
   userId: number;
   /** ISO timestamp the reader's read watermark advanced to. */
   readUpTo: string;
+}
+
+/**
+ * Live delivery emit on the message send path (RCPT-02, RCPT-06, PRIV-03).
+ *
+ * Called AFTER the message broadcast on BOTH DM send paths (`dm:message` and
+ * `dm:voice`). `recipientIds` is the already-sender-excluded participant set the
+ * caller passes (Pitfall 1 — never re-include the author).
+ *
+ * Detects which recipients hold a live socket cluster-wide (cross-pod
+ * `getOnlineUserIds`); for those, advances ONLY their `lastDeliveredAt` watermark
+ * and emits `message:delivered` to the SENDER's `user:<senderId>` room carrying the
+ * recipient's per-member watermark advance. If no recipient is online, returns early
+ * — the back-fill on that recipient's reconnect handles delivery later (D-04).
+ *
+ * Delivered is NEVER gated on privacy (PRIV-03) — no `readReceipts` check here.
+ * Emits ONLY to `user:<senderId>`, never the conversation room (would leak state).
+ */
+export async function emitDeliveredOnSend(
+  io: Server,
+  conversationId: number,
+  senderId: number,
+  recipientIds: number[],
+): Promise<void> {
+  if (recipientIds.length === 0) return;
+  const online = await getOnlineUserIds(io, recipientIds);
+  if (online.size === 0) return; // all recipients offline → back-fill on their reconnect
+
+  const now = new Date();
+  await db
+    .update(conversationParticipants)
+    .set({ lastDeliveredAt: now })
+    .where(
+      and(
+        eq(conversationParticipants.conversationId, conversationId),
+        inArray(conversationParticipants.userId, [...online]),
+      ),
+    );
+
+  const deliveredUpTo = now.toISOString();
+  for (const recipientId of online) {
+    io.to(`user:${senderId}`).emit('message:delivered', {
+      conversationId,
+      userId: recipientId,
+      deliveredUpTo,
+    } satisfies MessageDeliveredPayload);
+  }
+}
+
+/**
+ * Reconnect back-fill (RCPT-02, D-04). Called inside `io.on('connection')` AFTER
+ * the user joins their `user:<id>` room. NO `fetchSockets` on this path — the
+ * reconnecting user is provably online (their socket just connected).
+ *
+ * Runs ONE set-based query for conversations holding a message authored by someone
+ * ELSE that is newer than this user's `lastDeliveredAt` (or never delivered). For
+ * each such conversation: advance THIS user's watermark to the latest such message's
+ * `createdAt`, then emit ONE coalesced `message:delivered` per conversation to every
+ * OTHER active participant's `user:<id>` room (the senders catching up). One event
+ * per conversation, NOT one per message (D-04). `userId` in the payload is the
+ * reconnecting recipient whose delivery advanced.
+ *
+ * Defensive: a failure for one conversation is logged and swallowed so it cannot
+ * tear down the connection handler (the Task 3 caller also guards with `.catch`).
+ */
+export async function backfillDeliveryOnConnect(io: Server, userId: number): Promise<void> {
+  const undelivered = await db
+    .select({
+      conversationId: conversationParticipants.conversationId,
+      latest: sql<Date>`max(${messages.createdAt})`,
+    })
+    .from(conversationParticipants)
+    .innerJoin(messages, eq(messages.conversationId, conversationParticipants.conversationId))
+    .where(
+      and(
+        eq(conversationParticipants.userId, userId),
+        isNull(conversationParticipants.leftAt),
+        ne(messages.senderId, userId),
+        or(
+          isNull(conversationParticipants.lastDeliveredAt),
+          gt(messages.createdAt, conversationParticipants.lastDeliveredAt),
+        ),
+      ),
+    )
+    .groupBy(conversationParticipants.conversationId);
+
+  for (const row of undelivered) {
+    try {
+      const latest = row.latest instanceof Date ? row.latest : new Date(row.latest);
+
+      // Advance THIS user's watermark to the latest undelivered message.
+      await db
+        .update(conversationParticipants)
+        .set({ lastDeliveredAt: latest })
+        .where(
+          and(
+            eq(conversationParticipants.conversationId, row.conversationId),
+            eq(conversationParticipants.userId, userId),
+          ),
+        );
+
+      // Fan ONE coalesced event per conversation to the OTHER active participants.
+      const others = await db
+        .select({ userId: conversationParticipants.userId })
+        .from(conversationParticipants)
+        .where(
+          and(
+            eq(conversationParticipants.conversationId, row.conversationId),
+            isNull(conversationParticipants.leftAt),
+            ne(conversationParticipants.userId, userId),
+          ),
+        );
+
+      const deliveredUpTo = latest.toISOString();
+      for (const o of others) {
+        io.to(`user:${o.userId}`).emit('message:delivered', {
+          conversationId: row.conversationId,
+          userId,
+          deliveredUpTo,
+        } satisfies MessageDeliveredPayload);
+      }
+    } catch (err) {
+      // Silent-failure socket convention — one bad conversation must not abort the loop.
+      console.error('[receipts/backfill]', err);
+    }
+  }
 }
