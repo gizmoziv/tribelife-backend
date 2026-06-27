@@ -1,0 +1,2 @@
+ALTER TABLE "conversation_participants" ADD COLUMN "last_delivered_at" timestamp;--> statement-breakpoint
+ALTER TABLE "notification_preferences" ADD COLUMN "read_receipts" boolean DEFAULT true NOT NULL;
