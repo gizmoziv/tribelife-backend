@@ -469,6 +469,10 @@ router.get('/conversations/:id/messages', async (req: AuthRequest, res: Response
       mentions: messages.mentions,
       mediaUrls: messages.mediaUrls,
       kind: messages.kind,
+      voiceUrl: messages.voiceUrl,
+      voiceDurationMs: messages.voiceDurationMs,
+      voiceWaveform: messages.voiceWaveform,
+      voiceTranscript: messages.voiceTranscript,
     } as const;
 
     const targetCreatedAt = target.createdAt as Date;
@@ -542,6 +546,10 @@ router.get('/conversations/:id/messages', async (req: AuthRequest, res: Response
       mentions: messages.mentions,
       mediaUrls: messages.mediaUrls,
       kind: messages.kind,
+      voiceUrl: messages.voiceUrl,
+      voiceDurationMs: messages.voiceDurationMs,
+      voiceWaveform: messages.voiceWaveform,
+      voiceTranscript: messages.voiceTranscript,
     })
     .from(messages)
     .leftJoin(users, eq(users.id, messages.senderId))
@@ -680,6 +688,86 @@ router.put('/conversations/:id/unarchive', async (req: AuthRequest, res: Respons
   res.json({ ok: true });
 });
 
+// ── Mute a DM or group conversation for the caller ────────────────────────
+router.put('/conversations/:id/mute', async (req: AuthRequest, res: Response): Promise<void> => {
+  const userId = req.user!.id;
+  const convId = parseInt(req.params.id as string);
+
+  if (isNaN(convId)) {
+    res.status(400).json({ error: 'Invalid conversation ID' });
+    return;
+  }
+
+  // Verify user is participant
+  const participation = await db
+    .select({ id: conversationParticipants.id })
+    .from(conversationParticipants)
+    .where(
+      and(
+        eq(conversationParticipants.conversationId, convId),
+        eq(conversationParticipants.userId, userId)
+      )
+    )
+    .limit(1);
+
+  if (participation.length === 0) {
+    res.status(403).json({ error: 'Not a participant in this conversation' });
+    return;
+  }
+
+  await db
+    .update(conversationParticipants)
+    .set({ mutedAt: new Date() })
+    .where(
+      and(
+        eq(conversationParticipants.conversationId, convId),
+        eq(conversationParticipants.userId, userId)
+      )
+    );
+
+  res.json({ ok: true });
+});
+
+// ── Unmute a DM or group conversation for the caller ──────────────────────
+router.put('/conversations/:id/unmute', async (req: AuthRequest, res: Response): Promise<void> => {
+  const userId = req.user!.id;
+  const convId = parseInt(req.params.id as string);
+
+  if (isNaN(convId)) {
+    res.status(400).json({ error: 'Invalid conversation ID' });
+    return;
+  }
+
+  // Verify user is participant
+  const participation = await db
+    .select({ id: conversationParticipants.id })
+    .from(conversationParticipants)
+    .where(
+      and(
+        eq(conversationParticipants.conversationId, convId),
+        eq(conversationParticipants.userId, userId)
+      )
+    )
+    .limit(1);
+
+  if (participation.length === 0) {
+    res.status(403).json({ error: 'Not a participant in this conversation' });
+    return;
+  }
+
+  await db
+    .update(conversationParticipants)
+    .set({ mutedAt: null })
+    .where(
+      and(
+        eq(conversationParticipants.conversationId, convId),
+        eq(conversationParticipants.userId, userId)
+      )
+    );
+
+  res.json({ ok: true });
+});
+
 // ── Get recent location-based (room) chat history ─────────────────────────
 router.get('/room/:roomId/messages', async (req: AuthRequest, res: Response): Promise<void> => {
   const userId = req.user!.id;
@@ -758,6 +846,10 @@ router.get('/room/:roomId/messages', async (req: AuthRequest, res: Response): Pr
       mentions: messages.mentions,
       mediaUrls: messages.mediaUrls,
       kind: messages.kind,
+      voiceUrl: messages.voiceUrl,
+      voiceDurationMs: messages.voiceDurationMs,
+      voiceWaveform: messages.voiceWaveform,
+      voiceTranscript: messages.voiceTranscript,
     } as const;
 
     const targetCreatedAt = target.createdAt as Date;
@@ -854,6 +946,10 @@ router.get('/room/:roomId/messages', async (req: AuthRequest, res: Response): Pr
       mentions: messages.mentions,
       mediaUrls: messages.mediaUrls,
       kind: messages.kind,
+      voiceUrl: messages.voiceUrl,
+      voiceDurationMs: messages.voiceDurationMs,
+      voiceWaveform: messages.voiceWaveform,
+      voiceTranscript: messages.voiceTranscript,
     })
     .from(messages)
     .leftJoin(users, eq(users.id, messages.senderId))
@@ -891,7 +987,7 @@ router.post(
 
   try {
     const [msg] = await db
-      .select({ id: messages.id, content: messages.content, translatedContent: messages.translatedContent })
+      .select({ id: messages.id, content: messages.content, translatedContent: messages.translatedContent, voiceUrl: messages.voiceUrl, voiceTranscript: messages.voiceTranscript })
       .from(messages)
       .where(eq(messages.id, messageId))
       .limit(1);
@@ -901,8 +997,14 @@ router.post(
       return;
     }
 
-    if (!msg.content) {
-      res.status(422).json({ error: 'No text content to translate' });
+    // Voice messages store the fallback string ("🎤 Voice message — update to
+    // listen") in `content`; the meaningful text to translate is the Whisper
+    // transcript. Text messages keep translating `content`.
+    const sourceText = msg.voiceUrl ? msg.voiceTranscript : msg.content;
+    if (!sourceText) {
+      res.status(422).json({
+        error: msg.voiceUrl ? 'No transcript available to translate yet' : 'No text content to translate',
+      });
       return;
     }
 
@@ -922,7 +1024,7 @@ router.post(
     }
 
     // Translate and cache
-    const translation = await translateMessage(msg.content, targetLanguage);
+    const translation = await translateMessage(sourceText, targetLanguage);
     cached[targetLanguage] = translation;
     await db
       .update(messages)
@@ -1020,6 +1122,10 @@ router.patch('/messages/:id', async (req: AuthRequest, res: Response): Promise<v
         mentions: messages.mentions,
         mediaUrls: messages.mediaUrls,
         kind: messages.kind,
+        voiceUrl: messages.voiceUrl,
+        voiceDurationMs: messages.voiceDurationMs,
+        voiceWaveform: messages.voiceWaveform,
+        voiceTranscript: messages.voiceTranscript,
       })
       .from(messages)
       .leftJoin(users, eq(users.id, messages.senderId))
