@@ -90,6 +90,7 @@ export const conversationParticipants = pgTable('conversation_participants', {
   userId: integer('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
   joinedAt: timestamp('joined_at').defaultNow(),
   lastReadAt: timestamp('last_read_at'),
+  lastDeliveredAt: timestamp('last_delivered_at'),          // null = nothing delivered yet; delivery watermark mirroring lastReadAt (D-01, RCPT-07)
   hiddenAt: timestamp('hidden_at'),
   archivedAt: timestamp('archived_at'),
   mutedAt: timestamp('muted_at'),                            // null = not muted; a timestamp = muted-since (MUTE-02)
@@ -247,6 +248,7 @@ export const notificationPreferences = pgTable('notification_preferences', {
   townSquarePush: boolean('town_square_push').notNull().default(true),
   dmsPush: boolean('dms_push').notNull().default(true),
   groupsPush: boolean('groups_push').notNull().default(true),
+  readReceipts: boolean('read_receipts').notNull().default(true),    // PRIV-01: per-user read-receipt toggle, default ON
   createdAt: timestamp('created_at').defaultNow(),
   updatedAt: timestamp('updated_at').defaultNow(),
 });
