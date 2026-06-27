@@ -16,6 +16,7 @@ import { moderateVoiceMessage } from '../services/voiceModeration';
 import { cdnUrlToKey } from '../services/storage';
 import { sendPushNotifications, shouldSendPush, getUnreadBadgeCounts } from '../services/pushNotifications';
 import { isUserActivelyViewing } from './activeViewing';
+import { emitDeliveredOnSend } from './receipts';
 import type { ChatNotificationPayload } from '../types/chatNotification';
 
 const log = logger.child({ module: 'socket:dm' });
@@ -231,6 +232,16 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
       );
 
     const recipients = otherParticipants.filter((p) => p.userId !== userId);
+
+    // RCPT-02 / RCPT-06 / PRIV-03: live delivery emit (after the broadcast above).
+    // Covers BOTH the group fan-out and the 1:1 branch — `recipients` is the
+    // sender-excluded set (Pitfall 1). Defensive: a delivery hiccup must never
+    // break message send (the broadcast is the correctness path, already done).
+    try {
+      await emitDeliveredOnSend(io, data.conversationId, userId, recipients.map((p) => p.userId));
+    } catch (err) {
+      log.error({ err }, '[receipts/delivered] dm:message delivery emit failed');
+    }
 
     if (isGroup) {
       const groupLabel = convo.groupName ?? 'Group';
@@ -723,6 +734,16 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
       );
 
     const recipients = otherParticipants.filter((p) => p.userId !== userId);
+
+    // RCPT-02 / RCPT-06 / PRIV-03: live delivery emit for the VOICE send path
+    // (Pitfall 6 — voice is a separate path; forgetting it leaves voice stuck at
+    // "Sent"). After the voice broadcast above; same sender-excluded `recipients`.
+    // Defensive try/catch so a delivery failure never breaks voice send.
+    try {
+      await emitDeliveredOnSend(io, data.conversationId, userId, recipients.map((p) => p.userId));
+    } catch (err) {
+      log.error({ err }, '[receipts/delivered] dm:voice delivery emit failed');
+    }
 
     if (!convo.isGroup) {
       // 1:1 DM voice notification
