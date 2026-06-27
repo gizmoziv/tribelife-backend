@@ -795,6 +795,55 @@ router.put('/conversations/:id/unmute', async (req: AuthRequest, res: Response):
   res.json({ ok: true });
 });
 
+// ── List conversation participants with receipt watermarks (D-01a) ────────
+// Additive, read-only. Lets the mobile client seed receiptsStore on cold open
+// so own-message Delivered/Read ticks render immediately for DM threads.
+// Old clients never call it. Membership-gated (V4): only active participants
+// may read other participants' watermarks.
+router.get('/conversations/:id/participants', async (req: AuthRequest, res: Response): Promise<void> => {
+  const userId = req.user!.id;
+  const convId = parseInt(req.params.id as string);
+
+  if (isNaN(convId)) {
+    res.status(400).json({ error: 'Invalid conversation ID' });
+    return;
+  }
+
+  // Verify caller is an active participant (mirror the messages route's gate).
+  const participation = await db
+    .select({ id: conversationParticipants.id })
+    .from(conversationParticipants)
+    .where(
+      and(
+        eq(conversationParticipants.conversationId, convId),
+        eq(conversationParticipants.userId, userId),
+        isNull(conversationParticipants.leftAt)
+      )
+    )
+    .limit(1);
+
+  if (participation.length === 0) {
+    res.status(403).json({ error: 'Not a participant of this conversation' });
+    return;
+  }
+
+  const participants = await db
+    .select({
+      userId: conversationParticipants.userId,
+      lastDeliveredAt: conversationParticipants.lastDeliveredAt,
+      lastReadAt: conversationParticipants.lastReadAt,
+    })
+    .from(conversationParticipants)
+    .where(
+      and(
+        eq(conversationParticipants.conversationId, convId),
+        isNull(conversationParticipants.leftAt)
+      )
+    );
+
+  res.json({ participants });
+});
+
 // ── Get recent location-based (room) chat history ─────────────────────────
 router.get('/room/:roomId/messages', async (req: AuthRequest, res: Response): Promise<void> => {
   const userId = req.user!.id;
