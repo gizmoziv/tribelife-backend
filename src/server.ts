@@ -43,6 +43,7 @@ import { startBeaconMatcherCron } from './jobs/beaconMatcher';
 import { startNewsIngesterCron } from './jobs/newsIngester';
 import { startNewsPushRetentionCron } from './jobs/newsPushRetention';
 import { startJobsScraperCron } from './jobs/jobsScraper';
+import { startAtsFeedsCron } from './jobs/atsFeeds';
 import { createSocketServer } from './socket';
 import { pool } from './db';
 import { registerShutdownSignals } from './lib/shutdown';
@@ -263,6 +264,7 @@ async function bootstrap(): Promise<void> {
     const beaconMatcherTask = startBeaconMatcherCron();
     const newsPushRetentionTask = startNewsPushRetentionCron();
     const jobsScraperTask = startJobsScraperCron(); // Phase 24 — null unless JOBS_SCRAPER_ENABLED=true (paused pending JewishJobs permission)
+    const atsFeedsTask = startAtsFeedsCron(); // Phase 24 — null unless ATS_FEEDS_ENABLED=true (legal Greenhouse/Lever org feeds)
 
     // HARDEN-02: register SIGTERM/SIGINT graceful shutdown.
     // MUST be inside the listen() callback — at this moment all resources
@@ -270,6 +272,7 @@ async function bootstrap(): Promise<void> {
     // httpServer.close() in the handler runs on a server not yet bound.
     const cronTasks = [newsIngesterTask, beaconMatcherTask, newsPushRetentionTask];
     if (jobsScraperTask) cronTasks.push(jobsScraperTask); // only when the scraper cron is enabled
+    if (atsFeedsTask) cronTasks.push(atsFeedsTask); // only when ATS feeds cron is enabled
     registerShutdownSignals({
       httpServer,
       io,
