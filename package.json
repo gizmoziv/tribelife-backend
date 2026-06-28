@@ -4,7 +4,7 @@
   "description": "TribeLife mobile backend — Express + Socket.io + Drizzle",
   "main": "dist/server.js",
   "scripts": {
-    "dev": "tsx watch src/server.ts",
+    "dev": "TZ=UTC tsx watch src/server.ts",
     "dev:web": "cd web && npm run dev",
     "dev:full": "concurrently \"npm run dev\" \"npm run dev:web\"",
     "build": "tsc",

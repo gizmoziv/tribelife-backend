@@ -610,6 +610,10 @@ router.get(
         // auth.ts), so they render as regular bubbles instead of the
         // centered pill. The live socket payload already includes kind.
         kind: messages.kind,
+        voiceUrl: messages.voiceUrl,
+        voiceDurationMs: messages.voiceDurationMs,
+        voiceWaveform: messages.voiceWaveform,
+        voiceTranscript: messages.voiceTranscript,
       } as const;
 
       const targetCreatedAt = target.createdAt as Date;
@@ -706,6 +710,10 @@ router.get(
         mediaUrls: messages.mediaUrls,
         // Mirrors msgSelect above — see comment there for context.
         kind: messages.kind,
+        voiceUrl: messages.voiceUrl,
+        voiceDurationMs: messages.voiceDurationMs,
+        voiceWaveform: messages.voiceWaveform,
+        voiceTranscript: messages.voiceTranscript,
       })
       .from(messages)
       .leftJoin(users, eq(users.id, messages.senderId))
