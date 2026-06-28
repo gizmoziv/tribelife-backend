@@ -26,7 +26,9 @@ export interface Preview {
   siteName: string | null;
 }
 
-const CACHE_PREFIX = 'linkpreview:v1:';
+// v2: invalidate v1 negatives that were poisoned while the SSRF guard was broken
+// (autoSelectFamily / IP-literal bugs) and returned null for every URL.
+const CACHE_PREFIX = 'linkpreview:v2:';
 const POSITIVE_TTL_SECONDS = 24 * 60 * 60; // 24h
 const NEGATIVE_TTL_SECONDS = 60 * 60; // 1h
 
