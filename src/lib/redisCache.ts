@@ -132,3 +132,89 @@ export async function redisSet(
     log.error({ err, key, event: 'redis_cache_set_failed' }, 'redisSet failed');
   }
 }
+
+// ── JSON cache with in-process fallback ─────────────────────────────────────
+//
+// getJson/setJson layer JSON (de)serialization over the raw string ops above,
+// AND add an in-process Map fallback so the cache still works in dev (no
+// REDIS_URL_DEV) and during a Redis outage — without that fallback, every dev
+// request is a cache miss and would re-fetch upstream every time. Like the rest
+// of this module, these NEVER throw to the caller: any error degrades to a
+// cache-miss / no-op. Used by the link-preview unfurl service.
+
+interface MapEntry {
+  value: string;
+  expiresAt: number; // epoch ms
+}
+
+const memCache = new Map<string, MapEntry>();
+const MEM_CACHE_MAX_ENTRIES = 2_000;
+
+function memGet(key: string): string | null {
+  const entry = memCache.get(key);
+  if (!entry) return null;
+  if (entry.expiresAt <= Date.now()) {
+    memCache.delete(key);
+    return null;
+  }
+  return entry.value;
+}
+
+function memSet(key: string, value: string, ttlSeconds: number): void {
+  // Crude bound: when full, drop the oldest insertion (Map preserves order).
+  if (memCache.size >= MEM_CACHE_MAX_ENTRIES) {
+    const oldest = memCache.keys().next().value;
+    if (oldest !== undefined) memCache.delete(oldest);
+  }
+  memCache.set(key, {
+    value,
+    expiresAt: Date.now() + Math.max(1, Math.floor(ttlSeconds)) * 1000,
+  });
+}
+
+/**
+ * Read + JSON.parse a cached value. Returns null on miss, parse error, or any
+ * failure. Falls back to the in-process Map when Redis is unavailable. Note:
+ * `null` is a legal cached value (cached negatives are stored as the JSON
+ * literal `null`), so callers that need to distinguish "cached null" from "miss"
+ * should wrap their payload in a sentinel object.
+ */
+export async function getJson<T>(key: string): Promise<T | null> {
+  try {
+    const c = getClientLazy();
+    let raw: string | null = null;
+    if (c) {
+      raw = await redisGet(key);
+    }
+    // Redis disabled or a true miss → consult the in-process fallback.
+    if (raw === null) raw = memGet(key);
+    if (raw === null) return null;
+    return JSON.parse(raw) as T;
+  } catch (err) {
+    log.error({ err, key, event: 'redis_cache_getjson_failed' }, 'getJson failed');
+    return null;
+  }
+}
+
+/**
+ * JSON.stringify + cache a value with a TTL (seconds). Writes to Redis when
+ * available AND always to the in-process Map (so a single-pod dev/outage path
+ * still serves from cache). No-op on serialization failure.
+ */
+export async function setJson(
+  key: string,
+  value: unknown,
+  ttlSeconds: number,
+): Promise<void> {
+  try {
+    const serialized = JSON.stringify(value);
+    if (serialized === undefined) return; // e.g. value === undefined
+    memSet(key, serialized, ttlSeconds);
+    const c = getClientLazy();
+    if (c) {
+      await redisSet(key, serialized, ttlSeconds);
+    }
+  } catch (err) {
+    log.error({ err, key, event: 'redis_cache_setjson_failed' }, 'setJson failed');
+  }
+}
