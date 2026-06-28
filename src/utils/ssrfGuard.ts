@@ -128,11 +128,15 @@ export const guardedLookup: net.LookupFunction = ((
   // Normalize: support both lookup(host, cb) and lookup(host, opts, cb).
   let cb = callback;
   let family = 0;
+  let wantAll = false;
   if (typeof options === 'function') {
     cb = options as typeof callback;
   } else if (typeof options === 'number') {
     family = options;
   } else if (options && typeof options === 'object') {
+    // Node's autoSelectFamily / Happy Eyeballs path (default since Node 20) calls
+    // lookup with { all: true } and expects the ARRAY form back.
+    wantAll = options.all === true;
     // options.family may be a number or the strings 'IPv4'/'IPv6'.
     const f = options.family;
     if (typeof f === 'number') family = f;
@@ -164,9 +168,18 @@ export const guardedLookup: net.LookupFunction = ((
         );
       }
     }
-    // Hand back the first (validated) address.
-    const first = list[0];
-    cb(null, first.address, first.family);
+    // Return the shape Node asked for. The autoSelectFamily path expects the
+    // array form (err, LookupAddress[]); returning a single (address, family)
+    // there yields "Invalid IP address: undefined" at connect.
+    if (wantAll) {
+      (cb as unknown as (
+        e: NodeJS.ErrnoException | null,
+        addrs: dns.LookupAddress[],
+      ) => void)(null, list);
+    } else {
+      const first = list[0];
+      cb(null, first.address, first.family);
+    }
   });
 }) as net.LookupFunction;
 
@@ -191,6 +204,13 @@ function assertHttpUrl(raw: string): URL {
     throw new Error(`Blocked scheme: ${u.protocol}`);
   }
   if (!u.hostname) throw new Error('Missing host');
+  // Block IP-literal hosts UP FRONT. Node does NOT call our guarded `lookup` for
+  // a literal IP (e.g. http://169.254.169.254/ or http://[::1]/), so the
+  // lookup-based defense is bypassed for them — validate the literal here.
+  const host = u.hostname.replace(/^\[/, '').replace(/\]$/, '');
+  if (net.isIP(host) && isBlockedIp(host)) {
+    throw new Error(`Blocked IP host: ${host}`);
+  }
   return u;
 }
 
