@@ -23,16 +23,18 @@ const BROWSER_UA =
  * Confirm with:  curl https://boards-api.greenhouse.io/v1/boards/<token>/jobs
  *                curl https://api.lever.co/v0/postings/<token>?mode=json
  */
-export type Ats = 'greenhouse' | 'lever' | 'breezy' | 'comeet';
+export type Ats = 'greenhouse' | 'lever' | 'breezy' | 'comeet' | 'ultipro' | 'bamboohr';
 
 export interface AtsSource {
-  /** ATS board token (the slug in the board URL; for Comeet, the public board token). */
+  /** Board token: slug (Greenhouse/Lever/Breezy), Comeet board token, or UltiPro board GUID. */
   token: string;
   ats: Ats;
   /** Human-readable org name; used as company fallback when the feed omits one. */
   label: string;
-  /** Comeet ONLY: the company uid (`XX.XXX`) paired with `token` in the careers-api URL. */
+  /** Comeet company uid (`XX.XXX`) OR UltiPro tenant id — paired with `token` in the URL. */
   uid?: string;
+  /** UltiPro ONLY: which recruiting host the board is served from. */
+  host?: 'recruiting' | 'recruiting2';
 }
 
 /**
@@ -55,6 +57,21 @@ export const ATS_SOURCES: AtsSource[] = [
   // ── Comeet (Israel-focused; needs uid + token pair) ──
   { token: '97F427997F097F38FA55772F7B2F7B4BF8', uid: '79.00F', ats: 'comeet', label: 'OpenDor Media (Unpacked / ISRAEL21c)' }, // ~4
   { token: 'A2B472D1E815B833D025B83472D1456A2B0', uid: '2A.00B', ats: 'comeet', label: 'CET — Center for Educational Technology' }, // ~18 — Israeli ed-tech NGO, mostly Hebrew-only Tel Aviv
+  // ── UltiPro / UKG (needs tenant uid + board GUID + host) ──
+  { token: '05a7a046-daf2-4425-a249-70b8df013f2e', uid: 'JCC1000JCCSF', host: 'recruiting2', ats: 'ultipro', label: 'JCC of San Francisco' }, // ~11
+  { token: '8cbdb6f4-5375-438a-a097-188cfe7b2db3', uid: 'JEW1002', host: 'recruiting2', ats: 'ultipro', label: 'Jewish United Fund (JUF Chicago)' }, // ~10
+  { token: 'c631b530-0049-6bdb-1e15-0f9b01231dcc', uid: 'JEW1002', host: 'recruiting2', ats: 'ultipro', label: 'JCC Chicago' }, // ~20 — shares tenant JEW1002 with JUF, different GUID
+  { token: '6fb253e7-0e57-4901-91f6-0fa69833c3be', uid: 'UNI1075UJAF', host: 'recruiting', ats: 'ultipro', label: 'UJA-Federation of New York' }, // ~10
+  { token: '2962ebcf-e618-4698-a7dd-33de0b6a31c0', uid: 'BOB1001BJU', host: 'recruiting', ats: 'ultipro', label: 'American Jewish University' }, // ~30
+  { token: '67117e77-0ebf-4c59-8572-c132c9252405', uid: 'JEW1005JFSD', host: 'recruiting2', ats: 'ultipro', label: 'Jewish Family Service of San Diego' }, // ~20
+  // ── BambooHR ──
+  { token: 'uja', ats: 'bamboohr', label: 'UJA Federation of Greater Toronto' }, // ~17 (Toronto, NOT UJA-NY)
+  { token: 'jstreet', ats: 'bamboohr', label: 'J Street' }, // ~8
+  { token: 'shalomdc', ats: 'bamboohr', label: 'Jewish Federation of Greater Washington' }, // ~5
+  { token: 'standwithus', ats: 'bamboohr', label: 'StandWithUs' }, // ~5
+  { token: 'jfedstl', ats: 'bamboohr', label: 'Jewish Federation of St. Louis' }, // ~4
+  { token: 'ncjw', ats: 'bamboohr', label: 'National Council of Jewish Women' }, // ~3
+  { token: 'jfcspgh', ats: 'bamboohr', label: 'Jewish Family & Community Services of Pittsburgh' }, // ~2
 ];
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -245,6 +262,129 @@ async function fetchComeet(src: AtsSource): Promise<JobRow[]> {
   }));
 }
 
+// ── UltiPro / UKG Pro Recruiting ─────────────────────────────────────────────
+// POST endpoint keyed by tenant (uid) + board GUID (token), served from one of two
+// hosts (recruiting / recruiting2). The search body is REQUIRED — an empty `{}` body
+// returns HTTP 200 with zero results. Descriptions in the list are teasers only
+// (BriefDescription); full text would need HTML scraping, so we keep the teaser.
+
+const ULTIPRO_SEARCH_BODY = JSON.stringify({
+  opportunitySearch: {
+    Top: 100,
+    Skip: 0,
+    QueryString: '',
+    OrderBy: [{ Value: 'postedDateDesc', PropertyName: 'PostedDate', Ascending: false }],
+    Filters: [],
+  },
+  matchCriteria: {
+    PreferredJobs: [],
+    Educations: [],
+    LicenseAndCertifications: [],
+    Skills: [],
+    hasNoLicenses: false,
+    SkippedSkills: [],
+  },
+});
+
+interface UltiproOpportunity {
+  Id: string;
+  Title: string;
+  PostedDate?: string | null;
+  BriefDescription?: string | null;
+  Locations?: Array<{
+    LocalizedName?: string | null;
+    Address?: {
+      City?: string | null;
+      State?: { Code?: string | null; Name?: string | null } | null;
+      Country?: { Code?: string | null; Name?: string | null } | null;
+    } | null;
+  }> | null;
+}
+
+function ultiproLocation(locs: UltiproOpportunity['Locations']): string | null {
+  const first = locs?.[0];
+  const a = first?.Address;
+  const parts = [a?.City, a?.State?.Code || a?.State?.Name, a?.Country?.Code]
+    .map((p) => p?.trim())
+    .filter((p): p is string => Boolean(p));
+  if (parts.length) return parts.join(', ');
+  return first?.LocalizedName?.trim() || null;
+}
+
+async function fetchUltipro(src: AtsSource): Promise<JobRow[]> {
+  if (!src.uid) throw new Error(`ultipro ${src.label}: missing uid (tenant) required with token (GUID)`);
+  const host = src.host === 'recruiting' ? 'recruiting' : 'recruiting2';
+  const base = `https://${host}.ultipro.com/${src.uid}/JobBoard/${src.token}`;
+  const res = await fetch(`${base}/JobBoardView/LoadSearchResults`, {
+    method: 'POST',
+    headers: { 'User-Agent': BROWSER_UA, 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: ULTIPRO_SEARCH_BODY, // empty body → 0 results, so the real search body is required
+  });
+  if (!res.ok) throw new Error(`ultipro ${src.uid}: HTTP ${res.status}`);
+  const data = (await res.json()) as { opportunities?: UltiproOpportunity[] };
+  const opps = data.opportunities ?? [];
+
+  return opps.map((o) => ({
+    source: 'ultipro',
+    externalRef: `${src.uid}:${o.Id}`, // Id is a globally-unique GUID → safe even when boards share a tenant
+    title: o.Title,
+    company: src.label,
+    location: ultiproLocation(o.Locations),
+    postedDate: toDateString(o.PostedDate),
+    description: o.BriefDescription?.trim() || null, // teaser only; full text not in list payload
+    logoUrl: null,
+    viewCount: 0,
+    jobUrl: `${base}/OpportunityDetail?opportunityId=${o.Id}`,
+  }));
+}
+
+// ── BambooHR ─────────────────────────────────────────────────────────────────
+// Public careers JSON at {token}.bamboohr.com/careers/list → { result: [...] }.
+// Unregistered subdomains 302-redirect (like Breezy). The list payload carries NO
+// posted date and NO description (both per-job-page only). Since the jobs feed
+// requires a non-null posted_date inside a 60-day window, we fall back to the fetch
+// date: this keeps currently-listed jobs visible and ages them out ~60 days after
+// they stop being listed (each refresh re-stamps the date while still live).
+
+interface BambooPosting {
+  id: string;
+  jobOpeningName: string;
+  location?: { city?: string | null; state?: string | null } | null;
+}
+
+function bambooLocation(loc: BambooPosting['location']): string | null {
+  if (!loc) return null;
+  const parts = [loc.city, loc.state]
+    .map((p) => p?.trim())
+    .filter((p): p is string => Boolean(p));
+  return parts.length ? parts.join(', ') : null;
+}
+
+async function fetchBamboo(src: AtsSource): Promise<JobRow[]> {
+  const url = `https://${src.token}.bamboohr.com/careers/list`;
+  const res = await fetch(url, {
+    headers: { 'User-Agent': BROWSER_UA, Accept: 'application/json' },
+    redirect: 'manual', // 302 = unregistered subdomain; only 200 is a real board
+  });
+  if (res.status !== 200) throw new Error(`bamboohr ${src.token}: HTTP ${res.status}`);
+  const data = (await res.json()) as { result?: BambooPosting[] };
+  const postings = data.result ?? [];
+  const fetchedDate = toDateString(Date.now()); // list has no posted date → use fetch date
+
+  return postings.map((p) => ({
+    source: 'bamboohr',
+    externalRef: `${src.token}:${p.id}`,
+    title: p.jobOpeningName,
+    company: src.label,
+    location: bambooLocation(p.location),
+    postedDate: fetchedDate,
+    description: null, // not in list payload (per-job page only)
+    logoUrl: null,
+    viewCount: 0,
+    jobUrl: `https://${src.token}.bamboohr.com/careers/${p.id}`,
+  }));
+}
+
 /** Fetch one source's jobs; per-ATS dispatch. Throws on transport/HTTP error. */
 export async function fetchSource(src: AtsSource): Promise<JobRow[]> {
   switch (src.ats) {
@@ -256,6 +396,10 @@ export async function fetchSource(src: AtsSource): Promise<JobRow[]> {
       return fetchBreezy(src);
     case 'comeet':
       return fetchComeet(src);
+    case 'ultipro':
+      return fetchUltipro(src);
+    case 'bamboohr':
+      return fetchBamboo(src);
   }
 }
 
