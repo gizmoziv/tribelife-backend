@@ -498,6 +498,15 @@ router.put('/:id', async (req: AuthRequest, res: Response): Promise<void> => {
     return;
   }
 
+  // Capture the current name so we can detect a real rename (and reference the
+  // old → new transition) for the system announcement below.
+  const [currentConv] = await db
+    .select({ groupName: conversations.groupName })
+    .from(conversations)
+    .where(eq(conversations.id, convId))
+    .limit(1);
+  const previousName = currentConv?.groupName ?? null;
+
   const updates: Partial<typeof conversations.$inferInsert> = {};
   if (parse.data.name) updates.groupName = parse.data.name;
   if (parse.data.groupIconUrl !== undefined) updates.groupIconUrl = parse.data.groupIconUrl;
@@ -527,6 +536,61 @@ router.put('/:id', async (req: AuthRequest, res: Response): Promise<void> => {
     .set(updates)
     .where(eq(conversations.id, convId))
     .returning();
+
+  // Announce a real rename as an in-thread system message so members see who
+  // changed the name and to what. Mirrors the join-announcement pattern above.
+  if (parse.data.name && updated.groupName && updated.groupName !== previousName) {
+    try {
+      const actorHandle = (req.user!.handle ?? '').toLowerCase();
+      const announcementContent = `@${actorHandle} renamed the group to "${updated.groupName}"`;
+      const [systemMsg] = await db
+        .insert(messages)
+        .values({
+          content: announcementContent,
+          senderId: userId,
+          conversationId: convId,
+          kind: 'system',
+          mentions: [userId],
+        })
+        .returning();
+
+      // Bump lastMessageAt so the new row order is correct on next Chevra fetch.
+      await db
+        .update(conversations)
+        .set({ lastMessageAt: new Date() })
+        .where(eq(conversations.id, convId));
+
+      const io = req.app.get('io') as Server | undefined;
+      if (io) {
+        io.to(`conversation:${convId}`).emit('dm:message', {
+          id: systemMsg.id,
+          content: announcementContent,
+          senderId: userId,
+          senderHandle: actorHandle,
+          senderAvatar: req.user!.avatarUrl ?? null,
+          conversationId: convId,
+          createdAt: systemMsg.createdAt,
+          kind: 'system',
+          mentions: [userId],
+          replyToId: null,
+          replyTo: null,
+        });
+        // Live-update Chevra rows so observers see the latest preview + new name.
+        io.emit('chevra:group-message', {
+          conversationId: convId,
+          name: updated.groupName,
+          iconUrl: updated.groupIconUrl ?? null,
+          lastMessage: {
+            content: announcementContent,
+            createdAt: systemMsg.createdAt,
+            senderHandle: actorHandle,
+          },
+        });
+      }
+    } catch (err) {
+      log.error({ err, userId, groupId: convId }, '[groups] rename announcement failed');
+    }
+  }
 
   res.json({
     group: {
