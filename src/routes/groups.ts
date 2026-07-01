@@ -23,6 +23,11 @@ const log = logger.child({ module: 'groups' });
 const router = Router();
 router.use(requireAuth);
 
+// Operator override: these user IDs bypass the maxGroupsOwned tier limit and may
+// create unlimited groups (internal/exec accounts). Keep this list tiny — it is
+// only consulted for the group-creation limit below, not for any other gate.
+const UNLIMITED_GROUP_USER_IDS = new Set<number>([3, 5, 123, 836]);
+
 function generateSlug(name: string): string {
   const base = name
     .toLowerCase()
@@ -101,7 +106,9 @@ router.post(
   // BEFORE the slug uniqueness check + DB insert. `logCapabilityDenial` is
   // emitted internally by enforceLimit on the over-limit path.
   try {
-    await enforceLimit(req, 'maxGroupsOwned', countOwnedGroups);
+    if (!UNLIMITED_GROUP_USER_IDS.has(userId)) {
+      await enforceLimit(req, 'maxGroupsOwned', countOwnedGroups);
+    }
   } catch (err) {
     if (err instanceof CapabilityViolationError) {
       const max = err.max ?? 0;
