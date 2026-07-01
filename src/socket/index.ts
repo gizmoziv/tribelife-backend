@@ -372,11 +372,16 @@ export async function createSocketServer(
       'typing:stop',
       (data: { roomId?: string; conversationId?: number }) => {
         if (data.roomId) {
-          socket.to(data.roomId).emit('typing:stop', { handle });
+          socket
+            .to(data.roomId)
+            .emit('typing:stop', { handle, roomId: data.roomId });
         } else if (data.conversationId) {
           socket
             .to(`conversation:${data.conversationId}`)
-            .emit('typing:stop', { handle });
+            .emit('typing:stop', {
+              handle,
+              conversationId: data.conversationId,
+            });
         }
       },
     );
