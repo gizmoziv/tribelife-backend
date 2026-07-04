@@ -17,10 +17,19 @@ const GRANT_EVENTS = [
   'UNCANCELLATION',        // user re-enabled auto-renew
 ] as const;
 
+// Renewal-failure / pause events: DO NOT hard-revoke. Access is governed by the
+// subscription's own expiration_at_ms. With no store grace period, that timestamp
+// is at/just-before the period end, so premiumActive lapses on schedule; if grace
+// is ever enabled, expiration_at_ms carries the grace-period end and access is
+// correctly retained through it. The terminal hard-revoke happens on EXPIRATION.
+const SOFT_EXPIRY_EVENTS = [
+  'BILLING_ISSUE',        // renewal charge failed — store retries in the background
+  'SUBSCRIPTION_PAUSED',  // Android pause — access continues until current period ends
+] as const;
+
+// Only a true expiration hard-revokes premium.
 const REVOKE_EVENTS = [
   'EXPIRATION',
-  'BILLING_ISSUE',
-  'SUBSCRIPTION_PAUSED',
 ] as const;
 
 // ── User-id resolution helpers ────────────────────────────────────────────────
@@ -140,10 +149,24 @@ router.post('/webhook', async (req: Request, res: Response): Promise<void> => {
     }
 
     const isGrant = (GRANT_EVENTS as readonly string[]).includes(eventType);
+    const isSoftExpiry = (SOFT_EXPIRY_EVENTS as readonly string[]).includes(eventType);
     const isRevoke = (REVOKE_EVENTS as readonly string[]).includes(eventType);
 
     if (isGrant) {
-      const expiresAt = expirationAtMs ? new Date(expirationAtMs) : null;
+      // A subscription grant must carry an expiration. Never persist a null
+      // (lifetime) premiumExpiresAt from a webhook — the caps predicate
+      // (services/capabilities.ts) treats null as "never expires", so a
+      // malformed event would grant permanent free premium. Skip instead.
+      if (typeof expirationAtMs !== 'number') {
+        log.error(
+          { eventType, userId, transactionId: event.transaction_id ?? event.id },
+          'Grant event missing expiration_at_ms — skipping premium write to avoid a lifetime grant',
+        );
+        res.json({ ok: true });
+        return;
+      }
+
+      const expiresAt = new Date(expirationAtMs);
       const revenuecatCustomerId = String(
         event.original_app_user_id ?? event.app_user_id ?? userId,
       );
@@ -195,6 +218,42 @@ router.post('/webhook', async (req: Request, res: Response): Promise<void> => {
 
       emitCapabilityInvalidationToUser(userId, 'revenuecat_grant');
       log.info({ eventType, userId }, 'Granted premium');
+    } else if (isSoftExpiry) {
+      // Renewal failed (BILLING_ISSUE) or subscription paused. Do NOT hard-revoke:
+      // keep isPremium=true and let premiumExpiresAt (from the event) govern live
+      // access via the caps predicate — no grace period → expiration is at/just-past
+      // the period end (access lapses now/soon); grace enabled → expiration is the
+      // grace-period end (access retained through it). EXPIRATION later performs the
+      // terminal hard-revoke. If the event carries no expiration, we cannot bound
+      // access safely → fall back to a hard revoke.
+      if (typeof expirationAtMs !== 'number') {
+        await db
+          .update(userProfiles)
+          .set({ isPremium: false, updatedAt: new Date() })
+          .where(eq(userProfiles.userId, userId));
+
+        emitCapabilityInvalidationToUser(userId, 'revenuecat_billing_issue');
+        log.warn(
+          { eventType, userId },
+          'Soft-expiry event missing expiration_at_ms — revoking premium as a safe fallback',
+        );
+      } else {
+        const expiresAt = new Date(expirationAtMs);
+        await db
+          .update(userProfiles)
+          .set({
+            isPremium: true,
+            premiumExpiresAt: expiresAt,
+            updatedAt: new Date(),
+          })
+          .where(eq(userProfiles.userId, userId));
+
+        emitCapabilityInvalidationToUser(userId, 'revenuecat_billing_issue');
+        log.info(
+          { eventType, userId, premiumExpiresAt: expiresAt.toISOString() },
+          'Soft expiry — access bounded by expiration_at_ms (no immediate revoke)',
+        );
+      }
     } else if (isRevoke) {
       await db
         .update(userProfiles)
