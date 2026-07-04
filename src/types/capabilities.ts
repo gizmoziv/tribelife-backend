@@ -54,6 +54,7 @@ export interface Capabilities {
 export type CapsInvalidatedReason =
   | 'revenuecat_grant'
   | 'revenuecat_revoke'
+  | 'revenuecat_billing_issue'
   | 'org_create'
   | 'org_invite_accept'
   | 'org_role_change'
