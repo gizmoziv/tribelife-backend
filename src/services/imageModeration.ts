@@ -16,11 +16,21 @@ import { sendPushToUser } from './pushNotifications';
 
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
+// ── Spam/scam confidence floor ──────────────────────────────────────────────
+// Configurable; scoped to the 'Spam/scam' category ONLY. A Spam/scam flag
+// below this confidence is softened to allowed (see moderateImage) — every
+// other rejection category always rejects regardless of confidence.
+const SPAM_CONFIDENCE_FLOOR = 0.85;
+
 export interface ImageModerationResult {
   isAllowed: boolean;
   category?: string;
   confidence?: number;
   mustHardDelete?: boolean;
+  // Set true only when a below-floor Spam/scam flag was overridden to
+  // allowed, so the caller (moderateMessageImages) can emit the
+  // allowed_low_confidence observability log.
+  softenedFromSpam?: boolean;
 }
 
 // ── Category humanizer ─────────────────────────────────────────────────────
@@ -83,7 +93,7 @@ Analyze this image for content that violates our community guidelines. Check spe
 1. Hate symbols (swastikas, SS bolts, white supremacist symbols)
 2. Antisemitic imagery (Holocaust denial, Jewish caricatures, blood libel imagery)
 3. Anti-Zionist propaganda (maps erasing Israel, terrorist group logos like Hamas/Hezbollah)
-4. Spam or scam content (QR codes, phishing, promotional spam)
+4. Spam or scam content — solicitation or scam intent, e.g. "scan to pay / win / claim" bait, crypto or giveaway scams, phishing, off-platform funnels, sketchy promotional branding. A QR code that is merely incidental to otherwise-legitimate content (a news clipping, event flyer, restaurant or kosher menu, business card, or synagogue/charity donation code) is ALLOWED — do not flag an image as Spam/scam just because it contains a QR code.
 5. Generally offensive content (explicit nudity, gore, drug use)
 
 Respond with valid JSON only (no markdown, no explanation):
@@ -111,11 +121,20 @@ If the image is acceptable, return: { "isAllowed": true, "category": null, "conf
 
     try {
       const parsed = JSON.parse(raw) as ImageModerationResult;
-      return {
-        isAllowed: parsed.isAllowed ?? false,
-        category: parsed.category ?? undefined,
-        confidence: parsed.confidence ?? undefined,
-      };
+      const isAllowed = parsed.isAllowed ?? false;
+      const category = parsed.category ?? undefined;
+      const confidence = parsed.confidence ?? undefined;
+
+      // Spam/scam confidence floor: soften a low-confidence Spam/scam flag to
+      // allowed. Gate is intentionally narrow — category must be exactly
+      // 'Spam/scam' AND confidence must be a number below the floor. Missing
+      // or non-numeric confidence on a Spam/scam flag falls through and still
+      // rejects (fail closed). No other category is ever softened.
+      if (isAllowed === false && category === 'Spam/scam' && typeof confidence === 'number' && confidence < SPAM_CONFIDENCE_FLOOR) {
+        return { isAllowed: true, category, confidence, softenedFromSpam: true };
+      }
+
+      return { isAllowed, category, confidence };
     } catch {
       // Parse failure — fail closed
       return { isAllowed: false, category: 'Unable to analyze image' };
