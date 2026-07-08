@@ -82,6 +82,14 @@ export async function transcribeWithRetry(audioBuffer: Buffer): Promise<string> 
 // Rejects if EITHER pass flags. Uses endpoint's own flagged boolean (D-05).
 // IMPORTANT: moderations endpoint receives the transcript TEXT, never the audio URL.
 
+// NOTE (260707-qvw reconciliation): this function intentionally does NOT call
+// logModerationEvent directly — it has no senderId/messageId in scope (the
+// fixed moderation-log vocabulary requires senderId), and its single caller
+// (voiceModeration.ts moderateVoiceMessage) already emits a structured
+// surface:'voice' moderation_block event with full context on the shared
+// removal path. Decision: skip a second, context-poor log here; rely on the
+// voiceModeration.ts log. See SUMMARY.md for the recorded decision.
+
 export async function moderateTranscript(
   transcript: string,
 ): Promise<{ isAllowed: boolean; category?: string }> {

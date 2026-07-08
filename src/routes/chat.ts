@@ -18,6 +18,7 @@ import { attachReactions } from '../utils/attachReactions';
 import { attachReplyTo } from '../utils/attachReplyTo';
 import { translateMessage } from '../services/translation';
 import { moderateMessage } from '../services/claude';
+import { logModerationEvent } from '../lib/moderationLog';
 import { getIO } from '../lib/socketRegistry';
 import { emitReadForConversation, emitReadForConversations } from '../socket/receipts';
 import type { Server } from 'socket.io';
@@ -1167,6 +1168,7 @@ router.patch('/messages/:id', async (req: AuthRequest, res: Response): Promise<v
     const modResult = moderateMessage(content);
     if (!modResult.isAllowed) {
       console.error('[chat/edit]', { messageId, userId: req.user!.id, reason: modResult.reason });
+      logModerationEvent({ surface: 'text', action: 'rejected', reason: modResult.reason, senderId: req.user!.id, messageId });
       res.status(422).json({ error: modResult.reason ?? 'Content rejected by moderation' });
       return;
     }

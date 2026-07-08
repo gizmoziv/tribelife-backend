@@ -11,6 +11,7 @@ import {
 } from '../db/schema';
 import { eq, and, isNull, isNotNull, ne, inArray } from 'drizzle-orm';
 import { moderateMessage } from '../services/claude';
+import { logModerationEvent } from '../lib/moderationLog';
 import { moderateMessageImages } from '../services/imageModeration';
 import { moderateVoiceMessage } from '../services/voiceModeration';
 import { cdnUrlToKey } from '../services/storage';
@@ -47,6 +48,7 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
       const dmModResult = moderateMessage(content);
       if (!dmModResult.isAllowed) {
         log.warn({ event: 'dm_moderation_rejected', userId, conversationId: data?.conversationId, reason: dmModResult.reason }, 'dm:message rejected by moderation');
+        logModerationEvent({ surface: 'text', action: 'rejected', reason: dmModResult.reason, senderId: userId, roomId: `conversation:${data.conversationId}` });
         socket.emit('message:rejected', { reason: dmModResult.reason });
         return;
       }

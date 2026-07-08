@@ -6,6 +6,7 @@ import { and, eq, inArray } from 'drizzle-orm';
 import { checkRateLimit } from './rateLimit';
 import { isValidGlobeRoom, AGE_GATE_HOURS } from '../config/globeRooms';
 import { moderateMessage } from '../services/claude';
+import { logModerationEvent } from '../lib/moderationLog';
 import { moderateMessageImages } from '../services/imageModeration';
 import { moderateVoiceMessage } from '../services/voiceModeration';
 import { cdnUrlToKey } from '../services/storage';
@@ -128,6 +129,7 @@ export function registerGlobeHandlers(io: Server, socket: Socket): void {
     if (content) {
       const modResult = moderateMessage(content);
       if (!modResult.isAllowed) {
+        logModerationEvent({ surface: 'text', action: 'rejected', reason: modResult.reason, senderId: userId, roomId });
         socket.emit('message:rejected', { reason: modResult.reason });
         return;
       }
