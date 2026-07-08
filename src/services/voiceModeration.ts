@@ -5,6 +5,7 @@ import { Server } from 'socket.io';
 import { deleteObject, cdnUrlToKey } from './storage';
 import { sendPushToUser } from './pushNotifications';
 import { transcribeWithRetry, moderateTranscript } from './voiceTranscription';
+import { logModerationEvent } from '../lib/moderationLog';
 import logger from '../lib/logger';
 
 const log = logger.child({ module: 'voice-moderation' });
@@ -99,6 +100,20 @@ export async function moderateVoiceMessage(
     .update(messages)
     .set({ voiceUrl: null })
     .where(eq(messages.id, messageId));
+
+  // Structured moderation log — voice still hard-deletes (quarantine for voice
+  // is an explicit out-of-scope follow-up; quarantineObject is reusable later).
+  // Fires once on the shared removal path for both moderation-rejection and
+  // transcription-failure cases.
+  logModerationEvent({
+    surface: 'voice',
+    action: 'hard_deleted',
+    reason: failureReason,
+    category: failureReason,
+    senderId,
+    messageId,
+    roomId,
+  });
 
   // Room-wide removal event — Plan 04 passes the correct broadcast room key
   io.to(roomId).emit('message:voice_removed', { messageId });
