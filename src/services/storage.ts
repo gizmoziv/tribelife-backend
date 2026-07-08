@@ -1,4 +1,4 @@
-import { S3Client, PutObjectCommand, PutObjectAclCommand, DeleteObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, PutObjectCommand, PutObjectAclCommand, DeleteObjectCommand, HeadObjectCommand, CopyObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import crypto from 'crypto';
 import logger from '../lib/logger';
@@ -140,6 +140,36 @@ export async function deleteObject(key: string): Promise<void> {
     await s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: key }));
   } catch (err) {
     log.error({ err, key }, 'Failed to delete object');
+  }
+}
+
+/**
+ * Quarantine an object: copy it to a private `quarantine/` prefix (re-rooted
+ * under the same PREFIX), then delete the original. Retains flagged media for
+ * recovery/investigation instead of permanently destroying it. Graceful
+ * (try/catch + log.error, returns null on failure) — mirrors deleteObject so
+ * a storage hiccup never aborts the moderation flow.
+ * Key format: {PREFIX}/media/... -> {PREFIX}/quarantine/media/...
+ */
+export async function quarantineObject(key: string): Promise<{ quarantineKey: string; quarantineUrl: string } | null> {
+  try {
+    const quarantineKey = key.startsWith(`${PREFIX}/`)
+      ? `${PREFIX}/quarantine/${key.slice(PREFIX.length + 1)}`
+      : `${PREFIX}/quarantine/${key}`;
+
+    await s3.send(new CopyObjectCommand({
+      Bucket: BUCKET,
+      CopySource: encodeURIComponent(`${BUCKET}/${key}`),
+      Key: quarantineKey,
+      ACL: 'private',
+    }));
+
+    await s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: key }));
+
+    return { quarantineKey, quarantineUrl: `${CDN_URL}/${quarantineKey}` };
+  } catch (err) {
+    log.error({ err, key }, 'Failed to quarantine object');
+    return null;
   }
 }
 
