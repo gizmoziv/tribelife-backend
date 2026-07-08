@@ -21,6 +21,7 @@ import { moderateMessage } from '../services/claude';
 import { logModerationEvent } from '../lib/moderationLog';
 import { getIO } from '../lib/socketRegistry';
 import { emitReadForConversation, emitReadForConversations } from '../socket/receipts';
+import { isUserBanned } from '../lib/bannedUsers';
 import type { Server } from 'socket.io';
 import logger from '../lib/logger';
 import type { SearchResult, SearchResponse } from '../types/searchResult';
@@ -313,6 +314,11 @@ router.post('/conversations', async (req: AuthRequest, res: Response): Promise<v
 
   if (userId === otherUserId) {
     res.status(400).json({ error: 'Cannot create conversation with yourself' });
+    return;
+  }
+
+  if (await isUserBanned(otherUserId)) {
+    res.status(404).json({ error: 'User not found' });
     return;
   }
 

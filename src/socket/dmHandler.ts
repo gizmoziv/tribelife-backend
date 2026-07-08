@@ -18,6 +18,7 @@ import { cdnUrlToKey } from '../services/storage';
 import { sendPushNotifications, shouldSendPush, getUnreadBadgeCounts } from '../services/pushNotifications';
 import { isUserActivelyViewing } from './activeViewing';
 import { emitDeliveredOnSend } from './receipts';
+import { isUserBanned } from '../lib/bannedUsers';
 import type { ChatNotificationPayload } from '../types/chatNotification';
 
 const log = logger.child({ module: 'socket:dm' });
@@ -118,6 +119,13 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
 
         if (block.length > 0) {
           socket.emit('message:rejected', { reason: 'You cannot message this user' });
+          return;
+        }
+      }
+
+      for (const otherId of otherParticipantIds) {
+        if (await isUserBanned(otherId)) {
+          socket.emit('message:rejected', { reason: 'This person is no longer available' });
           return;
         }
       }
@@ -652,6 +660,13 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
           .limit(1);
         if (block.length > 0) {
           socket.emit('message:rejected', { reason: 'You cannot message this user' });
+          return;
+        }
+      }
+
+      for (const otherId of otherParticipantIds) {
+        if (await isUserBanned(otherId)) {
+          socket.emit('message:rejected', { reason: 'This person is no longer available' });
           return;
         }
       }
