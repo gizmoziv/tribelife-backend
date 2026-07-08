@@ -2,8 +2,15 @@
  * Setup script: install/maintain DO Spaces lifecycle rules for THIS environment.
  *
  * Modes:
- *   npx tsx scripts/setup-quarantine-lifecycle.ts            # apply (read-modify-write)
+ *   npx tsx scripts/setup-quarantine-lifecycle.ts            # apply (read-modify-write): voice(30d)+quarantine(90d)
+ *   npx tsx scripts/setup-quarantine-lifecycle.ts --no-voice # apply quarantine only; also REMOVES this env's voice rule
  *   npx tsx scripts/setup-quarantine-lifecycle.ts --check    # read-only: print current rules
+ *
+ * --no-voice exists because the 30-day voice rule is a BLANKET expiry on
+ * {PREFIX}/voice/ — it prunes active voice messages, not just orphans. If that
+ * rule was never active before, enabling it retroactively deletes the whole
+ * voice backlog older than 30 days on the next lifecycle sweep. Use --no-voice
+ * to ship quarantine without touching (or to pull) the voice rule.
  *
  * What "apply" installs (scoped to the current DO_SPACES_PREFIX, e.g. "qa" or "prod"):
  *   - {PREFIX}/voice/       -> expire after 30 days  (rule id: {PREFIX}-voice-orphan-cleanup)
@@ -55,21 +62,28 @@ const VOICE_TTL_DAYS = 30;
 const QUARANTINE_TTL_DAYS = 90; // recovery/appeal window — configurable
 
 // The rules THIS environment owns. IDs are env-qualified so qa and prod never
-// collide when they share a bucket.
-const DESIRED_RULES: LifecycleRule[] = [
-  {
-    ID: `${PREFIX}-voice-orphan-cleanup`,
-    Status: 'Enabled',
-    Filter: { Prefix: VOICE_PREFIX },
-    Expiration: { Days: VOICE_TTL_DAYS },
-  },
-  {
-    ID: `${PREFIX}-quarantine-expiry`,
-    Status: 'Enabled',
-    Filter: { Prefix: QUARANTINE_PREFIX },
-    Expiration: { Days: QUARANTINE_TTL_DAYS },
-  },
-];
+// collide when they share a bucket. With includeVoice=false (--no-voice) the
+// voice rule is omitted — and since apply is read-modify-write, that also
+// REMOVES any existing voice rule for this env (it is simply not re-added).
+function desiredRules(includeVoice: boolean): LifecycleRule[] {
+  const rules: LifecycleRule[] = [
+    {
+      ID: `${PREFIX}-quarantine-expiry`,
+      Status: 'Enabled',
+      Filter: { Prefix: QUARANTINE_PREFIX },
+      Expiration: { Days: QUARANTINE_TTL_DAYS },
+    },
+  ];
+  if (includeVoice) {
+    rules.push({
+      ID: `${PREFIX}-voice-orphan-cleanup`,
+      Status: 'Enabled',
+      Filter: { Prefix: VOICE_PREFIX },
+      Expiration: { Days: VOICE_TTL_DAYS },
+    });
+  }
+  return rules;
+}
 
 /** Read a rule's prefix from either the modern Filter.Prefix or the legacy top-level Prefix. */
 function rulePrefix(rule: LifecycleRule): string {
@@ -117,17 +131,22 @@ async function check(): Promise<void> {
   console.log(`\n${owned} rule(s) are owned by this env ("${PREFIX}/"). --check is read-only — no changes made.`);
 }
 
-async function apply(): Promise<void> {
-  console.log(`[setup-quarantine-lifecycle] apply on bucket "${BUCKET}" (env prefix "${PREFIX}/")`);
+async function apply(includeVoice: boolean): Promise<void> {
+  console.log(`[setup-quarantine-lifecycle] apply on bucket "${BUCKET}" (env prefix "${PREFIX}/")${includeVoice ? '' : ' [--no-voice]'}`);
   const existing = await getExistingRules();
   printRules('Before', existing);
 
+  const desired = desiredRules(includeVoice);
   const preserved = existing.filter((r) => !ownedByThisEnv(r));
-  const finalRules = [...preserved, ...DESIRED_RULES];
+  const finalRules = [...preserved, ...desired];
+
+  if (!includeVoice && existing.some((r) => ownedByThisEnv(r) && rulePrefix(r) === VOICE_PREFIX)) {
+    console.log(`\n⚠ Removing existing voice rule for "${VOICE_PREFIX}" (--no-voice) — voice backlog will NOT be pruned.`);
+  }
 
   console.log(
     `\nPreserving ${preserved.length} rule(s) from other envs/prefixes; ` +
-    `(re)writing ${DESIRED_RULES.length} rule(s) for "${PREFIX}/".`,
+    `writing ${desired.length} rule(s) for "${PREFIX}/".`,
   );
 
   await s3.send(new PutBucketLifecycleConfigurationCommand({
@@ -145,7 +164,7 @@ async function main(): Promise<void> {
   if (process.argv.includes('--check')) {
     await check();
   } else {
-    await apply();
+    await apply(!process.argv.includes('--no-voice'));
   }
 }
 
