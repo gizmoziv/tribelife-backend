@@ -28,6 +28,32 @@ interface ExpoTicket {
 
 const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send';
 
+// Giphy host check — mirrors the moderation host-skip in imageModeration.ts and
+// the Giphy CDN URLs the mobile GifButton sends (media.giphy.com/.../giphy.gif).
+function isGiphyUrl(url: string): boolean {
+  try {
+    const host = new URL(url).host.toLowerCase();
+    return host === 'giphy.com' || host.endsWith('.giphy.com');
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Notification/push body for a chat message. Text messages show their content;
+ * media-only messages (empty content) get a type-appropriate fallback so the
+ * notification is never blank — 'sent a GIF' for Giphy media, else 'Photo
+ * message'. Mirrors the VOICE_FALLBACK precedent for voice messages.
+ */
+export function messageNotificationBody(content: string, mediaUrls?: string[] | null): string {
+  const text = (content ?? '').trim();
+  if (text) return text.slice(0, 100);
+  if (mediaUrls && mediaUrls.length > 0) {
+    return mediaUrls.every(isGiphyUrl) ? 'sent a GIF' : 'Photo message';
+  }
+  return '';
+}
+
 export async function sendPushNotifications(
   messages: PushMessage[]
 ): Promise<ExpoTicket[]> {

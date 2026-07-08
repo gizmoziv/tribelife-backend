@@ -15,7 +15,7 @@ import { logModerationEvent } from '../lib/moderationLog';
 import { moderateMessageImages } from '../services/imageModeration';
 import { moderateVoiceMessage } from '../services/voiceModeration';
 import { cdnUrlToKey } from '../services/storage';
-import { sendPushNotifications, shouldSendPush, getUnreadBadgeCounts } from '../services/pushNotifications';
+import { sendPushNotifications, shouldSendPush, getUnreadBadgeCounts, messageNotificationBody } from '../services/pushNotifications';
 import { isUserActivelyViewing } from './activeViewing';
 import { emitDeliveredOnSend } from './receipts';
 import { isUserBanned } from '../lib/bannedUsers';
@@ -255,7 +255,7 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
 
     if (isGroup) {
       const groupLabel = convo.groupName ?? 'Group';
-      const notifBody = content.slice(0, 100);
+      const notifBody = messageNotificationBody(content, mediaUrls);
 
       // Parse @mentions in the group message (reuse roomHandler pattern).
       // Resolve handles → userIds, then intersect with the sender-excluded
@@ -510,7 +510,7 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
             userId: p.userId,
             type: 'new_dm',
             title: `Message from @${handle}`,
-            body: content.slice(0, 100),
+            body: messageNotificationBody(content, mediaUrls),
             data: {
               conversationId: data.conversationId,
               senderHandle: handle,
@@ -531,7 +531,7 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
           notificationId: notifId,
           messageId: msg.id, // Phase 14 D-04: deep-link to the new message
           title: `Message from @${handle}`,
-          body: content.slice(0, 100),
+          body: messageNotificationBody(content, mediaUrls),
           senderHandle: handle,
         } satisfies ChatNotificationPayload);
 
@@ -549,7 +549,7 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
               await sendPushNotifications([{
                 to: token,
                 title: `Message from @${handle}`,
-                body: content.slice(0, 100),
+                body: messageNotificationBody(content, mediaUrls),
                 data: {
                   type: 'chat',
                   source: 'dm',

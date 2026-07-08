@@ -10,7 +10,7 @@ import { logModerationEvent } from '../lib/moderationLog';
 import { moderateMessageImages } from '../services/imageModeration';
 import { moderateVoiceMessage } from '../services/voiceModeration';
 import { cdnUrlToKey } from '../services/storage';
-import { sendPushNotifications, shouldSendPush, getUnreadBadgeCounts } from '../services/pushNotifications';
+import { sendPushNotifications, shouldSendPush, getUnreadBadgeCounts, messageNotificationBody } from '../services/pushNotifications';
 import { isUserActivelyViewing } from './activeViewing';
 import { getGlobeMembershipsForUser, getGlobeMembershipsForRoomSlug } from '../services/globeMembership';
 import type { ChatNotificationPayload } from '../types/chatNotification';
@@ -269,7 +269,7 @@ export function registerGlobeHandlers(io: Server, socket: Socket): void {
         userId: notifyId,
         type: 'mention',
         title,
-        body: content.slice(0, 100),
+        body: messageNotificationBody(content, mediaUrls),
         data: {
           messageId: msg.id,
           roomId,
@@ -290,7 +290,7 @@ export function registerGlobeHandlers(io: Server, socket: Socket): void {
         notificationId: inserted.id,
         messageId: msg.id, // Phase 14 D-04: deep-link to the mentioning message
         title,
-        body: content.slice(0, 100),
+        body: messageNotificationBody(content, mediaUrls),
         senderHandle: handle,
       } satisfies ChatNotificationPayload);
 
@@ -306,7 +306,7 @@ export function registerGlobeHandlers(io: Server, socket: Socket): void {
           await sendPushNotifications([{
             to: token,
             title,
-            body: content.slice(0, 100),
+            body: messageNotificationBody(content, mediaUrls),
             data: {
               type: 'chat',
               source: 'globe_room',
@@ -361,7 +361,7 @@ export function registerGlobeHandlers(io: Server, socket: Socket): void {
           profileRows.map((r) => [r.userId, r.expoPushToken ?? null]),
         );
 
-        const notifBody = content.slice(0, 100);
+        const notifBody = messageNotificationBody(content, mediaUrls);
         const groupTitle = `@${handle}`;
 
         // MANDATORY batched notification INSERT (single multi-row insert, M6).
