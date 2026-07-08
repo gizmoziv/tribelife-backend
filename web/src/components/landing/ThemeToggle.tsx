@@ -2,8 +2,21 @@ import { useState, useEffect } from "react";
 import { Moon, Sun } from "lucide-react";
 import { motion } from "framer-motion";
 
+// Read the persisted choice; default to dark when the visitor hasn't chosen.
+// Mirrors the inline pre-paint script in index.html (same 'theme' key).
+const getInitialTheme = (): boolean => {
+  try {
+    const stored = localStorage.getItem("theme");
+    if (stored === "dark") return true;
+    if (stored === "light") return false;
+  } catch {
+    // localStorage unavailable (e.g. privacy mode) — fall back to default.
+  }
+  return true;
+};
+
 const ThemeToggle = () => {
-  const [isDark, setIsDark] = useState(false);
+  const [isDark, setIsDark] = useState<boolean>(getInitialTheme);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -13,6 +26,11 @@ const ThemeToggle = () => {
     } else {
       root.classList.add("light");
       root.classList.remove("dark");
+    }
+    try {
+      localStorage.setItem("theme", isDark ? "dark" : "light");
+    } catch {
+      // Persistence is best-effort; ignore write failures.
     }
   }, [isDark]);
 
