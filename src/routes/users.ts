@@ -36,6 +36,7 @@ router.get('/suggest', async (req: AuthRequest, res: Response): Promise<void> =>
   const baseWhere = [
     ne(userProfiles.userId, userId),
     sql`${userProfiles.handle} NOT LIKE '\\_temp\\_%' ESCAPE '\\'`,
+    isNull(users.bannedAt),
   ];
   if (query.length > 0) {
     baseWhere.push(sql`LOWER(${userProfiles.handle}) LIKE ${query + '%'}`);
@@ -140,7 +141,7 @@ router.get('/search/handle', async (req: AuthRequest, res: Response): Promise<vo
           eq(organizationMemberships.orgId, orgId),
         ),
       )
-      .where(ilike(userProfiles.handle, `${query}%`))
+      .where(and(ilike(userProfiles.handle, `${query}%`), isNull(users.bannedAt)))
       .orderBy(asc(userProfiles.handle))
       .limit(10);
 
@@ -163,7 +164,7 @@ router.get('/search/handle', async (req: AuthRequest, res: Response): Promise<vo
     })
     .from(userProfiles)
     .innerJoin(users, eq(users.id, userProfiles.userId))
-    .where(ilike(userProfiles.handle, `${query}%`))
+    .where(and(ilike(userProfiles.handle, `${query}%`), isNull(users.bannedAt)))
     .orderBy(asc(userProfiles.handle))
     .limit(10);
 
@@ -232,7 +233,7 @@ router.get('/:handle', async (req: AuthRequest, res: Response): Promise<void> =>
     })
     .from(userProfiles)
     .innerJoin(users, eq(users.id, userProfiles.userId))
-    .where(eq(userProfiles.handle, handle))
+    .where(and(eq(userProfiles.handle, handle), isNull(users.bannedAt)))
     .limit(1);
 
   if (result.length === 0) {
