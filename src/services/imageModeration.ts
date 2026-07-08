@@ -1,6 +1,7 @@
 import OpenAI from 'openai';
 import logger from '../lib/logger';
-import { deleteObject, cdnUrlToKey } from './storage';
+import { deleteObject, quarantineObject, cdnUrlToKey } from './storage';
+import { logModerationEvent } from '../lib/moderationLog';
 
 const log = logger.child({ module: 'moderation' });
 import { db } from '../db';
@@ -19,6 +20,7 @@ export interface ImageModerationResult {
   isAllowed: boolean;
   category?: string;
   confidence?: number;
+  mustHardDelete?: boolean;
 }
 
 // ── Category humanizer ─────────────────────────────────────────────────────
@@ -60,7 +62,9 @@ export async function moderateImage(imageUrl: string): Promise<ImageModerationRe
     if (result.flagged) {
       const flaggedEntry = Object.entries(result.categories).find(([_, v]) => v);
       const category = flaggedEntry ? humanizeCategory(flaggedEntry[0]) : 'Policy violation';
-      return { isAllowed: false, category };
+      // CSAM (raw category sexual/minors) is a legal hard-delete requirement —
+      // captured from the RAW key BEFORE humanizeCategory rewrites it.
+      return { isAllowed: false, category, mustHardDelete: flaggedEntry?.[0] === 'sexual/minors' };
     }
 
     // ── Pass 2: GPT-4o Vision (community-specific) ────────────────────────
@@ -161,12 +165,36 @@ export async function moderateMessageImages(
 
   const flaggedUrls = flagged.map((f) => f.url);
 
-  // Delete flagged images from storage
-  for (const url of flaggedUrls) {
-    const key = cdnUrlToKey(url);
-    if (key) {
+  // Retain-and-log flagged images: CSAM (mustHardDelete) is hard-deleted;
+  // everything else is quarantined (private retention, not permanently lost).
+  for (const f of flagged) {
+    const key = cdnUrlToKey(f.url);
+    let action: 'quarantined' | 'hard_deleted';
+    let quarantineKey: string | undefined;
+
+    if (!key) {
+      // Media already gone from storage — still emit the log, skip storage ops.
+      action = f.result.mustHardDelete ? 'hard_deleted' : 'quarantined';
+    } else if (f.result.mustHardDelete === true) {
       await deleteObject(key);
+      action = 'hard_deleted';
+    } else {
+      const q = await quarantineObject(key);
+      action = 'quarantined';
+      quarantineKey = q?.quarantineKey;
     }
+
+    logModerationEvent({
+      surface: 'image',
+      action,
+      mediaUrl: f.url,
+      quarantineKey,
+      category: f.result.category,
+      confidence: f.result.confidence,
+      messageId,
+      senderId,
+      roomId,
+    });
   }
 
   // Update message in DB — remove flagged URLs
