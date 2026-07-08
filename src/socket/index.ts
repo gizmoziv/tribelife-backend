@@ -1,7 +1,7 @@
 import { Server as SocketServer, Socket } from 'socket.io';
 import { Server as HttpServer } from 'http';
 import jwt from 'jsonwebtoken';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { db } from '../db';
 import {
   userProfiles,
@@ -258,6 +258,19 @@ export async function createSocketServer(
 
     socket.join(`user:${userId}`); // personal room for targeted events
     socket.join('globe-signals'); // fan-out room for globe unread signals — every connected user joins so they can increment tab badges for rooms they haven't explicitly entered
+
+    // AUDIT-02: throttled "last seen" watermark. Only writes when the last value
+    // is null or older than 5 minutes, so reconnect storms don't hammer the row.
+    // Fire-and-forget — a failure here must never affect connection setup.
+    db.update(userProfiles)
+      .set({ lastActiveAt: sql`now()` })
+      .where(
+        and(
+          eq(userProfiles.userId, userId),
+          sql`(${userProfiles.lastActiveAt} is null or ${userProfiles.lastActiveAt} < now() - interval '5 minutes')`,
+        ),
+      )
+      .catch((err) => console.error('[socket/last-active]', err));
 
     // RCPT-02 / D-04: reconnect delivery back-fill. Fire-and-forget AFTER the
     // user:<id> join above (so back-fill emits land + the user is reachable) so a

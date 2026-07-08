@@ -1,6 +1,6 @@
 import { Router, Response } from 'express';
 import { Server } from 'socket.io';
-import { eq, and, sql, isNull, asc } from 'drizzle-orm';
+import { eq, and, ne, sql, isNull, asc } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '../db';
 import {
@@ -9,6 +9,7 @@ import {
   users,
   userProfiles,
   messages,
+  groupSlugAliases,
 } from '../db/schema';
 import { requireAuth, AuthRequest } from '../middleware/auth';
 import { requireCapability, CapabilityViolationError } from '../middleware/capabilities';
@@ -28,15 +29,75 @@ router.use(requireAuth);
 // only consulted for the group-creation limit below, not for any other gate.
 const UNLIMITED_GROUP_USER_IDS = new Set<number>([3, 5, 123, 836]);
 
-function generateSlug(name: string): string {
-  const base = name
+// Clean, deterministic slug from a name — the canonical identity of a group.
+// The group's name → slug mapping is 1:1: any two names that normalize to the
+// same slug are treated as the same group and the second is rejected (no random
+// suffix). Returns '' when the name has NO slug-able characters (e.g. all emoji);
+// callers reject that as an invalid name rather than minting a generic slug.
+function slugify(name: string): string {
+  return name
     .toLowerCase()
     .replace(/[^a-z0-9\s-]/g, '')
     .replace(/\s+/g, '-')
     .replace(/-+/g, '-')
-    .slice(0, 40);
-  const rand = Math.random().toString(36).slice(2, 6);
-  return `${base}-${rand}`;
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 40)
+    .replace(/-+$/g, '');
+}
+
+// A slug is "taken" if it is another group's current invite_slug OR is reserved
+// by a live alias (group_slug_aliases). `excludeConvId` scopes both checks so a
+// group never collides with itself — this is what lets a rename reclaim its own
+// old alias (rename A→B→A) instead of being pushed to a suffixed slug.
+async function isSlugTaken(slug: string, excludeConvId?: number): Promise<boolean> {
+  const [conv] = await db
+    .select({ id: conversations.id })
+    .from(conversations)
+    .where(
+      excludeConvId != null
+        ? and(eq(conversations.inviteSlug, slug), ne(conversations.id, excludeConvId))
+        : eq(conversations.inviteSlug, slug),
+    )
+    .limit(1);
+  if (conv) return true;
+
+  const [alias] = await db
+    .select({ id: groupSlugAliases.id })
+    .from(groupSlugAliases)
+    .where(
+      excludeConvId != null
+        ? and(eq(groupSlugAliases.slug, slug), ne(groupSlugAliases.conversationId, excludeConvId))
+        : eq(groupSlugAliases.slug, slug),
+    )
+    .limit(1);
+  return alias != null;
+}
+
+// Resolve an invite slug to a group's conversation id. Matches a live
+// invite_slug first; otherwise looks up an old-slug alias and, on a hit, bumps
+// last_used_at so the alias survives the 30-day TTL reaper. Returns null when
+// the slug matches neither. This is what keeps invite links working after a
+// group is renamed (see groupSlugAliases in db/schema.ts).
+async function resolveGroupIdBySlug(slug: string): Promise<number | null> {
+  const [direct] = await db
+    .select({ id: conversations.id })
+    .from(conversations)
+    .where(and(eq(conversations.inviteSlug, slug), eq(conversations.isGroup, true)))
+    .limit(1);
+  if (direct) return direct.id;
+
+  const [alias] = await db
+    .select({ conversationId: groupSlugAliases.conversationId })
+    .from(groupSlugAliases)
+    .where(eq(groupSlugAliases.slug, slug))
+    .limit(1);
+  if (!alias) return null;
+
+  await db
+    .update(groupSlugAliases)
+    .set({ lastUsedAt: new Date() })
+    .where(eq(groupSlugAliases.slug, slug));
+  return alias.conversationId;
 }
 
 // ── List my groups (admin/member) ───────────────────────────────────────────
@@ -124,53 +185,46 @@ router.post(
   }
 
   const { name } = parse.data;
-  let slug = parse.data.slug ?? generateSlug(name);
 
-  // Validate slug uniqueness
-  const existing = await db
-    .select({ id: conversations.id })
-    .from(conversations)
-    .where(eq(conversations.inviteSlug, slug))
-    .limit(1);
-
-  if (existing.length > 0) {
-    if (parse.data.slug) {
-      res.status(400).json({ error: 'Slug already taken' });
-      return;
-    }
-    // Auto-generated slug collision — regenerate
-    slug = generateSlug(name);
+  // Canonical slug: always derived from the name (any client-supplied `slug` is
+  // ignored). The name → slug map is 1:1, so a name that normalizes to an
+  // existing group's slug is a duplicate and is rejected — no random suffix.
+  const slug = slugify(name);
+  if (!slug) {
+    res.status(400).json({ error: 'Group name must include some letters or numbers.' });
+    return;
+  }
+  if (await isSlugTaken(slug)) {
+    res.status(409).json({ error: 'A group with a similar name already exists. Please choose a more specific name.' });
+    return;
   }
 
   try {
     let convo: typeof conversations.$inferSelect | undefined;
-    let attempts = 0;
-    while (attempts < 3) {
-      try {
-        const [row] = await db
-          .insert(conversations)
-          .values({
-            isGroup: true,
-            groupName: name,
-            inviteSlug: slug,
-            createdById: userId,
-            isPublic: parse.data.isPublic,
-          })
-          .returning();
-        convo = row;
-        break;
-      } catch (err: any) {
-        if (err?.cause?.code === '23505' && err?.cause?.constraint?.includes('invite_slug')) {
-          slug = generateSlug(name);
-          attempts++;
-          continue;
-        }
-        throw err;
+    try {
+      const [row] = await db
+        .insert(conversations)
+        .values({
+          isGroup: true,
+          groupName: name,
+          inviteSlug: slug,
+          createdById: userId,
+          isPublic: parse.data.isPublic,
+        })
+        .returning();
+      convo = row;
+    } catch (err: any) {
+      // Concurrent create grabbed the same slug between the check and the insert.
+      // Reject as a duplicate rather than minting a suffixed slug.
+      if (err?.cause?.code === '23505' && err?.cause?.constraint?.includes('invite_slug')) {
+        res.status(409).json({ error: 'A group with a similar name already exists. Please choose a more specific name.' });
+        return;
       }
+      throw err;
     }
 
     if (!convo) {
-      res.status(500).json({ error: 'Failed to create group — slug collision' });
+      res.status(500).json({ error: 'Failed to create group' });
       return;
     }
 
@@ -200,17 +254,25 @@ router.get('/:slug', async (req: AuthRequest, res: Response): Promise<void> => {
   const userId = req.user!.id;
   const slug = req.params.slug as string;
 
+  // Resolve slug → conversation id: current invite_slug first, then fall back to
+  // an old-slug alias (bumping its last_used_at so the 30-day TTL resets).
+  const convId = await resolveGroupIdBySlug(slug);
+  if (convId == null) {
+    res.status(404).json({ error: 'Group not found' });
+    return;
+  }
+
   const [group] = await db
     .select({
       id: conversations.id,
       groupName: conversations.groupName,
       groupIconUrl: conversations.groupIconUrl,
-      inviteSlug: conversations.inviteSlug,
+      inviteSlug: conversations.inviteSlug,   // always the CURRENT slug so clients re-canonicalize old links
       isPublic: conversations.isPublic,
       createdAt: conversations.createdAt,
     })
     .from(conversations)
-    .where(and(eq(conversations.inviteSlug, slug), eq(conversations.isGroup, true)))
+    .where(and(eq(conversations.id, convId), eq(conversations.isGroup, true)))
     .limit(1);
 
   if (!group) {
@@ -291,6 +353,13 @@ router.post('/:slug/join', async (req: AuthRequest, res: Response): Promise<void
   const userId = req.user!.id;
   const slug = req.params.slug as string;
 
+  // Accept both current invite slugs and old (renamed-away) aliases.
+  const convId = await resolveGroupIdBySlug(slug);
+  if (convId == null) {
+    res.status(404).json({ error: 'Group not found' });
+    return;
+  }
+
   const [group] = await db
     .select({
       id: conversations.id,
@@ -299,7 +368,7 @@ router.post('/:slug/join', async (req: AuthRequest, res: Response): Promise<void
       archivedAt: conversations.archivedAt,
     })
     .from(conversations)
-    .where(and(eq(conversations.inviteSlug, slug), eq(conversations.isGroup, true)))
+    .where(and(eq(conversations.id, convId), eq(conversations.isGroup, true)))
     .limit(1);
 
   if (!group) {
@@ -508,41 +577,80 @@ router.put('/:id', async (req: AuthRequest, res: Response): Promise<void> => {
   // Capture the current name so we can detect a real rename (and reference the
   // old → new transition) for the system announcement below.
   const [currentConv] = await db
-    .select({ groupName: conversations.groupName })
+    .select({ groupName: conversations.groupName, inviteSlug: conversations.inviteSlug })
     .from(conversations)
     .where(eq(conversations.id, convId))
     .limit(1);
   const previousName = currentConv?.groupName ?? null;
+  const previousSlug = currentConv?.inviteSlug ?? null;
 
   const updates: Partial<typeof conversations.$inferInsert> = {};
   if (parse.data.name) updates.groupName = parse.data.name;
   if (parse.data.groupIconUrl !== undefined) updates.groupIconUrl = parse.data.groupIconUrl;
   if (parse.data.isPublic !== undefined) updates.isPublic = parse.data.isPublic;
 
-  if (parse.data.slug) {
-    const [slugExists] = await db
-      .select({ id: conversations.id })
-      .from(conversations)
-      .where(and(eq(conversations.inviteSlug, parse.data.slug), sql`${conversations.id} != ${convId}`))
-      .limit(1);
-
-    if (slugExists) {
-      res.status(400).json({ error: 'Slug already taken' });
+  // Canonical slug follows the name (any client-supplied `slug` is ignored). When
+  // the name changes we re-derive the slug; if it collides with another group or
+  // a reserved alias we REJECT the rename — never suffix — so no two groups ever
+  // normalize to the same name. `excludeConvId` lets a rename reclaim its own old
+  // alias (rename A→B→A) instead of colliding with itself.
+  let newSlug: string | null = null;
+  if (parse.data.name && parse.data.name !== previousName) {
+    const derived = slugify(parse.data.name);
+    if (!derived) {
+      res.status(400).json({ error: 'Group name must include some letters or numbers.' });
       return;
     }
-    updates.inviteSlug = parse.data.slug;
+    if (derived !== previousSlug && (await isSlugTaken(derived, convId))) {
+      res.status(409).json({ error: 'A group with a similar name already exists. Please choose a more specific name.' });
+      return;
+    }
+    newSlug = derived;
   }
+
+  const slugChanged = newSlug != null && newSlug !== previousSlug;
+  if (slugChanged) updates.inviteSlug = newSlug!;
 
   if (Object.keys(updates).length === 0) {
     res.status(400).json({ error: 'No updates provided' });
     return;
   }
 
-  const [updated] = await db
-    .update(conversations)
-    .set(updates)
-    .where(eq(conversations.id, convId))
-    .returning();
+  let updated: typeof conversations.$inferSelect;
+  if (slugChanged) {
+    // Atomic slug swap: reclaim our own alias on the target slug (rename A→B→A),
+    // apply the update, then stash the old slug as an alias that reserves it for
+    // the 30-day TTL window so existing invite links keep resolving.
+    updated = await db.transaction(async (tx) => {
+      await tx
+        .delete(groupSlugAliases)
+        .where(and(eq(groupSlugAliases.slug, newSlug!), eq(groupSlugAliases.conversationId, convId)));
+
+      const [row] = await tx
+        .update(conversations)
+        .set(updates)
+        .where(eq(conversations.id, convId))
+        .returning();
+
+      if (previousSlug) {
+        await tx
+          .insert(groupSlugAliases)
+          .values({ slug: previousSlug, conversationId: convId, lastUsedAt: new Date() })
+          .onConflictDoUpdate({
+            target: groupSlugAliases.slug,
+            set: { conversationId: convId, lastUsedAt: new Date() },
+          });
+      }
+      return row;
+    });
+  } else {
+    const [row] = await db
+      .update(conversations)
+      .set(updates)
+      .where(eq(conversations.id, convId))
+      .returning();
+    updated = row;
+  }
 
   // Announce a real rename as an in-thread system message so members see who
   // changed the name and to what. Mirrors the join-announcement pattern above.

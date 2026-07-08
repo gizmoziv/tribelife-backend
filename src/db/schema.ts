@@ -32,6 +32,25 @@ export const users = pgTable('users', {
   updatedAt: timestamp('updated_at').defaultNow(),
 });
 
+// ─────────────────────────────────────────────
+// USER EVENTS — append-only audit trail (AUDIT-01)
+// ─────────────────────────────────────────────
+// Discrete, meaningful events only (login / account_deleted / image_uploaded).
+// High-frequency "last seen" lives on user_profiles.last_active_at, NOT here —
+// we deliberately do not write a row per socket connect/disconnect. user_id is
+// nullable with ON DELETE SET NULL so events survive account deletion, detached
+// from the person (account_deleted rows are written untethered on purpose).
+export const userEvents = pgTable('user_events', {
+  id: serial('id').primaryKey(),
+  userId: integer('user_id').references(() => users.id, { onDelete: 'set null' }), // nullable
+  eventType: varchar('event_type', { length: 40 }).notNull(),  // 'login' | 'account_deleted' | 'image_uploaded'
+  metadata: jsonb('metadata'),                                 // optional context (provider, upload kind, counts…)
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+}, (t) => ({
+  userIdx: index('user_events_user_idx').on(t.userId),
+  typeCreatedIdx: index('user_events_type_created_idx').on(t.eventType, t.createdAt),
+}));
+
 // Extended profile — one per user, created on mobile onboarding
 export const userProfiles = pgTable('user_profiles', {
   id: serial('id').primaryKey(),
@@ -55,6 +74,9 @@ export const userProfiles = pgTable('user_profiles', {
   candleLon: doublePrecision('candle_lon'),                        // coarse GPS longitude
   candleLabel: text('candle_label'),                               // display name of chosen city
   candleSource: varchar('candle_source', { length: 10 }),          // 'manual' | 'gps'
+  // Throttled "last seen" watermark (AUDIT-02). Updated on socket connect at
+  // most ~once/5min per user; null = never connected since the column shipped.
+  lastActiveAt: timestamp('last_active_at'),
   createdAt: timestamp('created_at').defaultNow(),
   updatedAt: timestamp('updated_at').defaultNow(),
 }, (t) => ({
@@ -82,6 +104,28 @@ export const conversations = pgTable('conversations', {
   publicActiveIdx: index('conversations_public_active_idx')
     .on(t.isPublic, t.archivedAt)
     .where(sql`${t.isGroup} = true`),
+}));
+
+// ─────────────────────────────────────────────
+// GROUP SLUG ALIASES — old invite slugs kept alive after a rename
+// ─────────────────────────────────────────────
+// When a group is renamed we re-derive invite_slug from the new name and stash
+// the OLD slug here so existing invite links keep resolving. The UNIQUE slug
+// also RESERVES that string — a brand-new group (or another rename) cannot grab
+// a slug that a live alias still points at, so stale links never misroute. A
+// daily reaper (jobs/aliasReaper.ts) deletes aliases whose last_used_at is
+// older than 30 days, freeing the slug for reuse.
+export const groupSlugAliases = pgTable('group_slug_aliases', {
+  id: serial('id').primaryKey(),
+  slug: varchar('slug', { length: 50 }).notNull().unique(),   // the OLD slug — unique = reserved
+  conversationId: integer('conversation_id')
+    .references(() => conversations.id, { onDelete: 'cascade' })
+    .notNull(),
+  createdAt: timestamp('created_at').defaultNow(),
+  lastUsedAt: timestamp('last_used_at').defaultNow(),          // bumped on every hit; drives the 30-day TTL reaper
+}, (t) => ({
+  conversationIdx: index('group_slug_aliases_conversation_idx').on(t.conversationId),
+  lastUsedIdx: index('group_slug_aliases_last_used_idx').on(t.lastUsedAt),
 }));
 
 export const conversationParticipants = pgTable('conversation_participants', {

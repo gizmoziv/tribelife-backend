@@ -9,6 +9,7 @@ import { userProfiles, conversations, conversationParticipants, organizations, o
 import { and, isNull } from 'drizzle-orm';
 import { requireAuth, AuthRequest } from '../middleware/auth';
 import { generateAvatarUploadUrl, generateGroupIconUploadUrl, generateOrgIconUploadUrl, generateMediaUploadUrls, generateVoiceUploadUrl, headVoiceObject, objectExists, deleteObject, cdnUrlToKey, setPublicRead } from '../services/storage';
+import { logUserEvent } from '../services/userEvents';
 
 const router = Router();
 
@@ -102,6 +103,7 @@ router.post('/avatar-confirm', requireAuth, async (req: AuthRequest, res: Respon
       .where(eq(userProfiles.userId, req.user!.id));
 
     res.json({ avatarUrl: cdnUrl });
+    void logUserEvent(req.user!.id, 'image_uploaded', { kind: 'avatar' });
   } catch (err) {
     log.error({ err }, 'Failed to confirm avatar');
     res.status(500).json({ error: 'Failed to confirm upload' });
@@ -170,6 +172,7 @@ router.post('/media-confirm', requireAuth, async (req: AuthRequest, res: Respons
 
     const cdnUrl = process.env.DO_SPACES_CDN_URL!;
     res.json({ confirmed: true, cdnUrls: keys.map((k) => `${cdnUrl}/${k}`) });
+    void logUserEvent(req.user!.id, 'image_uploaded', { kind: 'media', count: keys.length });
   } catch (err) {
     log.error({ err }, 'Failed to confirm media');
     res.status(500).json({ error: 'Failed to confirm upload' });
@@ -278,6 +281,7 @@ router.post('/group-icon-confirm', requireAuth, async (req: AuthRequest, res: Re
       .where(eq(conversations.id, conversationId));
 
     res.json({ groupIconUrl: cdnUrl });
+    void logUserEvent(req.user!.id, 'image_uploaded', { kind: 'group-icon', conversationId });
   } catch (err) {
     log.error({ err }, 'Failed to confirm group icon');
     res.status(500).json({ error: 'Failed to confirm upload' });
@@ -386,6 +390,7 @@ router.post('/org-icon-confirm', requireAuth, async (req: AuthRequest, res: Resp
       .where(and(eq(organizations.id, orgId), isNull(organizations.deletedAt)));
 
     res.json({ iconUrl: cdnUrl });
+    void logUserEvent(req.user!.id, 'image_uploaded', { kind: 'org-icon', orgId });
   } catch (err) {
     log.error({ err }, '[upload/org-icon-confirm] failed');
     res.status(500).json({ error: 'Failed to confirm upload' });

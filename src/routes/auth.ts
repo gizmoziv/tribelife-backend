@@ -30,6 +30,7 @@ import { getZoneForTimezone } from '../config/timezoneZones';
 import { callerCanAccessNonNativeTimezone } from '../lib/timezoneRoomAccess';
 import { sendWelcomeEmail } from '../services/email';
 import { getIO } from '../lib/socketRegistry';
+import { logUserEvent } from '../services/userEvents';
 
 const router = Router();
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
@@ -226,6 +227,9 @@ router.post('/google', async (req: Request, res: Response): Promise<void> => {
       isNewUser,
       capabilities,
     });
+
+    // AUDIT-01: record the login (fire-and-forget; never blocks the response).
+    void logUserEvent(userId, 'login', { provider: 'google', isNewUser });
   } catch (err) {
     log.error({ err }, 'Google authentication failed');
     res.status(401).json({ error: 'Google authentication failed' });
@@ -414,6 +418,9 @@ router.post('/apple', async (req: Request, res: Response): Promise<void> => {
       isNewUser,
       capabilities,
     });
+
+    // AUDIT-01: record the login (fire-and-forget; never blocks the response).
+    void logUserEvent(userId, 'login', { provider: 'apple', isNewUser });
   } catch (err) {
     log.error({ err }, 'Apple authentication failed');
     res.status(401).json({ error: 'Apple authentication failed' });
@@ -934,6 +941,9 @@ router.delete(
     log.info({ userId }, 'request to delete their account');
     try {
       await db.delete(users).where(eq(users.id, userId));
+      // AUDIT-01: record the deletion untethered (user_id null) — the row must
+      // not point at the person we just deleted. Fire-and-forget.
+      void logUserEvent(null, 'account_deleted');
       res.json({ ok: true });
     } catch (err) {
       log.error({ err }, 'Failed to delete account');
