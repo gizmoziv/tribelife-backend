@@ -7,7 +7,7 @@ import logger from './logger';
 
 export interface ModerationLogFields {
   surface: 'image' | 'voice' | 'text';
-  action: 'quarantined' | 'hard_deleted' | 'rejected';
+  action: 'quarantined' | 'hard_deleted' | 'rejected' | 'allowed_low_confidence';
   senderId: number;
   mediaUrl?: string;
   quarantineKey?: string;
