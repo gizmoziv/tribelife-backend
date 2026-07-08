@@ -179,6 +179,24 @@ export async function moderateMessageImages(
     }))
   );
 
+  // Observability: log every below-floor Spam/scam flag that was softened to
+  // allowed, so the floor can be tuned. These are isAllowed:true and fall
+  // outside the `flagged` filter below — no-op when nothing was softened.
+  for (const r of results) {
+    if (r.result.softenedFromSpam) {
+      logModerationEvent({
+        surface: 'image',
+        action: 'allowed_low_confidence',
+        mediaUrl: r.url,
+        category: 'Spam/scam',
+        confidence: r.result.confidence,
+        messageId,
+        senderId,
+        roomId,
+      });
+    }
+  }
+
   const flagged = results.filter((r) => !r.result.isAllowed);
   if (flagged.length === 0) return;
 
