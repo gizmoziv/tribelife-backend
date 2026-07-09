@@ -10,7 +10,8 @@ import { logModerationEvent } from '../lib/moderationLog';
 import { moderateMessageImages } from '../services/imageModeration';
 import { moderateVoiceMessage } from '../services/voiceModeration';
 import { cdnUrlToKey } from '../services/storage';
-import { sendPushNotifications, shouldSendPush, getUnreadBadgeCounts, messageNotificationBody } from '../services/pushNotifications';
+import { sendPushNotifications, shouldSendPush, getUnreadBadgeCounts, messageNotificationBody, resolveSenderAvatar } from '../services/pushNotifications';
+import type { PushMessage } from '../services/pushNotifications';
 import { isUserActivelyViewing } from './activeViewing';
 import { getGlobeMembershipsForUser, getGlobeMembershipsForRoomSlug } from '../services/globeMembership';
 import type { ChatNotificationPayload } from '../types/chatNotification';
@@ -251,6 +252,10 @@ export function registerGlobeHandlers(io: Server, socket: Socket): void {
     }
     const explicitMentions = new Set(mentionedUserIds);
 
+    // Never-null avatar for the sender's person pushes (Phase A). Resolved once
+    // per send; reused across the mention + group fan-out push sites.
+    const senderAvatarUrl = resolveSenderAvatar(avatarUrl, { userId, handle });
+
     // ── Mention / reply notifications (directed targets only) ─────────────
     // M5: directed targets get ONLY the type:'mention' row — NOT also a group row.
     // 260621-un7: viewing identity for this globe surface. data.slug is the zone
@@ -307,6 +312,8 @@ export function registerGlobeHandlers(io: Server, socket: Socket): void {
             to: token,
             title,
             body: messageNotificationBody(content, mediaUrls),
+            mutableContent: true,
+            categoryId: 'message',
             data: {
               type: 'chat',
               source: 'globe_room',
@@ -315,6 +322,8 @@ export function registerGlobeHandlers(io: Server, socket: Socket): void {
               notificationId: inserted.id,
               messageId: msg.id, // Phase 14 D-04
               senderHandle: handle,
+              sender: { id: userId, name: handle, avatarUrl: senderAvatarUrl },
+              conversation: { id: data.slug, title: data.slug, isGroup: true },
             },
             sound: 'default',
           }]);
@@ -410,7 +419,7 @@ export function registerGlobeHandlers(io: Server, socket: Socket): void {
         // MANDATORY chunked push — gate on groupsPush, batch via array path (M6).
         const badgeCounts = await getUnreadBadgeCounts(groupRecipients);
 
-        const pushMessages: Array<{ to: string; title: string; body: string; data: Record<string, unknown>; sound: 'default'; badge?: number; channelId: string }> = [];
+        const pushMessages: PushMessage[] = [];
         for (const recipientId of groupRecipients) {
           const canPush = await shouldSendPush(recipientId, 'group');
           if (!canPush) continue;
@@ -422,6 +431,8 @@ export function registerGlobeHandlers(io: Server, socket: Socket): void {
             to: token,
             title: groupTitle,
             body: notifBody,
+            mutableContent: true,
+            categoryId: 'message',
             data: {
               type: 'chat',
               source: 'globe_room',
@@ -430,6 +441,8 @@ export function registerGlobeHandlers(io: Server, socket: Socket): void {
               notificationId: notifId,
               messageId: msg.id,
               senderHandle: handle,
+              sender: { id: userId, name: handle, avatarUrl: senderAvatarUrl },
+              conversation: { id: slug, title: slug, isGroup: true },
             },
             sound: 'default',
             badge: (badgeCounts.get(recipientId) ?? 0),

@@ -25,6 +25,7 @@
     "@anthropic-ai/sdk": "^0.36.3",
     "@aws-sdk/client-s3": "^3.1017.0",
     "@aws-sdk/s3-request-presigner": "^3.1017.0",
+    "@napi-rs/canvas": "^1.0.2",
     "@sendgrid/mail": "^8.1.6",
     "@socket.io/redis-adapter": "^8.3.0",
     "@types/pg": "^8.11.10",

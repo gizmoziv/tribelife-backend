@@ -9,11 +9,19 @@ import { eq, and, sql, inArray } from 'drizzle-orm';
 
 const log = logger.child({ module: 'push' });
 
-interface PushMessage {
+export interface PushMessage {
   to: string;
   title: string;
   body: string;
-  data?: Record<string, unknown>;
+  // Additive person-push enrichment (Phase A — Sender-Avatar Notifications).
+  // Old clients ignore these; Expo forwards `mutableContent`/`categoryId` at the
+  // top level and `data` verbatim (verified against the Expo push API).
+  mutableContent?: boolean;
+  categoryId?: string;
+  data?: Record<string, unknown> & {
+    sender?: { id: number; name: string; avatarUrl: string };
+    conversation?: { id: string; title: string; isGroup: boolean };
+  };
   sound?: 'default' | null;
   badge?: number;
   channelId?: string;
@@ -52,6 +60,25 @@ export function messageNotificationBody(content: string, mediaUrls?: string[] | 
     return mediaUrls.every(isGiphyUrl) ? 'sent a GIF' : 'Photo message';
   }
   return '';
+}
+
+/**
+ * Resolve a never-null avatar URL for a person-message push (Phase A). Returns
+ * the sender's real DO Spaces CDN avatar when present; otherwise falls back to
+ * the deterministic no-DB initials endpoint so the iOS NSE / Android Notifee
+ * layers (Phases B/C) always have a fetchable image. `PUBLIC_API_URL` should be
+ * the backend's public origin — a deploy requirement; when unset the returned
+ * URL is path-relative (harmless for Phase A since old clients ignore it).
+ */
+export function resolveSenderAvatar(
+  profileAvatarUrl: string | null | undefined,
+  sender: { userId: number; handle: string },
+): string {
+  if (typeof profileAvatarUrl === 'string' && profileAvatarUrl.length > 0) {
+    return profileAvatarUrl;
+  }
+  const base = process.env.PUBLIC_API_URL ?? '';
+  return `${base}/api/avatars/initials/${sender.userId}.png?h=${encodeURIComponent(sender.handle)}`;
 }
 
 export async function sendPushNotifications(

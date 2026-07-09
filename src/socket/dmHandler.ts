@@ -15,7 +15,8 @@ import { logModerationEvent } from '../lib/moderationLog';
 import { moderateMessageImages } from '../services/imageModeration';
 import { moderateVoiceMessage } from '../services/voiceModeration';
 import { cdnUrlToKey } from '../services/storage';
-import { sendPushNotifications, shouldSendPush, getUnreadBadgeCounts, messageNotificationBody } from '../services/pushNotifications';
+import { sendPushNotifications, shouldSendPush, getUnreadBadgeCounts, messageNotificationBody, resolveSenderAvatar } from '../services/pushNotifications';
+import type { PushMessage } from '../services/pushNotifications';
 import { isUserActivelyViewing } from './activeViewing';
 import { emitDeliveredOnSend } from './receipts';
 import { isUserBanned } from '../lib/bannedUsers';
@@ -26,6 +27,7 @@ const log = logger.child({ module: 'socket:dm' });
 export function registerDmHandlers(io: Server, socket: Socket): void {
   const userId: number = socket.data.userId;
   const handle: string = socket.data.handle;
+  const avatarUrl: string | null = socket.data.avatarUrl;
 
   // ── Send a direct message ─────────────────────────────────────────────
   socket.on('dm:message', async (data: { conversationId: number; content: string; replyToId?: number; mediaUrls?: string[] }) => {
@@ -203,6 +205,10 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
       mediaUrls: mediaUrls.length > 0 ? mediaUrls : undefined,
     };
 
+    // Never-null avatar for the sender's person pushes (Phase A). Resolved once
+    // per send; reused across the mention, group fan-out, and 1:1 push sites.
+    const senderAvatarUrl = resolveSenderAvatar(avatarUrl, { userId, handle });
+
     // Emit to conversation room
     io.to(`conversation:${data.conversationId}`).emit('dm:message', msgPayload);
     log.info({ event: 'dm_saved_emitted', userId, conversationId: data.conversationId, messageId: msg.id, isGroup }, 'dm:message persisted + broadcast');
@@ -339,6 +345,8 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
               to: token,
               title,
               body: notifBody,
+              mutableContent: true,
+              categoryId: 'message',
               data: {
                 type: 'chat',
                 source: 'group',
@@ -348,6 +356,8 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
                 notificationId: inserted.id,
                 messageId: msg.id,
                 senderHandle: handle,
+                sender: { id: userId, name: handle, avatarUrl: senderAvatarUrl },
+                conversation: { id: String(data.conversationId), title: groupLabel, isGroup: true },
               },
               sound: 'default',
             }]);
@@ -453,7 +463,7 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
             // Gate on groupsPush, batch via array path (M6).
             const badgeCounts = await getUnreadBadgeCounts(unmutedFanIds.length > 0 ? unmutedFanIds : []);
 
-            const pushMessages: Array<{ to: string; title: string; body: string; data: Record<string, unknown>; sound: 'default'; badge?: number; channelId: string }> = [];
+            const pushMessages: PushMessage[] = [];
             for (const recipientId of unmutedFanIds) {
               const canPush = await shouldSendPush(recipientId, 'group');
               if (!canPush) continue;
@@ -465,6 +475,8 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
                 to: token,
                 title: `@${handle}`,
                 body: notifBody,
+                mutableContent: true,
+                categoryId: 'message',
                 data: {
                   type: 'chat',
                   source: 'group',
@@ -474,6 +486,8 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
                   notificationId: notifId,
                   messageId: msg.id,
                   senderHandle: handle,
+                  sender: { id: userId, name: handle, avatarUrl: senderAvatarUrl },
+                  conversation: { id: String(data.conversationId), title: groupLabel, isGroup: true },
                 },
                 sound: 'default',
                 badge: (badgeCounts.get(recipientId) ?? 0),
@@ -550,6 +564,8 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
                 to: token,
                 title: `Message from @${handle}`,
                 body: messageNotificationBody(content, mediaUrls),
+                mutableContent: true,
+                categoryId: 'message',
                 data: {
                   type: 'chat',
                   source: 'dm',
@@ -558,6 +574,8 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
                   notificationId: notifId,
                   messageId: msg.id, // Phase 14 D-04
                   senderHandle: handle,
+                  sender: { id: userId, name: handle, avatarUrl: senderAvatarUrl },
+                  conversation: { id: String(data.conversationId), title: `@${handle}`, isGroup: false },
                 },
                 sound: 'default',
               }]);
@@ -762,6 +780,9 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
       log.error({ err }, '[receipts/delivered] dm:voice delivery emit failed');
     }
 
+    // Never-null avatar for the voice-message person push (Phase A).
+    const senderAvatarUrl = resolveSenderAvatar(avatarUrl, { userId, handle });
+
     if (!convo.isGroup) {
       // 1:1 DM voice notification
       const dmRoomKey = `conversation:${data.conversationId}`;
@@ -817,6 +838,8 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
                 to: token,
                 title: `Voice message from @${handle}`,
                 body: VOICE_FALLBACK,
+                mutableContent: true,
+                categoryId: 'message',
                 data: {
                   type: 'chat',
                   source: 'dm',
@@ -825,6 +848,8 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
                   notificationId: notifId,
                   messageId: msg.id,
                   senderHandle: handle,
+                  sender: { id: userId, name: handle, avatarUrl: senderAvatarUrl },
+                  conversation: { id: String(data.conversationId), title: `@${handle}`, isGroup: false },
                 },
                 sound: 'default',
               }]);

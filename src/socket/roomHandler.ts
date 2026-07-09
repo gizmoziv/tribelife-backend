@@ -10,7 +10,8 @@ import { logModerationEvent } from '../lib/moderationLog';
 import { moderateMessageImages } from '../services/imageModeration';
 import { moderateVoiceMessage } from '../services/voiceModeration';
 import { cdnUrlToKey } from '../services/storage';
-import { sendPushNotifications, shouldSendPush, getUnreadBadgeCounts, messageNotificationBody } from '../services/pushNotifications';
+import { sendPushNotifications, shouldSendPush, getUnreadBadgeCounts, messageNotificationBody, resolveSenderAvatar } from '../services/pushNotifications';
+import type { PushMessage } from '../services/pushNotifications';
 import { isUserActivelyViewing, canonicalViewingKey } from './activeViewing';
 import type { ChatNotificationPayload } from '../types/chatNotification';
 import { getZoneForTimezone, getZoneMemberIds } from '../config/timezoneZones';
@@ -19,6 +20,7 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
   const userId: number = socket.data.userId;
   const timezone: string = socket.data.timezone;
   const handle: string = socket.data.handle;
+  const avatarUrl: string | null = socket.data.avatarUrl;
 
   // Phase 15 D-01 (RESEARCH §I3): derive the canonical zone slug ONCE from the
   // user's IANA timezone, then reuse it for the auto-join room key, every
@@ -123,6 +125,10 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
 
     io.to(timezoneRoom).emit('room:message', payload);
 
+    // Never-null avatar for the sender's person pushes (Phase A). Resolved once
+    // per send; reused across the mention + group fan-out push sites.
+    const senderAvatarUrl = resolveSenderAvatar(avatarUrl, { userId, handle });
+
     // Fire-and-forget image moderation
     if (mediaUrls.length > 0) {
       moderateMessageImages(msg.id, mediaUrls, userId, io, timezoneRoom)
@@ -200,6 +206,8 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
             to: token,
             title,
             body: messageNotificationBody(content, mediaUrls),
+            mutableContent: true,
+            categoryId: 'message',
             data: {
               type: 'chat',
               source: 'local_chat',
@@ -209,6 +217,8 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
               notificationId: inserted.id,
               messageId: msg.id, // Phase 14 D-04
               senderHandle: handle,
+              sender: { id: userId, name: handle, avatarUrl: senderAvatarUrl },
+              conversation: { id: timezoneRoom, title: zoneSlug, isGroup: true },
             },
             sound: 'default',
           }]);
@@ -305,7 +315,7 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
         // Fetch unread badge counts in a single query for all group recipients.
         const badgeCounts = await getUnreadBadgeCounts(groupRecipients);
 
-        const pushMessages: Array<{ to: string; title: string; body: string; data: Record<string, unknown>; sound: 'default'; badge?: number; channelId: string }> = [];
+        const pushMessages: PushMessage[] = [];
         for (const recipientId of groupRecipients) {
           const canPush = await shouldSendPush(recipientId, 'group');
           if (!canPush) continue;
@@ -317,6 +327,8 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
             to: token,
             title: groupTitle,
             body: notifBody,
+            mutableContent: true,
+            categoryId: 'message',
             data: {
               type: 'chat',
               source: 'local_chat',
@@ -326,6 +338,8 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
               notificationId: notifId,
               messageId: msg.id,
               senderHandle: handle,
+              sender: { id: userId, name: handle, avatarUrl: senderAvatarUrl },
+              conversation: { id: timezoneRoom, title: zoneSlug, isGroup: true },
             },
             sound: 'default',
             badge: (badgeCounts.get(recipientId) ?? 0),
