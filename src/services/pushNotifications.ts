@@ -4,8 +4,9 @@
  */
 import logger from '../lib/logger';
 import { db } from '../db';
-import { notificationPreferences, notifications } from '../db/schema';
+import { notificationPreferences, notifications, deviceTokens } from '../db/schema';
 import { eq, and, sql, inArray } from 'drizzle-orm';
+import { sendFcmDataMessage, sendFcmNotificationMessage } from './fcm';
 
 const log = logger.child({ module: 'push' });
 
@@ -118,6 +119,165 @@ export async function sendPushNotifications(
   }
 }
 
+// ─────────────────────────────────────────────
+// PHASE C — per-token routing (Expo gateway vs raw FCM), flag-gated
+// ─────────────────────────────────────────────
+// Single chokepoint reused by all person-push sites + sendPushToUser
+// (LOCKED DECISION 4). With ANDROID_FCM_ENABLED off the send path is
+// BYTE-FOR-BYTE the legacy Expo behavior; the FCM branches are unreachable.
+
+export type DeviceTokenRow = { token: string; tokenType: 'expo' | 'fcm'; platform: string };
+
+/** Master flag — default OFF. When off, all routing helpers reproduce legacy Expo behavior. */
+export function androidFcmEnabled(): boolean {
+  return process.env.ANDROID_FCM_ENABLED === 'true';
+}
+
+/** One query → device_tokens grouped by userId. Missing users map to no entry (treat as []). */
+export async function getDeviceTokens(userIds: number[]): Promise<Map<number, DeviceTokenRow[]>> {
+  const map = new Map<number, DeviceTokenRow[]>();
+  if (userIds.length === 0) return map;
+  const rows = await db
+    .select({
+      userId: deviceTokens.userId,
+      token: deviceTokens.token,
+      tokenType: deviceTokens.tokenType,
+      platform: deviceTokens.platform,
+    })
+    .from(deviceTokens)
+    .where(inArray(deviceTokens.userId, userIds));
+  for (const r of rows) {
+    const list = map.get(r.userId) ?? [];
+    list.push({ token: r.token, tokenType: r.tokenType as 'expo' | 'fcm', platform: r.platform });
+    map.set(r.userId, list);
+  }
+  return map;
+}
+
+/** Delete a dead FCM token (firebase-admin returned 'unregistered'). Best-effort. */
+async function pruneDeviceToken(token: string): Promise<void> {
+  try {
+    await db.delete(deviceTokens).where(eq(deviceTokens.token, token));
+  } catch (err) {
+    log.error({ err }, 'Failed to prune unregistered FCM token');
+  }
+}
+
+/** Coerce an arbitrary data object to an all-string map (FCM requires string values). */
+function coerceStringMap(obj: Record<string, unknown> | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!obj) return out;
+  for (const [k, v] of Object.entries(obj)) {
+    if (v === undefined || v === null) continue;
+    out[k] = typeof v === 'object' ? JSON.stringify(v) : String(v);
+  }
+  return out;
+}
+
+/**
+ * FCM data block for a person push. JSON-stringifies `sender`/`conversation`
+ * (and any nested objects) and carries the scalar fields + `body` as strings,
+ * mirroring the Phase A Expo payload so the Android MessagingStyle handler has
+ * everything it needs.
+ */
+function personFcmData(message: PushMessage): Record<string, string> {
+  const data = coerceStringMap(message.data);
+  data.body = message.body ?? '';
+  if (message.title) data.title = message.title;
+  return data;
+}
+
+/**
+ * Deliver ONE person push, routed per the recipient's device tokens.
+ * Flag OFF → verbatim legacy: send via Expo iff legacyToken is an Expo token.
+ * Flag ON  → per device_tokens row: expo → Expo gateway, fcm → data-only FCM
+ *            (prune on 'unregistered'); no rows → legacy Expo fallback.
+ * NOTE: `message.to` MUST already be `legacyToken` so the flag-OFF send is
+ * byte-identical to the previous inline call.
+ */
+export async function deliverPersonPush(args: {
+  recipientId: number;
+  legacyToken: string | null | undefined;
+  message: PushMessage;
+}): Promise<void> {
+  const { recipientId, legacyToken, message } = args;
+
+  if (!androidFcmEnabled()) {
+    if (legacyToken?.startsWith('ExponentPushToken[')) {
+      await sendPushNotifications([message]);
+    }
+    return;
+  }
+
+  const rows = (await getDeviceTokens([recipientId])).get(recipientId);
+  if (!rows || rows.length === 0) {
+    // Old client that never registered a device_tokens row → legacy fallback.
+    if (legacyToken?.startsWith('ExponentPushToken[')) {
+      await sendPushNotifications([message]);
+    }
+    return;
+  }
+
+  const fcmData = personFcmData(message);
+  for (const row of rows) {
+    if (row.tokenType === 'expo') {
+      await sendPushNotifications([{ ...message, to: row.token }]);
+    } else if (row.tokenType === 'fcm') {
+      const result = await sendFcmDataMessage(row.token, fcmData);
+      if (result === 'unregistered') await pruneDeviceToken(row.token);
+    }
+  }
+}
+
+/**
+ * Batched person fan-out (group / room / globe). Flag OFF → collect the
+ * Expo-token messages and send in 100-item chunks (preserves the existing Expo
+ * chunking exactly). Flag ON → route each recipient per device_tokens, still
+ * chunking the Expo-bound messages by 100 and sending FCM per token.
+ */
+export async function deliverPersonPushBatch(items: {
+  recipientId: number;
+  legacyToken: string | null | undefined;
+  message: PushMessage;
+}[]): Promise<void> {
+  if (items.length === 0) return;
+  const CHUNK_SIZE = 100;
+
+  if (!androidFcmEnabled()) {
+    const pushMessages = items
+      .filter((it) => it.legacyToken?.startsWith('ExponentPushToken['))
+      .map((it) => it.message);
+    for (let i = 0; i < pushMessages.length; i += CHUNK_SIZE) {
+      await sendPushNotifications(pushMessages.slice(i, i + CHUNK_SIZE));
+    }
+    return;
+  }
+
+  const map = await getDeviceTokens(items.map((it) => it.recipientId));
+  const expoMessages: PushMessage[] = [];
+  const fcmSends: { token: string; data: Record<string, string> }[] = [];
+  for (const it of items) {
+    const rows = map.get(it.recipientId);
+    if (!rows || rows.length === 0) {
+      if (it.legacyToken?.startsWith('ExponentPushToken[')) expoMessages.push(it.message);
+      continue;
+    }
+    const fcmData = personFcmData(it.message);
+    for (const row of rows) {
+      if (row.tokenType === 'expo') expoMessages.push({ ...it.message, to: row.token });
+      else if (row.tokenType === 'fcm') fcmSends.push({ token: row.token, data: fcmData });
+    }
+  }
+
+  for (let i = 0; i < expoMessages.length; i += CHUNK_SIZE) {
+    await sendPushNotifications(expoMessages.slice(i, i + CHUNK_SIZE));
+  }
+  for (const s of fcmSends) {
+    const result = await sendFcmDataMessage(s.token, s.data);
+    if (result === 'unregistered') await pruneDeviceToken(s.token);
+  }
+}
+
 /**
  * Count unread notifications for a user. Used to populate the app icon
  * badge on iOS. Industry-standard behavior: badge reflects total unread
@@ -161,17 +321,64 @@ export async function sendPushToUser(
   data?: Record<string, unknown>,
   userId?: number,
 ): Promise<void> {
-  if (!expoPushToken) return;
+  // Flag OFF → verbatim legacy Expo-only behavior (byte-for-byte, plan-check F5).
+  if (!androidFcmEnabled()) {
+    if (!expoPushToken) return;
 
-  // Compute badge count: current unread + 1 for this notification (which
-  // has typically just been inserted but may not be committed yet when this
-  // runs concurrently — adding 1 avoids off-by-one on rapid fire).
+    // Compute badge count: current unread + 1 for this notification (which
+    // has typically just been inserted but may not be committed yet when this
+    // runs concurrently — adding 1 avoids off-by-one on rapid fire).
+    let badge: number | undefined;
+    if (userId !== undefined) {
+      const unread = await getUnreadBadgeCount(userId);
+      badge = unread;
+    }
+
+    await sendPushNotifications([
+      {
+        to: expoPushToken,
+        title,
+        body,
+        data,
+        sound: 'default',
+        badge,
+        channelId: 'default',
+      },
+    ]);
+    return;
+  }
+
+  // Flag ON — non-person push (beacon_match / news / moderation / system). On the
+  // new Android build the service-wins plugin removes the Expo FirebaseMessaging
+  // service, so FCM-token devices must be reached via FCM (LOCKED DECISION 4).
+  // Route per device_tokens when we have a userId; otherwise stay Expo-only.
+  if (userId !== undefined) {
+    const rows = (await getDeviceTokens([userId])).get(userId);
+    if (rows && rows.length > 0) {
+      const badge = await getUnreadBadgeCount(userId);
+      const fcmData = coerceStringMap(data);
+      for (const row of rows) {
+        if (row.tokenType === 'expo') {
+          await sendPushNotifications([
+            { to: row.token, title, body, data, sound: 'default', badge, channelId: 'default' },
+          ]);
+        } else if (row.tokenType === 'fcm') {
+          // Non-person → FCM `notification` message (Android auto-displays it).
+          const result = await sendFcmNotificationMessage(row.token, title, body, fcmData);
+          if (result === 'unregistered') await pruneDeviceToken(row.token);
+        }
+      }
+      return;
+    }
+  }
+
+  // No device_tokens rows (or no userId) → fall back to the passed Expo token.
+  if (!expoPushToken) return;
   let badge: number | undefined;
   if (userId !== undefined) {
     const unread = await getUnreadBadgeCount(userId);
     badge = unread;
   }
-
   await sendPushNotifications([
     {
       to: expoPushToken,
