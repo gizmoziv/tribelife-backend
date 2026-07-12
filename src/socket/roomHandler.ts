@@ -10,7 +10,7 @@ import { logModerationEvent } from '../lib/moderationLog';
 import { moderateMessageImages } from '../services/imageModeration';
 import { moderateVoiceMessage } from '../services/voiceModeration';
 import { cdnUrlToKey } from '../services/storage';
-import { sendPushNotifications, shouldSendPush, getUnreadBadgeCounts, messageNotificationBody, resolveSenderAvatar } from '../services/pushNotifications';
+import { shouldSendPush, getUnreadBadgeCounts, messageNotificationBody, resolveSenderAvatar, deliverPersonPush, deliverPersonPushBatch } from '../services/pushNotifications';
 import type { PushMessage } from '../services/pushNotifications';
 import { isUserActivelyViewing, canonicalViewingKey } from './activeViewing';
 import type { ChatNotificationPayload } from '../types/chatNotification';
@@ -201,9 +201,11 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
 
       if (await shouldSendPush(notifyId, 'mention')) {
         const token = mentionedProfile?.expoPushToken;
-        if (token?.startsWith('ExponentPushToken[')) {
-          await sendPushNotifications([{
-            to: token,
+        await deliverPersonPush({
+          recipientId: notifyId,
+          legacyToken: token,
+          message: {
+            to: token ?? '',
             title,
             body: messageNotificationBody(content, mediaUrls),
             mutableContent: true,
@@ -221,8 +223,8 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
               conversation: { id: timezoneRoom, title: zoneSlug, isGroup: true },
             },
             sound: 'default',
-          }]);
-        }
+          },
+        });
       }
     }
 
@@ -315,43 +317,45 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
         // Fetch unread badge counts in a single query for all group recipients.
         const badgeCounts = await getUnreadBadgeCounts(groupRecipients);
 
-        const pushMessages: PushMessage[] = [];
+        // Route each recipient through the chokepoint (LOCKED DECISION 4).
+        // Token-prefix filter + 100-item Expo chunking now live inside
+        // deliverPersonPushBatch; flag-OFF output is byte-identical.
+        const pushItems: { recipientId: number; legacyToken: string | null | undefined; message: PushMessage }[] = [];
         for (const recipientId of groupRecipients) {
           const canPush = await shouldSendPush(recipientId, 'group');
           if (!canPush) continue;
           const token = tokenMap.get(recipientId);
-          if (!token?.startsWith('ExponentPushToken[')) continue;
           const notifId = notifIdMap.get(recipientId);
           if (notifId === undefined) continue;
-          pushMessages.push({
-            to: token,
-            title: groupTitle,
-            body: notifBody,
-            mutableContent: true,
-            categoryId: 'message',
-            data: {
-              type: 'chat',
-              source: 'local_chat',
-              entityId: timezone,
-              timezoneIana: timezone,
-              timezoneZone: zoneSlug,
-              notificationId: notifId,
-              messageId: msg.id,
-              senderHandle: handle,
-              sender: { id: userId, name: handle, avatarUrl: senderAvatarUrl },
-              conversation: { id: timezoneRoom, title: zoneSlug, isGroup: true },
+          pushItems.push({
+            recipientId,
+            legacyToken: token,
+            message: {
+              to: token ?? '',
+              title: groupTitle,
+              body: notifBody,
+              mutableContent: true,
+              categoryId: 'message',
+              data: {
+                type: 'chat',
+                source: 'local_chat',
+                entityId: timezone,
+                timezoneIana: timezone,
+                timezoneZone: zoneSlug,
+                notificationId: notifId,
+                messageId: msg.id,
+                senderHandle: handle,
+                sender: { id: userId, name: handle, avatarUrl: senderAvatarUrl },
+                conversation: { id: timezoneRoom, title: zoneSlug, isGroup: true },
+              },
+              sound: 'default',
+              badge: (badgeCounts.get(recipientId) ?? 0),
+              channelId: 'default',
             },
-            sound: 'default',
-            badge: (badgeCounts.get(recipientId) ?? 0),
-            channelId: 'default',
           });
         }
 
-        // Send in chunks of 100 (Expo push API limit per request).
-        const CHUNK_SIZE = 100;
-        for (let i = 0; i < pushMessages.length; i += CHUNK_SIZE) {
-          await sendPushNotifications(pushMessages.slice(i, i + CHUNK_SIZE));
-        }
+        await deliverPersonPushBatch(pushItems);
       } catch (err) {
         log.error({ err }, '[room fan-out] group notification fan-out failed');
       }

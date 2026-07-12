@@ -15,7 +15,7 @@ import { logModerationEvent } from '../lib/moderationLog';
 import { moderateMessageImages } from '../services/imageModeration';
 import { moderateVoiceMessage } from '../services/voiceModeration';
 import { cdnUrlToKey } from '../services/storage';
-import { sendPushNotifications, shouldSendPush, getUnreadBadgeCounts, messageNotificationBody, resolveSenderAvatar } from '../services/pushNotifications';
+import { shouldSendPush, getUnreadBadgeCounts, messageNotificationBody, resolveSenderAvatar, deliverPersonPush, deliverPersonPushBatch } from '../services/pushNotifications';
 import type { PushMessage } from '../services/pushNotifications';
 import { isUserActivelyViewing } from './activeViewing';
 import { emitDeliveredOnSend } from './receipts';
@@ -340,9 +340,11 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
             .where(eq(userProfiles.userId, targetId))
             .limit(1);
           const token = targetProfile?.expoPushToken;
-          if (token?.startsWith('ExponentPushToken[')) {
-            await sendPushNotifications([{
-              to: token,
+          await deliverPersonPush({
+            recipientId: targetId,
+            legacyToken: token,
+            message: {
+              to: token ?? '',
               title,
               body: notifBody,
               mutableContent: true,
@@ -360,8 +362,8 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
                 conversation: { id: String(data.conversationId), title: groupLabel, isGroup: true },
               },
               sound: 'default',
-            }]);
-          }
+            },
+          });
         }
       }
 
@@ -463,43 +465,45 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
             // Gate on groupsPush, batch via array path (M6).
             const badgeCounts = await getUnreadBadgeCounts(unmutedFanIds.length > 0 ? unmutedFanIds : []);
 
-            const pushMessages: PushMessage[] = [];
+            // Route each recipient through the chokepoint (LOCKED DECISION 4).
+            // The token-prefix filter + 100-item Expo chunking now live inside
+            // deliverPersonPushBatch; flag-OFF output is byte-identical.
+            const pushItems: { recipientId: number; legacyToken: string | null | undefined; message: PushMessage }[] = [];
             for (const recipientId of unmutedFanIds) {
               const canPush = await shouldSendPush(recipientId, 'group');
               if (!canPush) continue;
               const token = tokenMap.get(recipientId);
-              if (!token?.startsWith('ExponentPushToken[')) continue;
               const notifId = notifIdMap.get(recipientId);
               if (notifId === undefined) continue;
-              pushMessages.push({
-                to: token,
-                title: `@${handle}`,
-                body: notifBody,
-                mutableContent: true,
-                categoryId: 'message',
-                data: {
-                  type: 'chat',
-                  source: 'group',
-                  entityId: data.conversationId,
-                  conversationId: data.conversationId,
-                  groupName: groupLabel,
-                  notificationId: notifId,
-                  messageId: msg.id,
-                  senderHandle: handle,
-                  sender: { id: userId, name: handle, avatarUrl: senderAvatarUrl },
-                  conversation: { id: String(data.conversationId), title: groupLabel, isGroup: true },
+              pushItems.push({
+                recipientId,
+                legacyToken: token,
+                message: {
+                  to: token ?? '',
+                  title: `@${handle}`,
+                  body: notifBody,
+                  mutableContent: true,
+                  categoryId: 'message',
+                  data: {
+                    type: 'chat',
+                    source: 'group',
+                    entityId: data.conversationId,
+                    conversationId: data.conversationId,
+                    groupName: groupLabel,
+                    notificationId: notifId,
+                    messageId: msg.id,
+                    senderHandle: handle,
+                    sender: { id: userId, name: handle, avatarUrl: senderAvatarUrl },
+                    conversation: { id: String(data.conversationId), title: groupLabel, isGroup: true },
+                  },
+                  sound: 'default',
+                  badge: (badgeCounts.get(recipientId) ?? 0),
+                  channelId: 'default',
                 },
-                sound: 'default',
-                badge: (badgeCounts.get(recipientId) ?? 0),
-                channelId: 'default',
               });
             }
 
-            // Send in chunks of 100 (Expo push API limit per request).
-            const CHUNK_SIZE = 100;
-            for (let i = 0; i < pushMessages.length; i += CHUNK_SIZE) {
-              await sendPushNotifications(pushMessages.slice(i, i + CHUNK_SIZE));
-            }
+            await deliverPersonPushBatch(pushItems);
           } catch (err) {
             log.error({ err }, '[dm group fan-out] group notification fan-out failed');
           }
@@ -559,9 +563,11 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
 
           if (await shouldSendPush(p.userId, 'dm')) {
             const token = otherProfile[0]?.expoPushToken;
-            if (token?.startsWith('ExponentPushToken[')) {
-              await sendPushNotifications([{
-                to: token,
+            await deliverPersonPush({
+              recipientId: p.userId,
+              legacyToken: token,
+              message: {
+                to: token ?? '',
                 title: `Message from @${handle}`,
                 body: messageNotificationBody(content, mediaUrls),
                 mutableContent: true,
@@ -578,8 +584,8 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
                   conversation: { id: String(data.conversationId), title: `@${handle}`, isGroup: false },
                 },
                 sound: 'default',
-              }]);
-            }
+              },
+            });
           }
         }
       }
@@ -833,9 +839,11 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
 
           if (await shouldSendPush(p.userId, 'dm')) {
             const token = otherProfile?.expoPushToken;
-            if (token?.startsWith('ExponentPushToken[')) {
-              await sendPushNotifications([{
-                to: token,
+            await deliverPersonPush({
+              recipientId: p.userId,
+              legacyToken: token,
+              message: {
+                to: token ?? '',
                 title: `Voice message from @${handle}`,
                 body: VOICE_FALLBACK,
                 mutableContent: true,
@@ -852,8 +860,8 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
                   conversation: { id: String(data.conversationId), title: `@${handle}`, isGroup: false },
                 },
                 sound: 'default',
-              }]);
-            }
+              },
+            });
           }
         }
       }

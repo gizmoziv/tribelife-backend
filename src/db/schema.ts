@@ -85,6 +85,27 @@ export const userProfiles = pgTable('user_profiles', {
 }));
 
 // ─────────────────────────────────────────────
+// DEVICE TOKENS — per-device push tokens (Phase C, D2; additive)
+// ─────────────────────────────────────────────
+// A user can hold an iOS Expo token AND an Android FCM token at the same time,
+// so push tokens live one-row-per-device here instead of the single
+// user_profiles.expoPushToken column (which is kept, untouched, for backward
+// compat + the legacy Expo send path). Upsert-by-token absorbs FCM rotation;
+// the send path prunes rows on `messaging/registration-token-not-registered`.
+export const deviceTokens = pgTable('device_tokens', {
+  id: serial('id').primaryKey(),
+  userId: integer('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
+  platform: varchar('platform', { length: 10 }).notNull(),    // 'ios' | 'android'
+  tokenType: varchar('token_type', { length: 10 }).notNull(), // 'expo' | 'fcm'
+  token: text('token').notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+}, (t) => ({
+  tokenUnique: uniqueIndex('device_tokens_token_uq').on(t.token), // upsert-by-token; absorbs FCM rotation
+  userIdx: index('device_tokens_user_idx').on(t.userId),
+}));
+
+// ─────────────────────────────────────────────
 // CHAT — Conversations (1-on-1 DMs)
 // ─────────────────────────────────────────────
 export const conversations = pgTable('conversations', {
@@ -474,10 +495,15 @@ export const usersRelations = relations(users, ({ one, many }) => ({
   globeReadPositions: many(globeReadPositions),
   globeRoomMemberships: many(globeRoomMemberships),
   notificationPreferences: one(notificationPreferences, { fields: [users.id], references: [notificationPreferences.userId] }),
+  deviceTokens: many(deviceTokens),
 }));
 
 export const userProfilesRelations = relations(userProfiles, ({ one }) => ({
   user: one(users, { fields: [userProfiles.userId], references: [users.id] }),
+}));
+
+export const deviceTokensRelations = relations(deviceTokens, ({ one }) => ({
+  user: one(users, { fields: [deviceTokens.userId], references: [users.id] }),
 }));
 
 export const conversationsRelations = relations(conversations, ({ many }) => ({

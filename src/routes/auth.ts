@@ -13,6 +13,7 @@ import {
   referrals,
   messages,
   globeRoomMemberships,
+  deviceTokens,
 } from '../db/schema';
 import {
   signToken,
@@ -953,40 +954,89 @@ router.delete(
 );
 
 // ── Update push token ──────────────────────────────────────────────────────
+// Backward-compatible + device_tokens-aware (Phase C, D2). Accepts EITHER the
+// legacy body `{ expoPushToken }` OR the new per-device body
+// `{ token, platform, tokenType }`. Legacy bodies normalise to an Expo token
+// (platform defaults to 'ios' unless the client sends `platform`; legacy Android
+// also used Expo tokens). Every accepted token is upserted into device_tokens by
+// its unique `token` (re-homes a rotated/reused token to the current user); Expo
+// tokens ALSO keep writing userProfiles.expoPushToken so the legacy send path +
+// iOS continue to read that column untouched.
+const pushTokenSchema = z.object({
+  token: z.string().min(1, 'token is required'),
+  platform: z.enum(['ios', 'android']),
+  tokenType: z.enum(['expo', 'fcm']),
+});
+
 router.put(
   '/push-token',
   requireAuth,
   async (req: AuthRequest, res: Response): Promise<void> => {
     const userId = req.user!.id;
     const handle = req.user!.handle;
-    const { expoPushToken } = req.body;
+    const body = req.body ?? {};
+
+    // Normalise legacy `{ expoPushToken }` and new `{ token, platform, tokenType }`
+    // into one shape. When only the legacy field is present, tokenType is 'expo'
+    // and platform defaults to 'ios' unless the client sent an explicit platform.
+    const rawToken =
+      typeof body.token === 'string' ? body.token : body.expoPushToken;
+    const normalized = {
+      token: rawToken,
+      platform: typeof body.platform === 'string' ? body.platform : 'ios',
+      tokenType: typeof body.tokenType === 'string' ? body.tokenType : 'expo',
+    };
 
     log.info(
       {
         userId,
         handle,
-        hasToken: !!expoPushToken,
+        hasToken: !!rawToken,
+        platform: normalized.platform,
+        tokenType: normalized.tokenType,
         tokenPrefix:
-          typeof expoPushToken === 'string' ? expoPushToken.slice(0, 20) : null,
+          typeof rawToken === 'string' ? rawToken.slice(0, 20) : null,
       },
       'push-token endpoint hit',
     );
 
-    if (!expoPushToken) {
-      log.warn({ userId, handle }, 'push-token request missing expoPushToken');
-      res.status(400).json({ error: 'expoPushToken is required' });
+    const parse = pushTokenSchema.safeParse(normalized);
+    if (!parse.success) {
+      log.warn(
+        { userId, handle, err: parse.error.errors[0].message },
+        'push-token request invalid',
+      );
+      res.status(400).json({ error: parse.error.errors[0].message });
       return;
     }
 
+    const { token, platform, tokenType } = parse.data;
+
     try {
-      const result = await db
-        .update(userProfiles)
-        .set({ expoPushToken, updatedAt: new Date() })
-        .where(eq(userProfiles.userId, userId))
-        .returning({ userId: userProfiles.userId });
+      // Upsert by the unique token: re-home a rotated/reused token to the
+      // current user and refresh updatedAt (absorbs FCM rotation).
+      await db
+        .insert(deviceTokens)
+        .values({ userId, platform, tokenType, token })
+        .onConflictDoUpdate({
+          target: deviceTokens.token,
+          set: { userId, platform, tokenType, updatedAt: new Date() },
+        });
+
+      // Backward compat: the legacy Expo send path + iOS still read
+      // userProfiles.expoPushToken. Only expo tokens write it; fcm tokens don't.
+      let profileRows = 0;
+      if (tokenType === 'expo') {
+        const result = await db
+          .update(userProfiles)
+          .set({ expoPushToken: token, updatedAt: new Date() })
+          .where(eq(userProfiles.userId, userId))
+          .returning({ userId: userProfiles.userId });
+        profileRows = result.length;
+      }
 
       log.info(
-        { userId, handle, rowsUpdated: result.length },
+        { userId, handle, platform, tokenType, profileRows },
         'push-token stored',
       );
       res.json({ ok: true });
