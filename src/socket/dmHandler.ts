@@ -15,7 +15,7 @@ import { logModerationEvent } from '../lib/moderationLog';
 import { moderateMessageImages } from '../services/imageModeration';
 import { moderateVoiceMessage } from '../services/voiceModeration';
 import { cdnUrlToKey } from '../services/storage';
-import { shouldSendPush, getUnreadBadgeCounts, messageNotificationBody, resolveSenderAvatar, deliverPersonPush, deliverPersonPushBatch } from '../services/pushNotifications';
+import { shouldSendPush, getUnreadBadgeCounts, messageNotificationBody, resolveSenderAvatar, resolveGroupAvatar, deliverPersonPush, deliverPersonPushBatch } from '../services/pushNotifications';
 import type { PushMessage } from '../services/pushNotifications';
 import { isUserActivelyViewing } from './activeViewing';
 import { emitDeliveredOnSend } from './receipts';
@@ -358,7 +358,7 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
                 notificationId: inserted.id,
                 messageId: msg.id,
                 senderHandle: handle,
-                sender: { id: userId, name: handle, avatarUrl: senderAvatarUrl },
+                sender: { id: userId, name: handle, avatarUrl: resolveGroupAvatar(convo.groupIconUrl, { conversationId: data.conversationId, groupName: groupLabel }) },
                 conversation: { id: String(data.conversationId), title: groupLabel, isGroup: true },
               },
               sound: 'default',
@@ -493,7 +493,7 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
                     notificationId: notifId,
                     messageId: msg.id,
                     senderHandle: handle,
-                    sender: { id: userId, name: handle, avatarUrl: senderAvatarUrl },
+                    sender: { id: userId, name: handle, avatarUrl: resolveGroupAvatar(convo.groupIconUrl, { conversationId: data.conversationId, groupName: groupLabel }) },
                     conversation: { id: String(data.conversationId), title: groupLabel, isGroup: true },
                   },
                   sound: 'default',
