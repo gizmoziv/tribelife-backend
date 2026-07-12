@@ -221,8 +221,6 @@ export async function deliverPersonPush(args: {
 }): Promise<void> {
   const { recipientId, legacyToken, message } = args;
 
-  log.info({ recipientId, androidFcmEnabled: androidFcmEnabled(), hasLegacyExpo: legacyToken?.startsWith('ExponentPushToken[') ?? false }, '[fcm-debug] deliverPersonPush entry');
-
   if (!androidFcmEnabled()) {
     if (legacyToken?.startsWith('ExponentPushToken[')) {
       await sendPushNotifications([message]);
@@ -231,7 +229,6 @@ export async function deliverPersonPush(args: {
   }
 
   const rows = (await getDeviceTokens([recipientId])).get(recipientId);
-  log.info({ recipientId, rowCount: rows?.length ?? 0, tokenTypes: rows?.map((r) => r.tokenType) ?? [] }, '[fcm-debug] device_tokens rows');
   if (!rows || rows.length === 0) {
     // Old client that never registered a device_tokens row → legacy fallback.
     if (legacyToken?.startsWith('ExponentPushToken[')) {
@@ -245,9 +242,7 @@ export async function deliverPersonPush(args: {
     if (row.tokenType === 'expo') {
       await sendPushNotifications([{ ...message, to: row.token }]);
     } else if (row.tokenType === 'fcm') {
-      log.info({ recipientId, tokenPrefix: row.token.slice(0, 12) }, '[fcm-debug] sending FCM data message');
       const result = await sendFcmDataMessage(row.token, fcmData);
-      log.info({ recipientId, result }, '[fcm-debug] FCM send result');
       if (result === 'unregistered') await pruneDeviceToken(row.token);
     }
   }
