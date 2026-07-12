@@ -1,4 +1,7 @@
 import { Server } from 'socket.io';
+import logger from '../lib/logger';
+
+const log = logger.child({ module: 'socket:active-viewing' });
 
 // ── Active-viewing registry (260621-un7) ─────────────────────────────────────
 // Per-socket in-memory state ("which room is this socket viewing" + "is the app
@@ -51,8 +54,30 @@ export async function isUserActivelyViewing(
 ): Promise<boolean> {
   const canonical = canonicalViewingKey(roomKey);
   const sockets = await io.in(`user:${userId}`).fetchSockets();
-  return sockets.some(
+  const viewing = sockets.some(
     (s) =>
       s.data.isForeground === true && s.data.activeRoomKey === canonical,
   );
+  // DEBUG (260712 phase-1 #1): gated probe to root-cause the public-group
+  // in-room push leak. Enable with DEBUG_ACTIVE_VIEWING=true, reproduce once
+  // (sit in the group, have someone send a plain message), read the log, then
+  // disable. Reveals WHY the gate returned false: no sockets in the user room,
+  // a stale/absent activeRoomKey, a key mismatch, or isForeground:false.
+  if (process.env.DEBUG_ACTIVE_VIEWING === 'true') {
+    log.info(
+      {
+        userId,
+        roomKey,
+        canonical,
+        viewing,
+        socketCount: sockets.length,
+        sockets: sockets.map((s) => ({
+          activeRoomKey: s.data.activeRoomKey ?? null,
+          isForeground: s.data.isForeground === true,
+        })),
+      },
+      '[active-viewing] gate check',
+    );
+  }
+  return viewing;
 }
