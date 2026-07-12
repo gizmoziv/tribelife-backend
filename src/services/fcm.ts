@@ -28,9 +28,10 @@ let missingSecretLogged = false;
 
 /**
  * Lazily initialise (once) the firebase-admin App from the
- * FIREBASE_SERVICE_ACCOUNT env var (full JSON string — NOT a file path; DO App
- * Platform env). Returns null when the secret is absent/invalid so callers can
- * no-op. Never throws.
+ * FIREBASE_SERVICE_ACCOUNT env var. Accepts EITHER the raw service-account JSON
+ * (value starts with `{`) OR a base64-encoded JSON blob (recommended for env
+ * vars — avoids private_key newline/escaping issues). NOT a file path. Returns
+ * null when the secret is absent/invalid so callers can no-op. Never throws.
  */
 function getFcmApp(): App | null {
   if (fcmApp !== undefined) return fcmApp;
@@ -51,7 +52,12 @@ function getFcmApp(): App | null {
       fcmApp = existing[0];
       return fcmApp;
     }
-    const serviceAccount = JSON.parse(raw);
+    // Accept raw JSON (starts with '{') or base64-encoded JSON.
+    const trimmed = raw.trim();
+    const json = trimmed.startsWith('{')
+      ? trimmed
+      : Buffer.from(trimmed, 'base64').toString('utf8');
+    const serviceAccount = JSON.parse(json);
     fcmApp = initializeApp({ credential: cert(serviceAccount) });
     log.info('firebase-admin initialised for FCM');
     return fcmApp;
