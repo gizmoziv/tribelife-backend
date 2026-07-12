@@ -82,6 +82,25 @@ export function resolveSenderAvatar(
   return `${base}/api/avatars/initials/${sender.userId}.png?h=${encodeURIComponent(sender.handle)}`;
 }
 
+/**
+ * Resolve a never-null avatar URL for a GROUP-message push. Mirrors
+ * `resolveSenderAvatar` but keyed on the GROUP: returns the group's icon URL
+ * when present; otherwise the deterministic no-DB initials endpoint keyed on
+ * the conversation id + group name, so initials + color derive from the group
+ * (not the sender). Used so group message pushes show the group's image while
+ * the notification text still names the sender.
+ */
+export function resolveGroupAvatar(
+  groupIconUrl: string | null | undefined,
+  group: { conversationId: number | string; groupName: string },
+): string {
+  if (typeof groupIconUrl === 'string' && groupIconUrl.length > 0) {
+    return groupIconUrl;
+  }
+  const base = process.env.PUBLIC_API_URL ?? '';
+  return `${base}/api/avatars/initials/${group.conversationId}.png?h=${encodeURIComponent(group.groupName)}`;
+}
+
 export async function sendPushNotifications(
   messages: PushMessage[]
 ): Promise<ExpoTicket[]> {
