@@ -7,6 +7,7 @@ import { db } from '../db';
 import { notificationPreferences, notifications, deviceTokens } from '../db/schema';
 import { eq, and, sql, inArray } from 'drizzle-orm';
 import { sendFcmDataMessage, sendFcmNotificationMessage } from './fcm';
+import { getBellSummary, getBellSummaries, bellTotal } from './notificationSummary';
 
 const log = logger.child({ module: 'push' });
 
@@ -298,38 +299,31 @@ export async function deliverPersonPushBatch(items: {
 }
 
 /**
- * Count unread notifications for a user. Used to populate the app icon
- * badge on iOS. Industry-standard behavior: badge reflects total unread
- * items across the app.
+ * App-icon badge value for one user = the BELL TOTAL (sum of the
+ * /api/notifications/summary buckets), via the shared getBellSummary — the SAME
+ * source of truth the summary endpoint uses, so the pushed OS badge and the
+ * in-app badge sync can never diverge. Deliberately NOT a raw unread-rows count:
+ * that both inflated the badge (per-message, not per-conversation) and mismatched
+ * what the app clears to, which is what left the badge stuck until app restart
+ * (v1.13 Phase 1 #2). Excludes non-bell types (org_invite, news_breaking, …).
  */
 export async function getUnreadBadgeCount(userId: number): Promise<number> {
-  const [row] = await db
-    .select({ count: sql<number>`COUNT(*)::int` })
-    .from(notifications)
-    .where(and(eq(notifications.userId, userId), eq(notifications.isRead, false)));
-  return row?.count ?? 0;
+  return bellTotal(await getBellSummary(userId));
 }
 
 /**
- * Batched version: count unread notifications for many users in a single
- * query. Returns a Map<userId, count>. Users with zero unread are omitted
- * from the map — callers should treat missing entries as zero.
+ * Batched version for the group/room/globe fan-out badge path. Returns
+ * Map<userId, bellTotal>. Users whose bell total is zero are omitted (callers
+ * treat missing as zero) — preserves the prior contract; fan-out recipients of a
+ * new message always have ≥1 so this never suppresses a needed badge.
  */
 export async function getUnreadBadgeCounts(userIds: number[]): Promise<Map<number, number>> {
-  if (userIds.length === 0) return new Map();
-  const rows = await db
-    .select({
-      userId: notifications.userId,
-      count: sql<number>`COUNT(*)::int`,
-    })
-    .from(notifications)
-    .where(and(
-      eq(notifications.isRead, false),
-      inArray(notifications.userId, userIds),
-    ))
-    .groupBy(notifications.userId);
+  const summaries = await getBellSummaries(userIds);
   const map = new Map<number, number>();
-  for (const r of rows) map.set(r.userId, r.count);
+  for (const [uid, s] of summaries) {
+    const total = bellTotal(s);
+    if (total > 0) map.set(uid, total);
+  }
   return map;
 }
 

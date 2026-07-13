@@ -12,7 +12,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { db } from '../db';
 import { userProfiles, surveys, surveyOptions, surveyVotes } from '../db/schema';
-import { and, count, eq, sql } from 'drizzle-orm';
+import { and, count, eq, inArray, sql } from 'drizzle-orm';
 import { requireAuth, type AuthRequest } from '../middleware/auth';
 import { searchCities } from '../services/tribe/geonames';
 import { getToday } from '../services/tribe/todayService';
@@ -165,12 +165,15 @@ router.get('/survey', async (req: AuthRequest, res): Promise<void> => {
   try {
     const userId = req.user!.id;
 
-    // Load the active survey (take first/lowest id if multiple)
+    // Load the current survey — live or finished (take first/lowest id if multiple)
     const [activeSurvey] = await db
-      .select({ id: surveys.id, questionText: surveys.questionText })
+      .select({ id: surveys.id, questionText: surveys.questionText, status: surveys.status })
       .from(surveys)
-      .where(eq(surveys.active, true))
-      .orderBy(surveys.id)
+      .where(inArray(surveys.status, ['live', 'finished']))
+      // Live-first: a stale un-archived 'finished' survey must never bury a new
+      // 'live' one (single-survey discipline is operator-enforced, not a DB
+      // constraint — order defensively so an active survey always wins).
+      .orderBy(sql`CASE WHEN ${surveys.status} = 'live' THEN 0 ELSE 1 END`, surveys.id)
       .limit(1);
 
     if (!activeSurvey) {
@@ -223,6 +226,8 @@ router.get('/survey', async (req: AuthRequest, res): Promise<void> => {
       survey: {
         id: activeSurvey.id,
         questionText: activeSurvey.questionText,
+        status: activeSurvey.status,
+        readOnly: activeSurvey.status === 'finished',
         options: options.map((opt) => ({
           id: opt.id,
           label: opt.label,
@@ -266,16 +271,26 @@ router.post('/survey/vote', async (req: AuthRequest, res): Promise<void> => {
   const { optionIds, otherText } = parse.data;
 
   try {
-    // Resolve the active survey
+    // Resolve the current survey — live or finished (matches GET /survey scope)
     const [activeSurvey] = await db
-      .select({ id: surveys.id })
+      .select({ id: surveys.id, status: surveys.status })
       .from(surveys)
-      .where(eq(surveys.active, true))
-      .orderBy(surveys.id)
+      .where(inArray(surveys.status, ['live', 'finished']))
+      // Live-first: a stale un-archived 'finished' survey must never bury a new
+      // 'live' one (single-survey discipline is operator-enforced, not a DB
+      // constraint — order defensively so an active survey always wins).
+      .orderBy(sql`CASE WHEN ${surveys.status} = 'live' THEN 0 ELSE 1 END`, surveys.id)
       .limit(1);
 
     if (!activeSurvey) {
       res.status(409).json({ error: 'No active survey' });
+      return;
+    }
+
+    // Voting is only permitted while the survey is live. A finished (read-only)
+    // survey — or any non-live state — must reject votes before any insert.
+    if (activeSurvey.status !== 'live') {
+      res.status(409).json({ error: 'Voting is closed for this survey' });
       return;
     }
 
@@ -285,7 +300,7 @@ router.post('/survey/vote', async (req: AuthRequest, res): Promise<void> => {
       .from(surveyOptions)
       .where(
         and(
-          sql`${surveyOptions.id} = ANY(${sql.raw(`ARRAY[${optionIds.join(',')}]::integer[]`)})`,
+          inArray(surveyOptions.id, optionIds),
           eq(surveyOptions.surveyId, activeSurvey.id),
         ),
       );

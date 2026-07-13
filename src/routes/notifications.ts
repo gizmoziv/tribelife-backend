@@ -16,6 +16,7 @@ import { requireAuth, AuthRequest } from '../middleware/auth';
 import { translateLegacyTimezoneRoomId, getZoneForTimezone } from '../config/timezoneZones';
 import { getIO } from '../lib/socketRegistry';
 import { emitReadForConversations } from '../socket/receipts';
+import { getBellSummary } from '../services/notificationSummary';
 import logger from '../lib/logger';
 
 const router = Router();
@@ -56,79 +57,9 @@ router.get('/', async (req: AuthRequest, res: Response): Promise<void> => {
 //   system  — unread type:'system' rows (includes moderation notices from imageModeration.ts).
 router.get('/summary', async (req: AuthRequest, res: Response): Promise<void> => {
   const userId = req.user!.id;
-
-  // ── Stored notification counts (mentions, matches, system, groups) ───────
-  // All four buckets in a single query for efficiency.
-  const [notifRows] = await db
-    .select({
-      mentions: sql<number>`count(*) filter (where ${notifications.type} = 'mention' and ${notifications.isRead} = false)`.mapWith(Number),
-      beaconMatches: sql<number>`count(*) filter (where ${notifications.type} = 'beacon_match' and ${notifications.isRead} = false)`.mapWith(Number),
-      system: sql<number>`count(*) filter (where ${notifications.type} = 'system' and ${notifications.isRead} = false)`.mapWith(Number),
-    })
-    .from(notifications)
-    .where(eq(notifications.userId, userId));
-
-  // ── Groups: count of DISTINCT entityIds with ≥1 unread type:'group' row ──
-  // Single authoritative source (C4). entityId is the chat's canonical key:
-  //   local_chat   → raw IANA timezone string (e.g. 'America/New_York')
-  //   globe_room   → room slug (e.g. 'town-square', 'north-america')
-  //   group        → conversationId (as string in JSON)
-  // The bell collapses one row per chat by entityId, so counting distinct
-  // entityIds gives the correct dot count (one per chat with unread group rows).
-  const [groupsRow] = await db
-    .select({
-      groups: sql<number>`count(distinct (${notifications.data}->>'entityId'))`.mapWith(Number),
-    })
-    .from(notifications)
-    .where(and(
-      eq(notifications.userId, userId),
-      eq(notifications.type, 'group'),
-      eq(notifications.isRead, false),
-    ));
-
-  const groups = groupsRow?.groups ?? 0;
-
-  // ── DMs: unread mention rows + 1:1 DM conversations with unread ───────────
-  // Count distinct 1:1 conversations with at least one message newer than
-  // the user's lastReadAt on that conversation (and not authored by them).
-  const [dmConvRow] = await db
-    .select({ count: sql<number>`count(*)`.mapWith(Number) })
-    .from(conversationParticipants)
-    .where(and(
-      eq(conversationParticipants.userId, userId),
-      // 1:1 DM only (isGroup IS NOT TRUE — mirrors chats.ts:5c)
-      exists(
-        db
-          .select({ id: conversations.id })
-          .from(conversations)
-          .where(and(
-            eq(conversations.id, conversationParticipants.conversationId),
-            sql`${conversations.isGroup} IS NOT TRUE`,
-          )),
-      ),
-      exists(
-        db
-          .select({ id: messages.id })
-          .from(messages)
-          .where(and(
-            eq(messages.conversationId, conversationParticipants.conversationId),
-            ne(messages.senderId, userId),
-            or(
-              isNull(conversationParticipants.lastReadAt),
-              gt(messages.createdAt, conversationParticipants.lastReadAt),
-            ),
-          )),
-      ),
-    ));
-
-  const dms = (notifRows?.mentions ?? 0) + (dmConvRow?.count ?? 0);
-
-  res.json({
-    groups,
-    dms,
-    matches: notifRows?.beaconMatches ?? 0,
-    system: notifRows?.system ?? 0,
-  });
+  // Bell buckets computed by the shared getBellSummary (services/notificationSummary.ts)
+  // — SAME source of truth the push app-icon badge uses, so the two can't diverge.
+  res.json(await getBellSummary(userId));
 });
 
 // ── Mark notifications as read ─────────────────────────────────────────────

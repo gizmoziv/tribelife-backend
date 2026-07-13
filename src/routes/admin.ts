@@ -1,6 +1,6 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { timingSafeEqual } from 'crypto';
-import { eq, or, ilike, sql, isNotNull, and, desc } from 'drizzle-orm';
+import { eq, or, ilike, sql, isNotNull, and, desc, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '../db';
 import { users, userProfiles, surveys, surveyVotes } from '../db/schema';
@@ -324,12 +324,14 @@ router.get(
   '/survey/other-suggestions',
   async (req: Request, res: Response): Promise<void> => {
     try {
-      // Resolve the active survey
+      // Resolve the current non-archived survey (live or finished)
       const [activeSurvey] = await db
         .select({ id: surveys.id })
         .from(surveys)
-        .where(eq(surveys.active, true))
-        .orderBy(surveys.id)
+        .where(inArray(surveys.status, ['live', 'finished']))
+        // Live-first (mirror GET /survey): never surface a stale finished survey
+        // over a new live one.
+        .orderBy(sql`CASE WHEN ${surveys.status} = 'live' THEN 0 ELSE 1 END`, surveys.id)
         .limit(1);
 
       if (!activeSurvey) {

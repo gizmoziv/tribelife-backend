@@ -14,6 +14,7 @@ import {
   messages,
   globeRoomMemberships,
   deviceTokens,
+  accountDeletionFeedback,
 } from '../db/schema';
 import {
   signToken,
@@ -934,6 +935,16 @@ router.get(
 );
 
 // ── Delete account ────────────────────────────────────────────────────────
+// Optional anonymous exit-survey feedback (no user_id — stored untethered).
+// Feedback is best-effort: an invalid body or a failed insert must NEVER block
+// the account deletion.
+const deletionFeedbackSchema = z.object({
+  reason: z.enum(['few_people', 'too_many_notifs', 'privacy', 'not_useful', 'other']),
+  otherText: z.string().trim().min(1).max(1000).optional(),
+}).refine((d) => d.reason !== 'other' || (d.otherText && d.otherText.length > 0), {
+  message: 'otherText is required when reason is other',
+});
+
 router.delete(
   '/account',
   requireAuth,
@@ -941,6 +952,31 @@ router.delete(
     const userId = req.user!.id;
     log.info({ userId }, 'request to delete their account');
     try {
+      // Best-effort anonymous exit survey — recorded before deletion, but never
+      // allowed to block it. Only attempt when a non-empty body was sent.
+      const body = req.body ?? {};
+      if (typeof body === 'object' && body !== null && Object.keys(body).length > 0) {
+        const parse = deletionFeedbackSchema.safeParse(body);
+        if (!parse.success) {
+          // Invalid feedback body — skip the insert, do NOT block deletion.
+          log.warn(
+            { err: parse.error.errors[0].message },
+            'deletion feedback invalid — skipping insert',
+          );
+        } else {
+          const { reason, otherText } = parse.data;
+          try {
+            await db.insert(accountDeletionFeedback).values({
+              reason,
+              otherText: reason === 'other' ? otherText! : null,
+            });
+          } catch (err) {
+            // A feedback-insert failure must never prevent account deletion.
+            log.error({ err }, 'deletion feedback insert failed — proceeding with deletion');
+          }
+        }
+      }
+
       await db.delete(users).where(eq(users.id, userId));
       // AUDIT-01: record the deletion untethered (user_id null) — the row must
       // not point at the person we just deleted. Fire-and-forget.

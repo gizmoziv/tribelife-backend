@@ -51,6 +51,21 @@ export const userEvents = pgTable('user_events', {
   typeCreatedIdx: index('user_events_type_created_idx').on(t.eventType, t.createdAt),
 }));
 
+// ─────────────────────────────────────────────
+// ACCOUNT DELETION FEEDBACK — anonymous exit survey
+// ─────────────────────────────────────────────
+// Deliberately untethered: NO user_id column. Rows are uncorrelatable with the
+// person who left — anonymity is the whole point. Feedback is best-effort and
+// never blocks account deletion.
+export const accountDeletionFeedback = pgTable('account_deletion_feedback', {
+  id: serial('id').primaryKey(),
+  reason: varchar('reason', { length: 30 }).notNull(),  // 'few_people' | 'too_many_notifs' | 'privacy' | 'not_useful' | 'other'
+  otherText: text('other_text'),                        // nullable — only set when reason is 'other'
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+}, (t) => ({
+  createdIdx: index('account_deletion_feedback_created_idx').on(t.createdAt),
+}));
+
 // Extended profile — one per user, created on mobile onboarding
 export const userProfiles = pgTable('user_profiles', {
   id: serial('id').primaryKey(),
@@ -657,9 +672,16 @@ export const surveys = pgTable('surveys', {
   id: serial('id').primaryKey(),
   questionText: text('question_text').notNull(),
   active: boolean('active').notNull().default(false),
+  // Lifecycle state: 'live' | 'finished' | 'archived'.
+  //   live     — accepting votes, shown to everyone
+  //   finished — read-only, final results shown to everyone (no voting)
+  //   archived — hidden from clients
+  // Additive to the legacy `active` boolean (kept for backward-compat).
+  status: text('status').notNull().default('live'),
   createdAt: timestamp('created_at').defaultNow(),
 }, (t) => ({
   activeIdx: index('surveys_active_idx').on(t.active),
+  statusIdx: index('surveys_status_idx').on(t.status),
 }));
 
 export const surveyOptions = pgTable('survey_options', {
