@@ -424,6 +424,33 @@ router.put('/read-context', async (req: AuthRequest, res: Response): Promise<voi
         .returning({ id: notifications.id })
     : [];
 
+  // Advance the read watermark + broadcast message:read for DM/group chats only.
+  // When a message arrives while the recipient is already viewing the chat, the
+  // client hits this endpoint (not GET /conversations/:id/messages), so without
+  // this the sender's tick never flips until the recipient backgrounds/re-enters.
+  // Mirrors the working chat.ts GET-messages path (advance lastReadAt → emit).
+  // The roomId/mention branch is intentionally untouched: timezone/globe rooms
+  // have no per-participant receipts (RCPT-09).
+  if (conversationId !== undefined) {
+    await db
+      .update(conversationParticipants)
+      .set({ lastReadAt: new Date() })
+      .where(
+        and(
+          eq(conversationParticipants.conversationId, conversationId),
+          eq(conversationParticipants.userId, userId)
+        )
+      );
+
+    // emitReadForConversations already enforces the DM readReceipts
+    // mutual-consent privacy gate internally.
+    const io = getIO();
+    if (io) {
+      await emitReadForConversations(io, [conversationId], userId)
+        .catch((err) => console.error('[receipts/read-context]', err));
+    }
+  }
+
   res.json({ markedRead: [...updated.map((r) => r.id), ...clearedGroup.map((r) => r.id)] });
 });
 
