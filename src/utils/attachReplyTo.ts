@@ -37,6 +37,7 @@ export async function attachReplyTo<T extends { id: number }>(
     .select({
       id: messages.id,
       content: messages.content,
+      deletedAt: messages.deletedAt,
       senderHandle: userProfiles.handle,
     })
     .from(messages)
@@ -47,7 +48,8 @@ export async function attachReplyTo<T extends { id: number }>(
   for (const o of originals) {
     originalMap[o.id] = {
       id: o.id,
-      content: o.content ?? '',
+      // Never leak a deleted original's text into a reply preview.
+      content: o.deletedAt ? '' : (o.content ?? ''),
       senderHandle: o.senderHandle ?? 'Unknown',
     };
   }

@@ -15,6 +15,7 @@ import {
 import { requireAuth, AuthRequest } from '../middleware/auth';
 import { requireCapability } from '../middleware/capabilities';
 import { attachReactions } from '../utils/attachReactions';
+import { redactDeletedMessages } from '../utils/redactDeleted';
 import { attachReplyTo } from '../utils/attachReplyTo';
 import { translateMessage } from '../services/translation';
 import { moderateMessage } from '../services/claude';
@@ -573,6 +574,7 @@ router.get('/conversations/:id/messages', async (req: AuthRequest, res: Response
       content: messages.content,
       createdAt: messages.createdAt,
       editedAt: messages.editedAt,
+      deletedAt: messages.deletedAt,
       senderId: messages.senderId,
       senderName: users.name,
       senderHandle: userProfiles.handle,
@@ -590,13 +592,15 @@ router.get('/conversations/:id/messages', async (req: AuthRequest, res: Response
     .leftJoin(userProfiles, eq(userProfiles.userId, messages.senderId))
     .where(
       cursor
-        ? and(eq(messages.conversationId, convId), isNull(messages.deletedAt), lt(messages.createdAt, cursor))
-        : and(eq(messages.conversationId, convId), isNull(messages.deletedAt))
+        ? and(eq(messages.conversationId, convId), lt(messages.createdAt, cursor))
+        : eq(messages.conversationId, convId)
     )
     .orderBy(desc(messages.createdAt))
     .limit(limit);
 
-  const rows = await query;
+  // Keep soft-deleted rows so the client shows a persistent tombstone in place;
+  // redactDeletedMessages strips their content before it leaves the server.
+  const rows = redactDeletedMessages(await query);
   const withReactions = await attachReactions(rows, userId);
   const withReplies = await attachReplyTo(withReactions);
   res.json({ messages: withReplies.reverse(), hasMore: rows.length === limit });
@@ -1008,20 +1012,21 @@ router.get('/room/:roomId/messages', async (req: AuthRequest, res: Response): Pr
 
   // ── Existing pagination path (unchanged) ──────────────────────────────────
   const baseWhere = cursor
-    ? and(eq(messages.roomId, roomId), isNull(messages.deletedAt), lt(messages.createdAt, cursor))
-    : and(eq(messages.roomId, roomId), isNull(messages.deletedAt));
+    ? and(eq(messages.roomId, roomId), lt(messages.createdAt, cursor))
+    : eq(messages.roomId, roomId);
 
   const whereClause =
     blockedIds.length > 0 && messages.senderId !== null
       ? and(baseWhere, notInArray(messages.senderId, blockedIds))
       : baseWhere;
 
-  const rows = await db
+  const rawRows = await db
     .select({
       id: messages.id,
       content: messages.content,
       createdAt: messages.createdAt,
       editedAt: messages.editedAt,
+      deletedAt: messages.deletedAt,
       senderId: messages.senderId,
       senderName: users.name,
       senderHandle: userProfiles.handle,
@@ -1041,6 +1046,8 @@ router.get('/room/:roomId/messages', async (req: AuthRequest, res: Response): Pr
     .orderBy(desc(messages.createdAt))
     .limit(limit);
 
+  // Keep soft-deleted rows (persistent tombstone) but strip their content.
+  const rows = redactDeletedMessages(rawRows);
   const withReactions = await attachReactions(rows, userId);
   const withReplies = await attachReplyTo(withReactions);
   res.json({ messages: withReplies.reverse(), hasMore: rows.length === limit });

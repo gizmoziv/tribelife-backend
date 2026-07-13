@@ -28,6 +28,7 @@ import {
 import { requireAuth, AuthRequest } from '../middleware/auth';
 import { attachReactions } from '../utils/attachReactions';
 import { attachReplyTo } from '../utils/attachReplyTo';
+import { redactDeletedMessages } from '../utils/redactDeleted';
 import {
   GLOBE_ROOMS,
   isValidGlobeRoom,
@@ -689,19 +690,20 @@ router.get(
 
     // ── Existing pagination path (unchanged) ────────────────────────────────
     const baseWhere = cursor
-      ? and(eq(messages.roomId, roomId), isNull(messages.deletedAt), lt(messages.createdAt, cursor))
-      : and(eq(messages.roomId, roomId), isNull(messages.deletedAt));
+      ? and(eq(messages.roomId, roomId), lt(messages.createdAt, cursor))
+      : eq(messages.roomId, roomId);
 
     const whereClause =
       blockedIds.length > 0 && messages.senderId !== null
         ? and(baseWhere, notInArray(messages.senderId, blockedIds))
         : baseWhere;
 
-    const rows = await db
+    const rawRows = await db
       .select({
         id: messages.id,
         content: messages.content,
         createdAt: messages.createdAt,
+        deletedAt: messages.deletedAt,
         senderId: messages.senderId,
         senderName: users.name,
         senderHandle: userProfiles.handle,
@@ -722,6 +724,8 @@ router.get(
       .orderBy(desc(messages.createdAt))
       .limit(limit);
 
+    // Keep soft-deleted rows (persistent tombstone) but strip their content.
+    const rows = redactDeletedMessages(rawRows);
     const withReactions = await attachReactions(rows, userId);
     const withReplies = await attachReplyTo(withReactions);
     res.json({
