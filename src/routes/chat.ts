@@ -1246,6 +1246,72 @@ router.patch('/messages/:id', async (req: AuthRequest, res: Response): Promise<v
   }
 });
 
+// ── Delete message (for everyone) ────────────────────────────────────────────
+// Soft-delete: sets messages.deleted_at, which every read path already excludes
+// via isNull(messages.deletedAt). Own-message-only (mirrors edit's 403 gate).
+// Broadcasts `message:deleted` so live clients swap the bubble for a tombstone;
+// on reload the row is simply filtered out. Reply-to previews are unaffected —
+// they store a frozen snapshot captured at send time.
+router.delete('/messages/:id', async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const messageId = parseInt(req.params.id as string);
+    if (isNaN(messageId)) {
+      res.status(400).json({ error: 'Invalid message ID' });
+      return;
+    }
+
+    const [msg] = await db
+      .select()
+      .from(messages)
+      .where(eq(messages.id, messageId))
+      .limit(1);
+
+    if (!msg) {
+      res.status(404).json({ error: 'Message not found' });
+      return;
+    }
+
+    // Authorization: only the author can delete their message.
+    if (msg.senderId !== req.user!.id) {
+      res.status(403).json({ error: 'You can only delete your own messages' });
+      return;
+    }
+
+    // Idempotent: already deleted → succeed without re-broadcasting.
+    if (msg.deletedAt != null) {
+      res.json({ ok: true });
+      return;
+    }
+
+    const now = new Date();
+    await db
+      .update(messages)
+      .set({ deletedAt: now })
+      .where(eq(messages.id, msg.id));
+
+    // Broadcast to the correct room (same routing as message:edited).
+    const io = req.app.get('io') as Server | undefined;
+    if (io) {
+      const payload = {
+        messageId: msg.id,
+        roomId: msg.roomId,
+        conversationId: msg.conversationId,
+        deletedAt: now.toISOString(),
+      };
+      if (msg.conversationId != null) {
+        io.to(`conversation:${msg.conversationId}`).emit('message:deleted', payload);
+      } else if (msg.roomId != null) {
+        io.to(msg.roomId).emit('message:deleted', payload);
+      }
+    }
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[chat/delete]', err);
+    res.status(500).json({ error: 'Delete failed' });
+  }
+});
+
 // ── Message search: GET /api/chat/search?q=<query>&cursor=<opaque> ──────────
 // SRCH-01: cross-source authorization via UNION ALL CTE across DMs, joined
 // groups, joined Globe rooms, and Local Chat (timezone rooms). Requires
