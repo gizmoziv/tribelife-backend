@@ -689,8 +689,8 @@ router.get(
 
     // ── Existing pagination path (unchanged) ────────────────────────────────
     const baseWhere = cursor
-      ? and(eq(messages.roomId, roomId), lt(messages.createdAt, cursor))
-      : eq(messages.roomId, roomId);
+      ? and(eq(messages.roomId, roomId), isNull(messages.deletedAt), lt(messages.createdAt, cursor))
+      : and(eq(messages.roomId, roomId), isNull(messages.deletedAt));
 
     const whereClause =
       blockedIds.length > 0 && messages.senderId !== null

@@ -590,8 +590,8 @@ router.get('/conversations/:id/messages', async (req: AuthRequest, res: Response
     .leftJoin(userProfiles, eq(userProfiles.userId, messages.senderId))
     .where(
       cursor
-        ? and(eq(messages.conversationId, convId), lt(messages.createdAt, cursor))
-        : eq(messages.conversationId, convId)
+        ? and(eq(messages.conversationId, convId), isNull(messages.deletedAt), lt(messages.createdAt, cursor))
+        : and(eq(messages.conversationId, convId), isNull(messages.deletedAt))
     )
     .orderBy(desc(messages.createdAt))
     .limit(limit);
@@ -1008,8 +1008,8 @@ router.get('/room/:roomId/messages', async (req: AuthRequest, res: Response): Pr
 
   // ── Existing pagination path (unchanged) ──────────────────────────────────
   const baseWhere = cursor
-    ? and(eq(messages.roomId, roomId), lt(messages.createdAt, cursor))
-    : eq(messages.roomId, roomId);
+    ? and(eq(messages.roomId, roomId), isNull(messages.deletedAt), lt(messages.createdAt, cursor))
+    : and(eq(messages.roomId, roomId), isNull(messages.deletedAt));
 
   const whereClause =
     blockedIds.length > 0 && messages.senderId !== null
