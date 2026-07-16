@@ -6,8 +6,9 @@ import sgMail from '@sendgrid/mail';
 import { eq, and } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '../db';
-import { blockedUsers, contentReports, users, userProfiles } from '../db/schema';
+import { blockedUsers, contentReports, users, userProfiles, messages } from '../db/schema';
 import { requireAuth, AuthRequest } from '../middleware/auth';
+import { cdnUrlToKey } from '../services/storage';
 
 const router = Router();
 router.use(requireAuth);
@@ -160,6 +161,50 @@ router.post('/report', async (req: AuthRequest, res: Response): Promise<void> =>
       }
     }
 
+    // ── Message attachment enrichment (D-06) ────────────────────────────────
+    // contentId is a generic positive int on the report schema; it equals
+    // messages.id ONLY for contentType === 'message' reports. For beacon/profile
+    // reports contentId is NOT a message id, so this lookup must never run for
+    // those content types. Wrapped in its own try/catch so a lookup failure
+    // never blocks the report insert/email above.
+    let attachmentsText = '';
+    let attachmentsHtml = '';
+    if (contentType === 'message' && contentId) {
+      try {
+        const [reportedMessage] = await db
+          .select({ attachments: messages.attachments })
+          .from(messages)
+          .where(eq(messages.id, contentId))
+          .limit(1);
+
+        const attachments = reportedMessage?.attachments ?? [];
+        if (attachments.length > 0) {
+          const lines = attachments.map((att) => {
+            const key = cdnUrlToKey(att.url);
+            // Mirrors quarantineObject's key derivation (storage.ts): insert
+            // 'quarantine/' after the leading {PREFIX}/ segment.
+            const quarantineKey = key
+              ? key.replace(/^([^/]+)\//, '$1/quarantine/')
+              : null;
+            return [
+              `Name: ${att.name}`,
+              `URL: ${att.url}`,
+              key ? `Storage key: ${key}` : null,
+              quarantineKey ? `Quarantine key: ${quarantineKey}` : null,
+            ].filter(Boolean).join(' | ');
+          });
+
+          attachmentsText = `\nAttached documents:\n${lines.join('\n')}`;
+          attachmentsHtml = `
+        <p><strong>Attached documents:</strong></p>
+        <ul>${lines.map((l) => `<li>${l}</li>`).join('')}</ul>
+      `;
+        }
+      } catch (err) {
+        log.error({ err, contentId }, 'Failed to enrich report with message attachments');
+      }
+    }
+
     await sgMail.send({
       to: 'info@tribelife.app',
       from: process.env.SENDGRID_FROM_EMAIL!,
@@ -170,6 +215,7 @@ router.post('/report', async (req: AuthRequest, res: Response): Promise<void> =>
         `Content type: ${contentType}`,
         contentId ? `Content ID: ${contentId}` : '',
         `Reason: ${reason}`,
+        attachmentsText,
       ].filter(Boolean).join('\n'),
       html: `
         <p><strong>Reporter:</strong> ${reporter.name} (${reporter.email}) @${reporter.handle ?? 'N/A'}</p>
@@ -177,6 +223,7 @@ router.post('/report', async (req: AuthRequest, res: Response): Promise<void> =>
         <p><strong>Content type:</strong> ${contentType}</p>
         ${contentId ? `<p><strong>Content ID:</strong> ${contentId}</p>` : ''}
         <p><strong>Reason:</strong> ${reason.replace(/\n/g, '<br />')}</p>
+        ${attachmentsHtml}
       `,
     });
 
