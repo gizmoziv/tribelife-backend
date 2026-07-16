@@ -218,6 +218,77 @@ export async function headVoiceObject(key: string): Promise<{
 }
 
 /**
+ * Sanitize an arbitrary client-supplied filename into a safe Spaces key segment.
+ * Strips path separators and control characters (blocks path-traversal / key
+ * injection, T-30-06), collapses whitespace to dashes, keeps only a conservative
+ * safe character set, caps the length, and strips a trailing `.pdf` (the caller
+ * appends the extension). Never returns an empty string. The verbatim original
+ * filename is carried separately in `attachments[].name` — this is only for the
+ * human-readable key segment.
+ */
+export function sanitizeDocFilename(name: string): string {
+  const sanitized = name
+    .replace(/[/\\]/g, '')
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\x00-\x1f\x7f]/g, '')
+    .trim()
+    .replace(/\s+/g, '-')
+    .replace(/[^a-zA-Z0-9._-]/g, '')
+    .slice(0, 80)
+    .replace(/\.pdf$/i, '');
+
+  return sanitized.length > 0 ? sanitized : 'document';
+}
+
+/**
+ * Generate a pre-signed PUT URL for PDF document upload.
+ * Key format: {env}/docs/{userId}/{uuid}/{sanitized-name}.pdf
+ * ContentType is pinned to application/pdf so the presigned PUT signature binds
+ * the content type — the client MUST send Content-Type: application/pdf on PUT
+ * or the signature fails (D-03).
+ */
+export async function generateDocUploadUrl(userId: number, filename: string): Promise<{
+  uploadUrl: string;
+  key: string;
+  cdnUrl: string;
+}> {
+  const key = `${PREFIX}/docs/${userId}/${crypto.randomUUID()}/${sanitizeDocFilename(filename)}.pdf`;
+
+  const command = new PutObjectCommand({
+    Bucket: BUCKET,
+    Key: key,
+    ContentType: 'application/pdf',
+  });
+
+  const uploadUrl = await getSignedUrl(s3, command, { expiresIn: 300 });
+  const cdnUrl = `${CDN_URL}/${key}`;
+
+  return { uploadUrl, key, cdnUrl };
+}
+
+/**
+ * Inspect a document object's metadata via HeadObject.
+ * Returns exists=false on any error (missing key, network, etc.).
+ * Used by the confirm route (30-02) to enforce the 25 MB + PDF content-type gate.
+ */
+export async function headDocObject(key: string): Promise<{
+  exists: boolean;
+  contentType?: string;
+  contentLength?: number;
+}> {
+  try {
+    const response = await s3.send(new HeadObjectCommand({ Bucket: BUCKET, Key: key }));
+    return {
+      exists: true,
+      contentType: response.ContentType,
+      contentLength: response.ContentLength,
+    };
+  } catch {
+    return { exists: false };
+  }
+}
+
+/**
  * Extract the object key from a CDN URL. Returns null if URL doesn't match.
  */
 export function cdnUrlToKey(cdnUrl: string): string | null {
