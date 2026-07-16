@@ -8,7 +8,7 @@ import { db } from '../db';
 import { userProfiles, conversations, conversationParticipants, organizations, organizationMemberships } from '../db/schema';
 import { and, isNull } from 'drizzle-orm';
 import { requireAuth, AuthRequest } from '../middleware/auth';
-import { generateAvatarUploadUrl, generateGroupIconUploadUrl, generateOrgIconUploadUrl, generateMediaUploadUrls, generateVoiceUploadUrl, headVoiceObject, objectExists, deleteObject, cdnUrlToKey, setPublicRead } from '../services/storage';
+import { generateAvatarUploadUrl, generateGroupIconUploadUrl, generateOrgIconUploadUrl, generateMediaUploadUrls, generateVoiceUploadUrl, headVoiceObject, generateDocUploadUrl, headDocObject, objectExists, deleteObject, cdnUrlToKey, setPublicRead } from '../services/storage';
 import { logUserEvent } from '../services/userEvents';
 
 const router = Router();
@@ -465,6 +465,35 @@ router.post('/voice-confirm', requireAuth, async (req: AuthRequest, res: Respons
   } catch (err) {
     log.error({ err, key }, '[upload/voice-confirm] failed');
     res.status(500).json({ error: 'Failed to confirm upload' });
+  }
+});
+
+// ── Doc upload constants ─────────────────────────────────────────────────────
+const DOC_MAX_BYTES = 25 * 1024 * 1024; // 25 MB — D-04 gate
+
+// ── POST /doc-url — Generate pre-signed PUT URL for PDF document ────────────
+const docUrlSchema = z.object({
+  filename: z.string().min(1).max(255),
+});
+
+router.post('/doc-url', requireAuth, async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const parse = docUrlSchema.safeParse(req.body);
+    if (!parse.success) {
+      res.status(400).json({ error: parse.error.errors[0].message });
+      return;
+    }
+
+    if (!checkUploadRateLimit(req.user!.id)) {
+      res.status(429).json({ error: 'Upload rate limit exceeded. Try again later.' });
+      return;
+    }
+
+    const result = await generateDocUploadUrl(req.user!.id, parse.data.filename);
+    res.json(result);
+  } catch (err) {
+    log.error({ err }, '[upload/doc-url] failed');
+    res.status(500).json({ error: 'Failed to generate upload URL' });
   }
 });
 
