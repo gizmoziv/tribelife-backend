@@ -211,6 +211,15 @@ export const globeRoomMemberships = pgTable('globe_room_memberships', {
 // ─────────────────────────────────────────────
 // CHAT — Messages (both location-based rooms and DMs)
 // ─────────────────────────────────────────────
+// Phase 30, D-01: a single PDF document attachment (separate from mediaUrls,
+// which stays images/GIFs only — mediaUrls has no room for filename/size).
+export type MessageAttachment = {
+  url: string;
+  name: string;
+  size: number;
+  type: 'pdf';
+};
+
 export const messages = pgTable('messages', {
   id: serial('id').primaryKey(),
   content: text('content').notNull(),
@@ -235,6 +244,7 @@ export const messages = pgTable('messages', {
   voiceDurationMs: integer('voice_duration_ms'),                        // duration in milliseconds
   voiceWaveform: jsonb('voice_waveform').$type<number[]>(),             // amplitude peaks array (precomputed client-side)
   voiceTranscript: text('voice_transcript'),                            // Whisper transcript cache (instant reveal, D-13)
+  attachments: jsonb('attachments').$type<MessageAttachment[]>(),       // Phase 30: nullable PDF document attachments (D-01)
 }, (t) => ({
   roomIdx: index('messages_room_idx').on(t.roomId),
   convIdx: index('messages_conv_idx').on(t.conversationId),
