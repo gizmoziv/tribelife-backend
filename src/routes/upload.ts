@@ -497,4 +497,62 @@ router.post('/doc-url', requireAuth, async (req: AuthRequest, res: Response): Pr
   }
 });
 
+// ── POST /doc-confirm — Validate PDF object and grant public-read ───────────
+// A presigned PUT signature pins Content-Type but cannot cap size or verify the
+// bytes are truly a PDF, so this confirm-time HeadObject is the real gate —
+// reject-and-delete closes the "PUT any file / any size to a public URL" abuse
+// hole (D-04, T-30-02).
+const docConfirmSchema = z.object({
+  key: z.string().min(1),
+});
+
+router.post('/doc-confirm', requireAuth, async (req: AuthRequest, res: Response): Promise<void> => {
+  const parse = docConfirmSchema.safeParse(req.body);
+  if (!parse.success) {
+    res.status(400).json({ error: parse.error.errors[0].message });
+    return;
+  }
+
+  const { key } = parse.data;
+  const prefix = process.env.DO_SPACES_PREFIX || 'prod';
+
+  try {
+    // (a) Ownership check — key must belong to the requesting user
+    if (!key.startsWith(`${prefix}/docs/${req.user!.id}/`)) {
+      res.status(403).json({ error: 'Key does not belong to this user' });
+      return;
+    }
+
+    // (b) Existence check via HeadObject
+    const head = await headDocObject(key);
+    if (!head.exists) {
+      res.status(400).json({ error: 'Object not found at key' });
+      return;
+    }
+
+    // (c) Size gate — D-04: reject + delete if > 25 MB
+    if ((head.contentLength ?? 0) > DOC_MAX_BYTES) {
+      await deleteObject(key);
+      res.status(413).json({ error: 'Document exceeds the 25 MB limit' });
+      return;
+    }
+
+    // (d) Content-type gate — D-04: must be application/pdf
+    if (head.contentType !== 'application/pdf') {
+      await deleteObject(key);
+      res.status(415).json({ error: 'File must be a PDF' });
+      return;
+    }
+
+    // Grant public-read so the CDN URL can be served to conversation participants
+    await setPublicRead(key);
+
+    const cdnUrl = `${process.env.DO_SPACES_CDN_URL}/${key}`;
+    res.json({ cdnUrl });
+  } catch (err) {
+    log.error({ err, key }, '[upload/doc-confirm] failed');
+    res.status(500).json({ error: 'Failed to confirm upload' });
+  }
+});
+
 export default router;
