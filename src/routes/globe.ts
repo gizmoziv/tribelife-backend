@@ -605,6 +605,7 @@ router.get(
         senderAvatar: userProfiles.avatarUrl,
         mentions: messages.mentions,
         mediaUrls: messages.mediaUrls,
+        attachments: messages.attachments,
         // Without this, the mobile's `if (message.kind === 'system')` check
         // (MessageBubble.tsx) gets undefined for system rows fetched via
         // history (the join "@handle joined the chat" announcement from
@@ -710,6 +711,7 @@ router.get(
         senderAvatar: userProfiles.avatarUrl,
         mentions: messages.mentions,
         mediaUrls: messages.mediaUrls,
+        attachments: messages.attachments,
         // Mirrors msgSelect above — see comment there for context.
         kind: messages.kind,
         voiceUrl: messages.voiceUrl,
