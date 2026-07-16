@@ -9,6 +9,7 @@ import {
   notifications,
   blockedUsers,
 } from '../db/schema';
+import type { MessageAttachment } from '../db/schema';
 import { eq, and, isNull, isNotNull, ne, inArray } from 'drizzle-orm';
 import { moderateMessage } from '../services/claude';
 import { logModerationEvent } from '../lib/moderationLog';
@@ -24,30 +25,61 @@ import type { ChatNotificationPayload } from '../types/chatNotification';
 
 const log = logger.child({ module: 'socket:dm' });
 
+// Phase 30 D-07: old-client fallback line for a document message. New clients render
+// the document card from `attachments` and suppress this string; pre-30 clients show
+// it so they always get a readable bubble (no MIN_CLIENT_VERSION bump).
+const DOC_FALLBACK = (h: string): string => `📄 @${h} sent a PDF — update the app to view it.`;
+
+// Phase 30 D-05: attachments validation. Keep an entry ONLY if it is an owned docs/
+// URL (cdnUrlToKey starts with {PREFIX}/docs/{userId}/), a positive size ≤ 25 MB, name
+// is a string, and type === 'pdf'. Normalize + slice to 1 (D-01a).
+function parseDocAttachments(raw: unknown, userId: number): MessageAttachment[] {
+  const docKeyPrefix = `${process.env.DO_SPACES_PREFIX || 'prod'}/docs/${userId}/`;
+  return (Array.isArray(raw) ? raw : [])
+    .filter((a): a is MessageAttachment => {
+      if (!a || typeof a.url !== 'string' || typeof a.name !== 'string') return false;
+      if (typeof a.size !== 'number' || a.size <= 0 || a.size > 25 * 1024 * 1024) return false;
+      if (a.type !== 'pdf') return false;
+      const key = cdnUrlToKey(a.url);
+      return !!key && key.startsWith(docKeyPrefix);
+    })
+    .map((a) => ({ url: a.url, name: a.name.slice(0, 255), size: a.size, type: 'pdf' as const }))
+    .slice(0, 1);
+}
+
 export function registerDmHandlers(io: Server, socket: Socket): void {
   const userId: number = socket.data.userId;
   const handle: string = socket.data.handle;
   const avatarUrl: string | null = socket.data.avatarUrl;
 
   // ── Send a direct message ─────────────────────────────────────────────
-  socket.on('dm:message', async (data: { conversationId: number; content: string; replyToId?: number; mediaUrls?: string[] }) => {
+  socket.on('dm:message', async (data: { conversationId: number; content: string; replyToId?: number; mediaUrls?: string[]; attachments?: MessageAttachment[] }) => {
     log.info({ event: 'dm_received', userId, handle, conversationId: data?.conversationId, contentLen: data?.content?.length ?? 0, mediaCount: Array.isArray(data?.mediaUrls) ? data.mediaUrls.length : 0, hasReply: !!data?.replyToId }, 'dm:message received');
 
-    const content = data.content?.trim() ?? '';
-    const mediaUrls = Array.isArray(data.mediaUrls)
+    let content = data.content?.trim() ?? '';
+    let mediaUrls = Array.isArray(data.mediaUrls)
       ? data.mediaUrls.filter((u): u is string => typeof u === 'string').slice(0, 4)
       : [];
-    if (!content && mediaUrls.length === 0) {
+
+    // Phase 30 D-05: additive PDF attachments (validated, one per message D-01a).
+    const attachments = parseDocAttachments(data.attachments, userId);
+    const hasAttachment = attachments.length > 0;
+    // Standalone-document rule (D-01a): a document is its own bubble — never
+    // interleaved with the photo grid. Ignore mediaUrls when an attachment is present.
+    if (hasAttachment) mediaUrls = [];
+
+    if (!content && mediaUrls.length === 0 && !hasAttachment) {
       log.warn({ event: 'dm_dropped_empty', userId, conversationId: data?.conversationId }, 'dm:message dropped — empty content + no media');
       return;
     }
-    if (content.length > 2000) {
+    if (!hasAttachment && content.length > 2000) {
       log.warn({ event: 'dm_dropped_too_long', userId, conversationId: data?.conversationId, contentLen: content.length }, 'dm:message dropped — content > 2000 chars');
       return;
     }
 
-    // Content moderation check (skip for image-only messages)
-    if (content) {
+    // Content moderation check (skip for image-only messages AND document messages —
+    // a document's content is a server-generated fallback, not user text, D-06/D-07).
+    if (content && !hasAttachment) {
       const dmModResult = moderateMessage(content);
       if (!dmModResult.isAllowed) {
         log.warn({ event: 'dm_moderation_rejected', userId, conversationId: data?.conversationId, reason: dmModResult.reason }, 'dm:message rejected by moderation');
@@ -56,6 +88,11 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
         return;
       }
     }
+
+    // D-07: for a document message, replace content with the server-generated fallback
+    // line so old clients render a readable bubble. Any user caption is discarded per
+    // the standalone-document contract (D-01a).
+    if (hasAttachment) content = DOC_FALLBACK(handle);
 
     // Verify participant (must not have left)
     const participation = await db
@@ -142,6 +179,7 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
         conversationId: data.conversationId,
         replyToId: data.replyToId ?? null,
         mediaUrls: mediaUrls.length > 0 ? mediaUrls : null,
+        attachments: hasAttachment ? attachments : null,
       })
       .returning();
 
@@ -203,6 +241,7 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
       replyToId: data.replyToId ?? null,
       replyTo,
       mediaUrls: mediaUrls.length > 0 ? mediaUrls : undefined,
+      attachments: hasAttachment ? attachments : undefined,
     };
 
     // Never-null avatar for the sender's person pushes (Phase A). Resolved once
@@ -230,7 +269,10 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
       });
     }
 
-    // Fire-and-forget image moderation
+    // Fire-and-forget image moderation. PDFs are intentionally NOT scanned on send
+    // (D-06, operator-locked) — because a document message empties mediaUrls above,
+    // image moderation is structurally skipped for it; the only safety lever is the
+    // reactive report→quarantine path (30-04).
     if (mediaUrls.length > 0) {
       moderateMessageImages(msg.id, mediaUrls, userId, io, `conversation:${data.conversationId}`)
         .catch(err => log.error({ err }, 'DM image check failed'));
@@ -267,9 +309,9 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
       // Resolve handles → userIds, then intersect with the sender-excluded
       // recipient set so a mention of a non-member produces no notification
       // (NOTIF-03).
-      const mentionedHandles = [...content.matchAll(/@([a-zA-Z0-9_]+)/g)].map(
-        (m) => m[1].toLowerCase(),
-      );
+      const mentionedHandles = hasAttachment
+        ? []
+        : [...content.matchAll(/@([a-zA-Z0-9_]+)/g)].map((m) => m[1].toLowerCase());
       let mentionedInGroup: number[] = [];
       if (mentionedHandles.length > 0) {
         const mentionedProfiles = await db

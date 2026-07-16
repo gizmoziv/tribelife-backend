@@ -4,6 +4,7 @@ import { db } from '../db';
 
 const log = logger.child({ module: 'socket:room' });
 import { messages, userProfiles, notifications } from '../db/schema';
+import type { MessageAttachment } from '../db/schema';
 import { and, eq, inArray } from 'drizzle-orm';
 import { moderateMessage } from '../services/claude';
 import { logModerationEvent } from '../lib/moderationLog';
@@ -15,6 +16,28 @@ import type { PushMessage } from '../services/pushNotifications';
 import { isUserActivelyViewing, canonicalViewingKey } from './activeViewing';
 import type { ChatNotificationPayload } from '../types/chatNotification';
 import { getZoneForTimezone, getZoneMemberIds } from '../config/timezoneZones';
+
+// Phase 30 D-07: old-client fallback line for a document message. New clients render
+// the document card from `attachments` and suppress this string; pre-30 clients show
+// it so they always get a readable bubble (no MIN_CLIENT_VERSION bump).
+const DOC_FALLBACK = (h: string): string => `📄 @${h} sent a PDF — update the app to view it.`;
+
+// Phase 30 D-05: attachments validation shared shape. Keep an entry ONLY if it is an
+// owned docs/ URL (cdnUrlToKey starts with {PREFIX}/docs/{userId}/), a positive size
+// ≤ 25 MB, name is a string, and type === 'pdf'. Normalize + slice to 1 (D-01a).
+function parseDocAttachments(raw: unknown, userId: number): MessageAttachment[] {
+  const docKeyPrefix = `${process.env.DO_SPACES_PREFIX || 'prod'}/docs/${userId}/`;
+  return (Array.isArray(raw) ? raw : [])
+    .filter((a): a is MessageAttachment => {
+      if (!a || typeof a.url !== 'string' || typeof a.name !== 'string') return false;
+      if (typeof a.size !== 'number' || a.size <= 0 || a.size > 25 * 1024 * 1024) return false;
+      if (a.type !== 'pdf') return false;
+      const key = cdnUrlToKey(a.url);
+      return !!key && key.startsWith(docKeyPrefix);
+    })
+    .map((a) => ({ url: a.url, name: a.name.slice(0, 255), size: a.size, type: 'pdf' as const }))
+    .slice(0, 1);
+}
 
 export function registerRoomHandlers(io: Server, socket: Socket): void {
   const userId: number = socket.data.userId;
@@ -34,16 +57,25 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
   socket.join(timezoneRoom);
 
   // ── Send a message to a timezone room ─────────────────────────────────
-  socket.on('room:message', async (data: { content: string; replyToId?: number; mediaUrls?: string[] }) => {
-    const content = data.content?.trim() ?? '';
-    const mediaUrls = Array.isArray(data.mediaUrls)
+  socket.on('room:message', async (data: { content: string; replyToId?: number; mediaUrls?: string[]; attachments?: MessageAttachment[] }) => {
+    let content = data.content?.trim() ?? '';
+    let mediaUrls = Array.isArray(data.mediaUrls)
       ? data.mediaUrls.filter((u): u is string => typeof u === 'string').slice(0, 4)
       : [];
-    if (!content && mediaUrls.length === 0) return;
-    if (content.length > 2000) return;
 
-    // Content moderation check (skip for image-only messages)
-    if (content) {
+    // Phase 30 D-05: additive PDF attachments (validated, one per message D-01a).
+    const attachments = parseDocAttachments(data.attachments, userId);
+    const hasAttachment = attachments.length > 0;
+    // Standalone-document rule (D-01a): a document is its own bubble — never
+    // interleaved with the photo grid. Ignore mediaUrls when an attachment is present.
+    if (hasAttachment) mediaUrls = [];
+
+    if (!content && mediaUrls.length === 0 && !hasAttachment) return;
+    if (!hasAttachment && content.length > 2000) return;
+
+    // Content moderation check (skip for image-only messages AND document messages —
+    // a document's content is a server-generated fallback, not user text, D-06/D-07).
+    if (content && !hasAttachment) {
       const modResult = moderateMessage(content);
       if (!modResult.isAllowed) {
         logModerationEvent({ surface: 'text', action: 'rejected', reason: modResult.reason, senderId: userId, roomId: timezoneRoom });
@@ -52,10 +84,15 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
       }
     }
 
-    // Parse @mentions
-    const mentionedHandles = [...content.matchAll(/@([a-zA-Z0-9_]+)/g)].map(
-      (m) => m[1].toLowerCase()
-    );
+    // D-07: for a document message, replace content with the server-generated fallback
+    // line so old clients render a readable bubble. Any user caption is discarded per
+    // the standalone-document contract (D-01a).
+    if (hasAttachment) content = DOC_FALLBACK(handle);
+
+    // Parse @mentions (none for a document message — the caption is discarded).
+    const mentionedHandles = hasAttachment
+      ? []
+      : [...content.matchAll(/@([a-zA-Z0-9_]+)/g)].map((m) => m[1].toLowerCase());
 
     let mentionedUserIds: number[] = [];
 
@@ -83,6 +120,7 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
         mentions: mentionedUserIds,
         replyToId: data.replyToId ?? null,
         mediaUrls: mediaUrls.length > 0 ? mediaUrls : null,
+        attachments: hasAttachment ? attachments : null,
       })
       .returning();
 
@@ -120,6 +158,7 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
       replyToId: data.replyToId ?? null,
       replyTo,
       mediaUrls: mediaUrls.length > 0 ? mediaUrls : undefined,
+      attachments: hasAttachment ? attachments : undefined,
       kind: 'user' as const,
     };
 
@@ -129,7 +168,10 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
     // per send; reused across the mention + group fan-out push sites.
     const senderAvatarUrl = resolveSenderAvatar(avatarUrl, { userId, handle });
 
-    // Fire-and-forget image moderation
+    // Fire-and-forget image moderation. PDFs are intentionally NOT scanned on send
+    // (D-06, operator-locked) — because a document message empties mediaUrls above,
+    // image moderation is structurally skipped for it; the only safety lever is the
+    // reactive report→quarantine path (30-04).
     if (mediaUrls.length > 0) {
       moderateMessageImages(msg.id, mediaUrls, userId, io, timezoneRoom)
         .catch(err => log.error({ err }, 'Room image check failed'));
