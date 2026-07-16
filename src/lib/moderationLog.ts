@@ -6,7 +6,7 @@ import logger from './logger';
 // structured, indexable fields (never string-interpolated into the message).
 
 export interface ModerationLogFields {
-  surface: 'image' | 'voice' | 'text';
+  surface: 'image' | 'voice' | 'text' | 'document';
   action: 'quarantined' | 'hard_deleted' | 'rejected' | 'allowed_low_confidence';
   senderId: number;
   mediaUrl?: string;
