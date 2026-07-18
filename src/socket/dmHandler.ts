@@ -13,6 +13,7 @@ import type { MessageAttachment } from '../db/schema';
 import { eq, and, isNull, isNotNull, ne, inArray } from 'drizzle-orm';
 import { moderateMessage } from '../services/claude';
 import { logModerationEvent } from '../lib/moderationLog';
+import { moderationEnforced } from '../lib/moderationEnforcement';
 import { moderateMessageImages } from '../services/imageModeration';
 import { moderateVoiceMessage } from '../services/voiceModeration';
 import { cdnUrlToKey } from '../services/storage';
@@ -82,10 +83,14 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
     if (content && !hasAttachment) {
       const dmModResult = moderateMessage(content);
       if (!dmModResult.isAllowed) {
-        log.warn({ event: 'dm_moderation_rejected', userId, conversationId: data?.conversationId, reason: dmModResult.reason }, 'dm:message rejected by moderation');
-        logModerationEvent({ surface: 'text', action: 'rejected', reason: dmModResult.reason, senderId: userId, roomId: `conversation:${data.conversationId}` });
-        socket.emit('message:rejected', { reason: dmModResult.reason });
-        return;
+        if (moderationEnforced()) {
+          log.warn({ event: 'dm_moderation_rejected', userId, conversationId: data?.conversationId, reason: dmModResult.reason }, 'dm:message rejected by moderation');
+          logModerationEvent({ surface: 'text', action: 'rejected', reason: dmModResult.reason, senderId: userId, roomId: `conversation:${data.conversationId}` });
+          socket.emit('message:rejected', { reason: dmModResult.reason });
+          return;
+        }
+        // Shadow mode: log what we would have blocked, then let the DM proceed.
+        logModerationEvent({ surface: 'text', action: 'shadow_would_block', reason: dmModResult.reason, senderId: userId, roomId: `conversation:${data.conversationId}` });
       }
     }
 

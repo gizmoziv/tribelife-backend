@@ -20,6 +20,7 @@ import { attachReplyTo } from '../utils/attachReplyTo';
 import { translateMessage } from '../services/translation';
 import { moderateMessage } from '../services/claude';
 import { logModerationEvent } from '../lib/moderationLog';
+import { moderationEnforced } from '../lib/moderationEnforcement';
 import { getIO } from '../lib/socketRegistry';
 import { emitReadForConversation, emitReadForConversations } from '../socket/receipts';
 import { isUserBanned } from '../lib/bannedUsers';
@@ -1184,10 +1185,14 @@ router.patch('/messages/:id', async (req: AuthRequest, res: Response): Promise<v
     // 7. Moderation re-run on new content
     const modResult = moderateMessage(content);
     if (!modResult.isAllowed) {
-      console.error('[chat/edit]', { messageId, userId: req.user!.id, reason: modResult.reason });
-      logModerationEvent({ surface: 'text', action: 'rejected', reason: modResult.reason, senderId: req.user!.id, messageId });
-      res.status(422).json({ error: modResult.reason ?? 'Content rejected by moderation' });
-      return;
+      if (moderationEnforced()) {
+        console.error('[chat/edit]', { messageId, userId: req.user!.id, reason: modResult.reason });
+        logModerationEvent({ surface: 'text', action: 'rejected', reason: modResult.reason, senderId: req.user!.id, messageId });
+        res.status(422).json({ error: modResult.reason ?? 'Content rejected by moderation' });
+        return;
+      }
+      // Shadow mode: log what we would have blocked, then continue applying the edit.
+      logModerationEvent({ surface: 'text', action: 'shadow_would_block', reason: modResult.reason, senderId: req.user!.id, messageId });
     }
 
     // 8. Transaction: audit insert + message update

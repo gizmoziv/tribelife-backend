@@ -8,6 +8,7 @@ import type { MessageAttachment } from '../db/schema';
 import { and, eq, inArray } from 'drizzle-orm';
 import { moderateMessage } from '../services/claude';
 import { logModerationEvent } from '../lib/moderationLog';
+import { moderationEnforced } from '../lib/moderationEnforcement';
 import { moderateMessageImages } from '../services/imageModeration';
 import { moderateVoiceMessage } from '../services/voiceModeration';
 import { cdnUrlToKey } from '../services/storage';
@@ -78,9 +79,13 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
     if (content && !hasAttachment) {
       const modResult = moderateMessage(content);
       if (!modResult.isAllowed) {
-        logModerationEvent({ surface: 'text', action: 'rejected', reason: modResult.reason, senderId: userId, roomId: timezoneRoom });
-        socket.emit('message:rejected', { reason: modResult.reason });
-        return;
+        if (moderationEnforced()) {
+          logModerationEvent({ surface: 'text', action: 'rejected', reason: modResult.reason, senderId: userId, roomId: timezoneRoom });
+          socket.emit('message:rejected', { reason: modResult.reason });
+          return;
+        }
+        // Shadow mode: log what we would have blocked, then let the message proceed.
+        logModerationEvent({ surface: 'text', action: 'shadow_would_block', reason: modResult.reason, senderId: userId, roomId: timezoneRoom });
       }
     }
 
