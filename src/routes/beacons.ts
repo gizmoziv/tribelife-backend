@@ -10,6 +10,8 @@ import { requireAuth, AuthRequest } from '../middleware/auth';
 import { CapabilityViolationError, getCapabilities } from '../middleware/capabilities';
 import { enforceLimit, countOccupiedBeaconSlots, getOccupiedBeaconSlotInfo } from '../services/limitChecks';
 import { analyzeBeacon } from '../services/claude';
+import { logModerationEvent } from '../lib/moderationLog';
+import { moderationEnforced } from '../lib/moderationEnforcement';
 
 const router = Router();
 router.use(requireAuth);
@@ -72,11 +74,17 @@ router.post('/', async (req: AuthRequest, res: Response): Promise<void> => {
   }
 
   if (!analysis.isAppropriate) {
-    res.status(422).json({
-      error: 'Your beacon could not be posted',
-      reason: analysis.flagReason ?? 'Content policy violation',
-    });
-    return;
+    if (moderationEnforced()) {
+      logModerationEvent({ surface: 'beacon', action: 'rejected', reason: analysis.flagReason, senderId: userId });
+      res.status(422).json({
+        error: 'Your beacon could not be posted',
+        reason: analysis.flagReason ?? 'Content policy violation',
+      });
+      return;
+    }
+    // Shadow mode: log what we would have blocked, then continue creating the
+    // beacon using the analyzed data.
+    logModerationEvent({ surface: 'beacon', action: 'shadow_would_block', reason: analysis.flagReason, senderId: userId });
   }
 
   // Set expiry 30 days from now
@@ -218,11 +226,17 @@ router.put('/:id', async (req: AuthRequest, res: Response): Promise<void> => {
   }
 
   if (!analysis.isAppropriate) {
-    res.status(422).json({
-      error: 'Your beacon could not be updated',
-      reason: analysis.flagReason ?? 'Content policy violation',
-    });
-    return;
+    if (moderationEnforced()) {
+      logModerationEvent({ surface: 'beacon', action: 'rejected', reason: analysis.flagReason, senderId: userId });
+      res.status(422).json({
+        error: 'Your beacon could not be updated',
+        reason: analysis.flagReason ?? 'Content policy violation',
+      });
+      return;
+    }
+    // Shadow mode: log what we would have blocked, then continue updating the
+    // beacon using the analyzed data.
+    logModerationEvent({ surface: 'beacon', action: 'shadow_would_block', reason: analysis.flagReason, senderId: userId });
   }
 
   const [updated] = await db
