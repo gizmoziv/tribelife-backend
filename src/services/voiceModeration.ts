@@ -6,6 +6,7 @@ import { deleteObject, cdnUrlToKey } from './storage';
 import { sendPushToUser } from './pushNotifications';
 import { transcribeWithRetry, moderateTranscript } from './voiceTranscription';
 import { logModerationEvent } from '../lib/moderationLog';
+import { moderationEnforced } from '../lib/moderationEnforcement';
 import logger from '../lib/logger';
 
 const log = logger.child({ module: 'voice-moderation' });
@@ -83,6 +84,24 @@ export async function moderateVoiceMessage(
       '[voice-moderation] transcription/moderation failed — failing closed (D-08)',
     );
     failureReason = 'Transcription failed';
+  }
+
+  // ── Shadow mode: log-only, no removal ──────────────────────────────────────
+  // The transcript scan above still ran and produced a verdict. When enforcement
+  // is disabled, log what we WOULD have removed and leave the voice message live:
+  // no audio delete, no voiceUrl null, no emit, no notification/push.
+  if (!moderationEnforced()) {
+    logModerationEvent({
+      surface: 'voice',
+      action: 'shadow_would_block',
+      reason: failureReason,
+      category: failureReason,
+      senderId,
+      messageId,
+      roomId,
+    });
+    log.info({ messageId, reason: failureReason }, '[voice-moderation] shadow mode — voice message retained, user not notified');
+    return;
   }
 
   // ── Fail-closed removal path ───────────────────────────────────────────────
