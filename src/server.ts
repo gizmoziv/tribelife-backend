@@ -50,6 +50,7 @@ import { createSocketServer } from './socket';
 import { pool } from './db';
 import { registerShutdownSignals } from './lib/shutdown';
 import { setIO } from './lib/socketRegistry';
+import { moderationEnforced } from './lib/moderationEnforcement';
 
 const app = express();
 const httpServer = createServer(app);
@@ -264,6 +265,9 @@ async function bootstrap(): Promise<void> {
   const PORT = process.env.PORT ?? 4000;
   httpServer.listen(PORT, () => {
     log.info({ port: PORT }, 'TribeLife backend running');
+    if (!moderationEnforced()) {
+      log.warn('[moderation] ⚠ ENFORCEMENT DISABLED — SHADOW mode (log-only, no user impact). Set MODERATION_ENFORCEMENT_ENABLED=true to enforce.');
+    }
     const beaconMatcherTask = startBeaconMatcherCron();
     const newsPushRetentionTask = startNewsPushRetentionCron();
     const jobsScraperTask = startJobsScraperCron(); // Phase 24 — null unless JOBS_SCRAPER_ENABLED=true (paused pending JewishJobs permission)
