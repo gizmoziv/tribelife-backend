@@ -2,6 +2,7 @@ import OpenAI from 'openai';
 import logger from '../lib/logger';
 import { deleteObject, quarantineObject, cdnUrlToKey } from './storage';
 import { logModerationEvent } from '../lib/moderationLog';
+import { moderationEnforced } from '../lib/moderationEnforcement';
 
 const log = logger.child({ module: 'moderation' });
 import { db } from '../db';
@@ -200,11 +201,42 @@ export async function moderateMessageImages(
   const flagged = results.filter((r) => !r.result.isAllowed);
   if (flagged.length === 0) return;
 
-  const flaggedUrls = flagged.map((f) => f.url);
+  const enforced = moderationEnforced();
+
+  // ── Shadow-mode split ────────────────────────────────────────────────────
+  // CSAM (mustHardDelete) is ALWAYS enforced — hard-deleted + stripped from the
+  // message — regardless of the enforcement flag (legal requirement).
+  // Non-CSAM flagged images are enforced (quarantine + strip + emits + notif)
+  // ONLY when moderationEnforced(); in shadow mode they are logged as
+  // 'shadow_would_block' and left live on the message.
+  const csamFlagged = flagged.filter((f) => f.result.mustHardDelete === true);
+  const nonCsamFlagged = flagged.filter((f) => f.result.mustHardDelete !== true);
+
+  // In shadow mode, only CSAM URLs are stripped from the DB; the shadowed
+  // non-CSAM images survive. When enforced, all flagged URLs are stripped.
+  const enforcedFlagged = enforced ? flagged : csamFlagged;
+  const flaggedUrls = enforcedFlagged.map((f) => f.url);
 
   // Retain-and-log flagged images: CSAM (mustHardDelete) is hard-deleted;
   // everything else is quarantined (private retention, not permanently lost).
+  // In shadow mode the non-CSAM branch is skipped (log-only) below.
   for (const f of flagged) {
+    // Shadow mode: non-CSAM flagged images are log-only — no quarantine, no
+    // storage op, no strip, no emit. Log what we would have blocked and skip.
+    if (!enforced && f.result.mustHardDelete !== true) {
+      logModerationEvent({
+        surface: 'image',
+        action: 'shadow_would_block',
+        mediaUrl: f.url,
+        category: f.result.category,
+        confidence: f.result.confidence,
+        messageId,
+        senderId,
+        roomId,
+      });
+      continue;
+    }
+
     const key = cdnUrlToKey(f.url);
     let action: 'quarantined' | 'hard_deleted';
     let quarantineKey: string | undefined;
@@ -234,7 +266,14 @@ export async function moderateMessageImages(
     });
   }
 
-  // Update message in DB — remove flagged URLs
+  // If nothing is being enforced (shadow mode with no CSAM), there is nothing
+  // to strip or notify — the images stay live and the user is not notified.
+  if (enforcedFlagged.length === 0) {
+    log.info({ messageId, shadowedCount: nonCsamFlagged.length }, 'Shadow mode — flagged images retained, user not notified');
+    return;
+  }
+
+  // Update message in DB — remove flagged URLs (CSAM-only in shadow mode)
   const [msg] = await db
     .select({ mediaUrls: messages.mediaUrls })
     .from(messages)
@@ -256,7 +295,7 @@ export async function moderateMessageImages(
   });
 
   // Emit rejection event to sender only
-  const category = flagged[0].result.category ?? 'Policy violation';
+  const category = enforcedFlagged[0].result.category ?? 'Policy violation';
   io.to(`user:${senderId}`).emit('message:media_rejected', {
     messageId,
     category,
