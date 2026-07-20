@@ -85,8 +85,10 @@ router.get('/esek/feed', async (req: AuthRequest, res: Response): Promise<void> 
       id: row.id,
       shopifyId: row.shopifyId,
       title: row.title,
-      price: row.price,
-      compareAtPrice: row.compareAtPrice,
+      // Postgres numeric comes back from node-pg as a string — coerce to number so the
+      // { price: number } contract holds and the client can format / compare it directly.
+      price: Number(row.price),
+      compareAtPrice: row.compareAtPrice == null ? null : Number(row.compareAtPrice),
       imageUrl: row.imageUrl,
       handle: row.handle,
       productUrl: `https://esek.biz/products/${row.handle}`,
