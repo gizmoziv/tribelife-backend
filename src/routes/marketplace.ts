@@ -1,5 +1,5 @@
 import { Router, Response } from 'express';
-import { and, desc, eq, lt, or } from 'drizzle-orm';
+import { and, desc, eq, lt } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '../db';
 import { esekProducts } from '../db/schema';
@@ -13,29 +13,32 @@ router.use(requireAuth);
 const PAGE_SIZE = 20;
 
 // ── Cursor helpers ─────────────────────────────────────────────────────────
-// Opaque base64 cursor keyed on (createdAt, id) — stable compound keyset mirroring
-// the news feed. Ties on created_at broken by id (serial PK, guaranteed unique).
-function encodeCursor(createdAt: Date, id: number): string {
-  return Buffer.from(`${createdAt.toISOString()}|${id}`, 'utf8').toString('base64');
+// Opaque base64 cursor keyed on the serial PK `id` alone. A (createdAt, id) keyset
+// is unsafe here: a full sync writes every row in one INSERT, so all rows share an
+// identical created_at (single-statement now()), AND node-pg truncates Postgres'
+// microsecond timestamp to JS millisecond precision — so the cursor's created_at
+// can't round-trip an exact match and paging stalls after page 1. `id` is unique,
+// monotonic with first-seen (so id DESC == newest-first), and lossless as a number.
+function encodeCursor(id: number): string {
+  return Buffer.from(String(id), 'utf8').toString('base64');
 }
 
-function decodeCursor(raw: string): { createdAt: Date; id: number } | null {
+function decodeCursor(raw: string): { id: number } | null {
   try {
-    const [iso, idStr] = Buffer.from(raw, 'base64').toString('utf8').split('|');
-    const d = new Date(iso);
-    const id = parseInt(idStr, 10);
+    const id = parseInt(Buffer.from(raw, 'base64').toString('utf8'), 10);
     // NaN guard — invalid cursor treated as no cursor (first page), never reflected in error
-    if (isNaN(d.getTime()) || isNaN(id)) return null;
-    return { createdAt: d, id };
+    if (Number.isNaN(id)) return null;
+    return { id };
   } catch {
     return null;
   }
 }
 
 // ── GET /esek/feed ───────────────────────────────────────────────────────────
-// Keyset-paginated (created_at DESC, id DESC) in-stock, non-delisted Esek products
-// newest-first, in the jobs-feed response shape { products, hasMore, nextCursor }.
-// Served by esek_products_feed_idx (delisted, available, created_at DESC, id DESC).
+// Keyset-paginated (id DESC → newest-first, since id is monotonic with first-seen)
+// in-stock, non-delisted Esek products, in the jobs-feed response shape
+// { products, hasMore, nextCursor }. The esek_products_feed_idx
+// (delisted, available, created_at DESC, id DESC) still serves the WHERE prefix.
 const feedQuerySchema = z.object({ cursor: z.string().optional() });
 
 router.get('/esek/feed', async (req: AuthRequest, res: Response): Promise<void> => {
@@ -49,14 +52,8 @@ router.get('/esek/feed', async (req: AuthRequest, res: Response): Promise<void> 
 
   const cursor = parse.data.cursor ? decodeCursor(parse.data.cursor) : null;
 
-  // Keyset cursor filter: rows strictly older than cursor createdAt, OR same
-  // createdAt with smaller id (compound tiebreaker — stable under concurrent inserts).
-  const cursorFilter = cursor
-    ? or(
-        lt(esekProducts.createdAt, cursor.createdAt),
-        and(eq(esekProducts.createdAt, cursor.createdAt), lt(esekProducts.id, cursor.id)),
-      )
-    : undefined;
+  // Keyset cursor filter: rows with a smaller id than the cursor (id DESC order).
+  const cursorFilter = cursor ? lt(esekProducts.id, cursor.id) : undefined;
 
   try {
     const rows = await db
@@ -68,18 +65,17 @@ router.get('/esek/feed', async (req: AuthRequest, res: Response): Promise<void> 
         compareAtPrice: esekProducts.compareAtPrice,
         imageUrl: esekProducts.imageUrl,
         handle: esekProducts.handle,
-        createdAt: esekProducts.createdAt, // needed for the next cursor; not projected into the item
       })
       .from(esekProducts)
       .where(and(eq(esekProducts.available, true), eq(esekProducts.delisted, false), cursorFilter))
-      .orderBy(desc(esekProducts.createdAt), desc(esekProducts.id))
+      .orderBy(desc(esekProducts.id))
       .limit(PAGE_SIZE + 1); // fetch 1 extra to determine hasMore
 
     const hasMore = rows.length > PAGE_SIZE;
     const page = hasMore ? rows.slice(0, PAGE_SIZE) : rows;
 
     const last = page[page.length - 1];
-    const nextCursor = hasMore && last ? encodeCursor(last.createdAt, last.id) : null;
+    const nextCursor = hasMore && last ? encodeCursor(last.id) : null;
 
     const products = page.map((row) => ({
       id: row.id,
