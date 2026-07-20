@@ -19,7 +19,8 @@
     "db:seed:promo": "tsx src/db/seed-promo.ts",
     "db:create-trgm-indexes": "tsx scripts/create-trgm-indexes.ts",
     "db:verify-trgm-indexes": "tsx scripts/verify-trgm-indexes.ts",
-    "news:ingest": "tsx scripts/ingest-news.ts"
+    "news:ingest": "tsx scripts/ingest-news.ts",
+    "esek:sync-once": "tsx scripts/run-esek-sync-once.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.36.3",

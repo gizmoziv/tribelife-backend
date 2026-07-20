@@ -45,6 +45,7 @@ import { startNewsIngesterCron } from './jobs/newsIngester';
 import { startNewsPushRetentionCron } from './jobs/newsPushRetention';
 import { startJobsScraperCron } from './jobs/jobsScraper';
 import { startAtsFeedsCron } from './jobs/atsFeeds';
+import { startEsekSyncCron } from './jobs/esekSync';
 import { startAliasReaperCron } from './jobs/aliasReaper';
 import { createSocketServer } from './socket';
 import { pool } from './db';
@@ -272,6 +273,7 @@ async function bootstrap(): Promise<void> {
     const newsPushRetentionTask = startNewsPushRetentionCron();
     const jobsScraperTask = startJobsScraperCron(); // Phase 24 — null unless JOBS_SCRAPER_ENABLED=true (paused pending JewishJobs permission)
     const atsFeedsTask = startAtsFeedsCron(); // Phase 24 — null unless ATS_FEEDS_ENABLED=true (legal Greenhouse/Lever org feeds)
+    const esekSyncTask = startEsekSyncCron(); // Phase 32 — null unless ESEK_SYNC_ENABLED=true
     const aliasReaperTask = startAliasReaperCron(); // daily reap of unused group-slug aliases (30-day TTL)
 
     // HARDEN-02: register SIGTERM/SIGINT graceful shutdown.
@@ -281,6 +283,7 @@ async function bootstrap(): Promise<void> {
     const cronTasks = [newsIngesterTask, beaconMatcherTask, newsPushRetentionTask, aliasReaperTask];
     if (jobsScraperTask) cronTasks.push(jobsScraperTask); // only when the scraper cron is enabled
     if (atsFeedsTask) cronTasks.push(atsFeedsTask); // only when ATS feeds cron is enabled
+    if (esekSyncTask) cronTasks.push(esekSyncTask); // only when Esek sync cron is enabled
     registerShutdownSignals({
       httpServer,
       io,
