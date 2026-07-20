@@ -8,6 +8,7 @@ import {
   varchar,
   jsonb,
   numeric,
+  bigint,
   unique,
   index,
   uniqueIndex,
@@ -816,4 +817,31 @@ export const jobPostings = pgTable('job_postings', {
   sourceExtRefUniq: unique().on(t.source, t.externalRef),          // dedup key for upsert
   viewCountIdx:     index('job_postings_view_count_idx').on(t.viewCount),
   postedDateIdx:    index('job_postings_posted_date_idx').on(t.postedDate),
+}));
+
+// ── Phase 32: Esek Marketplace Products ───────────────────────────────────────
+// Daily sync of the Esek (esek.biz) Shopify catalog. Mirrors job_postings:
+// dedup key = shopifyId (numeric Shopify product id), immutable createdAt (first
+// seen), refreshed mutable fields each sync. delisted flips true when a product
+// stops appearing in the feed. Fed to the mobile Marketplace carousel (Phase 33).
+export const esekProducts = pgTable('esek_products', {
+  id:             serial('id').primaryKey(),
+  shopifyId:      bigint('shopify_id', { mode: 'number' }).notNull(),   // Shopify numeric product id (exceeds int4) — dedup key
+  title:          text('title').notNull(),
+  handle:         text('handle').notNull(),                             // product URL = https://esek.biz/products/{handle}
+  price:          numeric('price').notNull(),                           // variants[0].price (USD)
+  compareAtPrice: numeric('compare_at_price'),                          // variants[0].compare_at_price — nullable
+  imageUrl:       text('image_url'),                                    // images[0].src — nullable
+  vendor:         text('vendor'),                                       // nullable
+  productType:    text('product_type'),                                 // nullable
+  tags:           jsonb('tags'),                                        // string[] — nullable
+  available:      boolean('available').notNull().default(true),         // true if ANY variant available
+  delisted:       boolean('delisted').notNull().default(false),         // true when product vanishes from the feed
+  publishedAt:    timestamp('published_at'),                            // Shopify published_at — nullable
+  createdAt:      timestamp('created_at').notNull().defaultNow(),       // immutable — first seen
+  updatedAt:      timestamp('updated_at').notNull().defaultNow(),       // refreshed each sync
+}, (t) => ({
+  shopifyIdUniq: unique().on(t.shopifyId),                             // dedup key for onConflictDoUpdate
+  feedIdx:       index('esek_products_feed_idx')                       // serves the keyset feed (D-01)
+    .on(t.delisted, t.available, t.createdAt.desc(), t.id.desc()),
 }));
