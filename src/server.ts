@@ -34,6 +34,7 @@ import referralsRouter from './routes/referrals';
 import groupsRouter from './routes/groups';
 import pinsRouter from './routes/pins';
 import jobsRouter from './routes/jobs';
+import marketplaceRouter from './routes/marketplace';
 import linkPreviewRouter from './routes/linkPreview';
 import orgsRouter from './routes/orgs';
 import orgsPublicRouter from './routes/orgsPublic';
@@ -203,6 +204,7 @@ app.use('/api/referrals', referralsRouter);
 app.use('/api/chat/groups', groupsRouter);
 app.use('/api/pins', pinsRouter);
 app.use('/api/jobs', jobsRouter);
+app.use('/api/marketplace', marketplaceRouter);
 app.use('/api/link-preview', linkPreviewRouter);
 
 // ── Resolve public directory for static files ────────────────────────────
