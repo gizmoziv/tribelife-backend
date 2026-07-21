@@ -21,7 +21,11 @@ const log = logger.child({ module: 'esek-sync' });
  * start/complete line with counts + duration_ms. The body is wrapped so any failure
  * logs and returns zeroed counts rather than throwing out of the cron.
  */
-export async function runEsekSync(): Promise<{ fetched: number; upserted: number; delisted: number }> {
+export async function runEsekSync(): Promise<{
+  fetched: number;
+  upserted: number;
+  delisted: number;
+}> {
   const runStart = Date.now();
   log.info('Esek sync starting');
   try {
@@ -29,7 +33,12 @@ export async function runEsekSync(): Promise<{ fetched: number; upserted: number
     const { upserted } = await upsertProducts(rows);
     const { delisted } = await reconcileDelisted(rows.map((r) => r.shopifyId));
     log.info(
-      { fetched: rows.length, upserted, delisted, duration_ms: Date.now() - runStart },
+      {
+        fetched: rows.length,
+        upserted,
+        delisted,
+        duration_ms: Date.now() - runStart,
+      },
       'Esek sync complete',
     );
     return { fetched: rows.length, upserted, delisted };
