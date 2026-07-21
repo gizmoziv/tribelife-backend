@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { db } from '../db';
 import { esekProducts } from '../db/schema';
 import { requireAuth, AuthRequest } from '../middleware/auth';
+import { logUserEvent } from '../services/userEvents';
 import logger from '../lib/logger';
 
 const log = logger.child({ module: 'esek-feed' });
@@ -95,6 +96,31 @@ router.get('/esek/feed', async (req: AuthRequest, res: Response): Promise<void> 
     log.error({ err, userId }, 'Failed to fetch esek feed');
     res.status(500).json({ error: 'Failed to load feed' });
   }
+});
+
+// ── POST /esek/click ──────────────────────────────────────────────────────────
+// Attribution/analytics: record a marketplace_item_click into user_events when a
+// user taps through to a product. metadata = { marketplace, item_id } where item_id
+// is the Shopify product id. `marketplace` is server-set (not client-supplied) so
+// it can't be spoofed; add sibling endpoints when more marketplaces are onboarded.
+const clickBodySchema = z.object({ shopifyId: z.number().int().positive() });
+
+router.post('/esek/click', async (req: AuthRequest, res: Response): Promise<void> => {
+  const userId = req.user!.id;
+
+  const parse = clickBodySchema.safeParse(req.body);
+  if (!parse.success) {
+    res.status(400).json({ error: parse.error.errors[0].message });
+    return;
+  }
+
+  // logUserEvent is best-effort (never throws) — safe to await without a guard.
+  await logUserEvent(userId, 'marketplace_item_click', {
+    marketplace: 'esek',
+    item_id: parse.data.shopifyId,
+  });
+
+  res.json({ ok: true });
 });
 
 export default router;

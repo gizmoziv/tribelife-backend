@@ -15,7 +15,11 @@ import logger from '../lib/logger';
 
 const log = logger.child({ module: 'user-events' });
 
-export type UserEventType = 'login' | 'account_deleted' | 'image_uploaded';
+export type UserEventType =
+  | 'login'
+  | 'account_deleted'
+  | 'image_uploaded'
+  | 'marketplace_item_click';
 
 export async function logUserEvent(
   userId: number | null,
