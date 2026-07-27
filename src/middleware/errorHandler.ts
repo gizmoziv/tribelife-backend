@@ -47,16 +47,22 @@ export default function errorHandler(
   // Structured log — always, regardless of headers-sent.
   // reqId is set by pino-http (Plan 01, D-26). Untyped read via `as any`
   // because stock Express Request doesn't declare `id`.
-  log.error(
+  //
+  // Log level tracks fault ownership: 5xx are server faults (level=error), 4xx
+  // are client faults — validation, auth, disallowed CORS origin, bot/scanner
+  // probes — and log at level=warn so they stay out of the 5xx error surface
+  // (dashboard error-logs tile, error-rate alerts) and can't bury real errors.
+  const isServerFault = statusCode >= 500;
+  log[isServerFault ? 'error' : 'warn'](
     {
-      event: 'unhandled_error',
+      event: isServerFault ? 'unhandled_error' : 'client_error',
       reqId: (req as { id?: string }).id,
       method: req.method,
       path: req.path,
       statusCode,
       err,
     },
-    'Unhandled error',
+    isServerFault ? 'Unhandled error' : 'Client error',
   );
 
   if (res.headersSent) {

@@ -85,7 +85,15 @@ app.use(cors({
     ? (origin, callback) => {
         if (!origin) return callback(null, true); // Allow mobile/native (no Origin header)
         if (allowedOrigins.includes(origin)) return callback(null, true);
-        callback(new Error(`CORS: origin ${origin} not allowed`));
+        // Disallowed origin is a client problem (403), not a server fault (500).
+        // Tagging statusCode keeps bot/scanner probes out of the 5xx error surface.
+        const e = new Error(`CORS: origin ${origin} not allowed`) as Error & {
+          statusCode?: number;
+          expose?: boolean;
+        };
+        e.statusCode = 403;
+        e.expose = true;
+        callback(e);
       }
     : true,
   credentials: true,
