@@ -210,10 +210,24 @@ export async function createSocketServer(
           // a second round-trip.
           isPremium: userProfiles.isPremium,
           premiumExpiresAt: userProfiles.premiumExpiresAt,
+          // Phase 34 (D-17): gate checked below, before any socket.data.* write.
+          accessStatus: userProfiles.accessStatus,
         })
         .from(userProfiles)
         .where(eq(userProfiles.userId, payload.userId))
         .limit(1);
+
+      // Phase 34 (D-17): refuse the handshake before any socket.data.* is set.
+      // Deliberately scoped to accessStatus only — do NOT add a bannedAt check
+      // here, that is a separate pre-existing gap out of this phase's scope
+      // (RESEARCH Pitfall 5).
+      const accessStatus = profile[0]?.accessStatus ?? null;
+      if (accessStatus === 'pending') {
+        return next(new Error('access_pending'));
+      }
+      if (accessStatus === 'rejected') {
+        return next(new Error('access_rejected'));
+      }
 
       // Phase 15 D-08: org_admin tier counts as paid for non-native timezone
       // access — single-source predicate `callerCanAccessNonNativeTimezone`

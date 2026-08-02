@@ -221,6 +221,7 @@ router.post('/google', async (req: Request, res: Response): Promise<void> => {
         bio: profile?.bio ?? null,
         referralSource,
         referrerHandle,
+        accessStatus: profile?.accessStatus ?? null,
       },
       needsOnboarding: needsOnboarding({
         handle: profile?.handle ?? null,
@@ -412,6 +413,7 @@ router.post('/apple', async (req: Request, res: Response): Promise<void> => {
         bio: profile?.bio ?? null,
         referralSource,
         referrerHandle,
+        accessStatus: profile?.accessStatus ?? null,
       },
       needsOnboarding: needsOnboarding({
         handle: profile?.handle ?? null,
@@ -880,6 +882,7 @@ router.get(
         bio: req.user!.bio ?? null,
         referralSource,
         referrerHandle,
+        accessStatus: req.user!.accessStatus,
       },
       needsOnboarding: needsOnboarding(req.user!),
       capabilities,

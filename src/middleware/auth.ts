@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { db } from '../db';
-import { users, userProfiles } from '../db/schema';
+import { users, userProfiles, AccessStatus } from '../db/schema';
 import { eq } from 'drizzle-orm';
 
 if (!process.env.JWT_SECRET) {
@@ -29,6 +29,9 @@ export interface AuthUser {
   candleLon: number | null;
   candleLabel: string | null;
   candleSource: string | null;
+  // Phase 34: null | 'pending' | 'approved' | 'rejected'. null and 'approved'
+  // are treated identically by requireApprovedAccess (D-03 — ungated).
+  accessStatus: AccessStatus | null;
 }
 
 export const HANDLE_COOLDOWN_DAYS = 30;
@@ -41,6 +44,11 @@ export const HANDLE_COOLDOWN_MS = HANDLE_COOLDOWN_DAYS * 24 * 60 * 60 * 1000;
 // `code: 'account_suspended'` rides alongside for future clients to branch on.
 export const ACCOUNT_SUSPENDED_MESSAGE =
   'Your account has been suspended for violating our community guidelines.';
+
+// Phase 34 (D-17): user-facing messages for the requireApprovedAccess gate,
+// same rendering convention as ACCOUNT_SUSPENDED_MESSAGE above.
+export const ACCESS_PENDING_MESSAGE = 'Your access request is under review.';
+export const ACCESS_REJECTED_MESSAGE = 'Your access request was not approved.';
 
 export function needsOnboarding(user: Pick<AuthUser, 'handle' | 'acceptedTermsAt'>): boolean {
   if (!user.handle) return true;
@@ -81,12 +89,42 @@ export async function loadAuthUser(userId: number): Promise<AuthUser | null> {
       candleLon: userProfiles.candleLon,
       candleLabel: userProfiles.candleLabel,
       candleSource: userProfiles.candleSource,
+      accessStatus: userProfiles.accessStatus,
     })
     .from(users)
     .leftJoin(userProfiles, eq(users.id, userProfiles.userId))
     .where(eq(users.id, userId))
     .limit(1);
   return (result[0] as AuthUser | undefined) ?? null;
+}
+
+/**
+ * Phase 34 (D-17): defense-in-depth gate for protected write endpoints.
+ * MUST be mounted AFTER requireAuth (reads req.user.accessStatus, which
+ * requireAuth/loadAuthUser already populates — no extra DB query here).
+ *
+ * Deliberately NOT merged into requireAuth: a 'pending'/'rejected' user must
+ * still reach their own auth.me()/access-request-submit/referral-validate
+ * endpoints — those are the user's only exit path (RESEARCH Pitfall 1).
+ *
+ * null and 'approved' are treated identically (next()) — this is the
+ * invariant that keeps D-03 true for every pre-existing user.
+ */
+export function requireApprovedAccess(
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction,
+): void {
+  const status = req.user?.accessStatus;
+  if (status === 'pending') {
+    res.status(403).json({ error: ACCESS_PENDING_MESSAGE, code: 'access_pending' });
+    return;
+  }
+  if (status === 'rejected') {
+    res.status(403).json({ error: ACCESS_REJECTED_MESSAGE, code: 'access_rejected' });
+    return;
+  }
+  next();
 }
 
 export async function requireAuth(

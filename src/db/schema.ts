@@ -93,6 +93,11 @@ export const userProfiles = pgTable('user_profiles', {
   // Throttled "last seen" watermark (AUDIT-02). Updated on socket connect at
   // most ~once/5min per user; null = never connected since the column shipped.
   lastActiveAt: timestamp('last_active_at'),
+  // ── Phase 34: Required Referral Gate + Access Requests (D-03, D-05) ──────
+  // accessStatus is nullable with NO default — every existing production row
+  // stays NULL (= ungated). Only set once a user submits an access request.
+  accessStatus: varchar('access_status', { length: 20 }), // null | 'pending' | 'approved' | 'rejected'
+  referralAttempts: integer('referral_attempts').notNull().default(0), // server-side 3-attempt cap (D-05)
   createdAt: timestamp('created_at').defaultNow(),
   updatedAt: timestamp('updated_at').defaultNow(),
 }, (t) => ({
@@ -844,4 +849,34 @@ export const esekProducts = pgTable('esek_products', {
   shopifyIdUniq: unique().on(t.shopifyId),                             // dedup key for onConflictDoUpdate
   feedIdx:       index('esek_products_feed_idx')                       // serves the keyset feed (D-01)
     .on(t.delisted, t.available, t.createdAt.desc(), t.id.desc()),
+}));
+
+// ─────────────────────────────────────────────
+// Phase 34: Required Referral Gate + Access Requests
+// ─────────────────────────────────────────────
+// A user who cannot produce a valid referral handle (or leaves it blank) is
+// routed to an "apply for access" flow instead. accessStatus on user_profiles
+// (D-03, above) tracks the gate; this table holds the actual application.
+// No email column (D-02) — the applicant's email is the existing users.email,
+// read via join. decidedBy is free text (no admin-user table exists — Pitfall 4).
+export type AccessStatus = 'pending' | 'approved' | 'rejected';
+
+export type AccessRequestSocial = {
+  platform: 'linkedin' | 'instagram' | 'facebook' | 'other';
+  platformOther?: string;
+  handle: string;
+};
+
+export const accessRequests = pgTable('access_requests', {
+  id: serial('id').primaryKey(),
+  userId: integer('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
+  reason: text('reason').notNull(),
+  socials: jsonb('socials').$type<AccessRequestSocial[]>().notNull(),
+  status: varchar('status', { length: 20 }).notNull().default('pending'), // 'pending' | 'approved' | 'rejected'
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  decidedAt: timestamp('decided_at'),
+  decidedBy: varchar('decided_by', { length: 100 }), // free-text admin label supplied by the caller (adminLabel)
+}, (t) => ({
+  userIdx: index('access_requests_user_idx').on(t.userId),
+  statusIdx: index('access_requests_status_idx').on(t.status),
 }));
