@@ -57,13 +57,32 @@ router.post('/', async (req: AuthRequest, res: Response): Promise<void> => {
   // locked copy), not resubmission — allowing it would create duplicate rows
   // the admin queue would have to de-duplicate and hand a rejected user an
   // unlimited retry loop.
+  // CR-01: also check the caller's LIVE accessStatus, not just prior
+  // access_requests rows — an already-approved (or never-gated, NULL) user
+  // has no 'pending'/'rejected' row to trip the check below, but accepting
+  // their submission would flip a working account straight to 'pending' and
+  // self-lock them out on their very next request.
+  const [callerProfile] = await db
+    .select({ accessStatus: userProfiles.accessStatus })
+    .from(userProfiles)
+    .where(eq(userProfiles.userId, userId))
+    .limit(1);
+
+  if (callerProfile?.accessStatus === 'approved') {
+    res.status(409).json({
+      error: 'Your account already has access — no need to apply.',
+      code: 'access_already_approved',
+    });
+    return;
+  }
+
   const [existing] = await db
     .select({ id: accessRequests.id, status: accessRequests.status })
     .from(accessRequests)
     .where(
       and(
         eq(accessRequests.userId, userId),
-        inArray(accessRequests.status, ['pending', 'rejected']),
+        inArray(accessRequests.status, ['pending', 'rejected', 'approved']),
       ),
     )
     .limit(1);
@@ -77,29 +96,37 @@ router.post('/', async (req: AuthRequest, res: Response): Promise<void> => {
     return;
   }
 
-  // D-09: insert the row. decidedAt/decidedBy stay NULL until an admin
-  // decides. No email is stored — the applicant's email is their existing
-  // users.email, read by the admin list endpoint via join (D-02).
-  const [created] = await db.insert(accessRequests)
-    .values({
-      userId,
-      reason: parse.data.reason,
-      socials: parse.data.socials,
-      status: 'pending',
-    })
-    .returning({
-      id: accessRequests.id,
-      status: accessRequests.status,
-      createdAt: accessRequests.createdAt,
-    });
+  // WR-02: wrap the insert + gate-flip in a transaction — both writes must
+  // succeed together, or neither does (contrast with the previous two
+  // independent awaits, which could leave access_requests and
+  // user_profiles.access_status out of sync on a mid-sequence crash/error).
+  const created = await db.transaction(async (tx) => {
+    // D-09: insert the row. decidedAt/decidedBy stay NULL until an admin
+    // decides. No email is stored — the applicant's email is their existing
+    // users.email, read by the admin list endpoint via join (D-02).
+    const [row] = await tx.insert(accessRequests)
+      .values({
+        userId,
+        reason: parse.data.reason,
+        socials: parse.data.socials,
+        status: 'pending',
+      })
+      .returning({
+        id: accessRequests.id,
+        status: accessRequests.status,
+        createdAt: accessRequests.createdAt,
+      });
 
-  // D-09: flip the caller's own gate status — this is what makes the
-  // post-auth approval-status middleware and the socket handshake gate
-  // start firing for this user.
-  await db
-    .update(userProfiles)
-    .set({ accessStatus: 'pending', updatedAt: new Date() })
-    .where(eq(userProfiles.userId, userId));
+    // D-09: flip the caller's own gate status — this is what makes the
+    // post-auth approval-status middleware and the socket handshake gate
+    // start firing for this user.
+    await tx
+      .update(userProfiles)
+      .set({ accessStatus: 'pending', updatedAt: new Date() })
+      .where(eq(userProfiles.userId, userId));
+
+    return row;
+  });
 
   console.log('[access-request]', { userId, requestId: created.id });
 
