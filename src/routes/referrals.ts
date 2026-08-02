@@ -2,7 +2,7 @@ import { Router, Response } from 'express';
 import { z } from 'zod';
 import { db } from '../db';
 import { referrals, attributionConversions, users, userProfiles } from '../db/schema';
-import { eq, count, sql } from 'drizzle-orm';
+import { eq, and, lt, count, sql } from 'drizzle-orm';
 import { requireAuth, requireApprovedAccess, AuthRequest } from '../middleware/auth';
 
 const router = Router();
@@ -174,12 +174,27 @@ router.post('/validate', async (req: AuthRequest, res: Response): Promise<void> 
       // Atomic per-row increment via the sql template form (not a JS
       // read-modify-write) so two concurrent calls cannot both write the
       // same value (T-34-14).
-      await db
+      //
+      // WR-05: the WHERE clause + RETURNING make the *cap decision* atomic
+      // too, not just the write. Without the `lt` guard, two concurrent
+      // invalid-handle requests can both read attempts=2, both pass the
+      // `attempts >= REFERRAL_MAX_ATTEMPTS` check above, and both increment
+      // — overrunning the cap by one. Gating the UPDATE itself on
+      // `referralAttempts < REFERRAL_MAX_ATTEMPTS` means only requests that
+      // are still genuinely under the cap at write-time succeed; a request
+      // that loses the race gets no row back and is treated as exhausted.
+      const [incremented] = await db
         .update(userProfiles)
         .set({ referralAttempts: sql`${userProfiles.referralAttempts} + 1` })
-        .where(eq(userProfiles.userId, userId));
+        .where(
+          and(
+            eq(userProfiles.userId, userId),
+            lt(userProfiles.referralAttempts, REFERRAL_MAX_ATTEMPTS),
+          ),
+        )
+        .returning({ referralAttempts: userProfiles.referralAttempts });
 
-      const nextAttempts = attempts + 1;
+      const nextAttempts = incremented?.referralAttempts ?? REFERRAL_MAX_ATTEMPTS;
       valid = false;
       exhausted = nextAttempts >= REFERRAL_MAX_ATTEMPTS;
       attemptsRemaining = Math.max(0, REFERRAL_MAX_ATTEMPTS - nextAttempts);
