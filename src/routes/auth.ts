@@ -4,7 +4,7 @@ import logger from '../lib/logger';
 const log = logger.child({ module: 'auth' });
 import { OAuth2Client } from 'google-auth-library';
 import { createRemoteJWKSet, jwtVerify } from 'jose';
-import { eq, count } from 'drizzle-orm';
+import { eq, count, and, ne } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '../db';
 import {
@@ -1062,6 +1062,28 @@ router.put(
           set: { userId, platform, tokenType, updatedAt: new Date() },
         });
 
+      // Prune-on-register: device_tokens has no unique constraint on
+      // (userId, platform) — only on the token value itself — so without this,
+      // every reinstall/relogin/new build/token rotation ADDS a row instead of
+      // replacing the old one, and the fan-out loop in pushNotifications.ts
+      // (deliverPersonPush/deliverPersonPushBatch) sends one push per row with
+      // no dedup, causing silent duplicate notifications. Keep at most one row
+      // per (userId, platform) going forward by deleting this user's OTHER rows
+      // for the same platform now that the current token has been upserted.
+      // Deliberately keyed on platform only (not platform+tokenType): the
+      // mobile client only ever registers a single token per platform per
+      // device (see app/_layout.tsx), so any other same-platform row is stale.
+      const pruned = await db
+        .delete(deviceTokens)
+        .where(
+          and(
+            eq(deviceTokens.userId, userId),
+            eq(deviceTokens.platform, platform),
+            ne(deviceTokens.token, token),
+          ),
+        )
+        .returning({ id: deviceTokens.id });
+
       // Backward compat: the legacy Expo send path + iOS still read
       // userProfiles.expoPushToken. Only expo tokens write it; fcm tokens don't.
       let profileRows = 0;
@@ -1075,7 +1097,7 @@ router.put(
       }
 
       log.info(
-        { userId, handle, platform, tokenType, profileRows },
+        { userId, handle, platform, tokenType, profileRows, prunedRows: pruned.length },
         'push-token stored',
       );
       res.json({ ok: true });
