@@ -11,7 +11,7 @@ import {
   messages,
   groupSlugAliases,
 } from '../db/schema';
-import { requireAuth, AuthRequest } from '../middleware/auth';
+import { requireAuth, requireApprovedAccess, AuthRequest } from '../middleware/auth';
 import { requireCapability, CapabilityViolationError } from '../middleware/capabilities';
 import { computeCapabilities } from '../services/capabilities';
 import { enforceLimit, countOwnedGroups } from '../services/limitChecks';
@@ -23,6 +23,8 @@ const log = logger.child({ module: 'groups' });
 
 const router = Router();
 router.use(requireAuth);
+// Phase 34 (D-17): pending/rejected users are blocked server-side, independent of the mobile block screen.
+router.use(requireApprovedAccess);
 
 // Operator override: these user IDs bypass the maxGroupsOwned tier limit and may
 // create unlimited groups (internal/exec accounts). Keep this list tiny — it is

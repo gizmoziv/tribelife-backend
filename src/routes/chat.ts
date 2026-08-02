@@ -12,7 +12,7 @@ import {
   userProfiles,
   blockedUsers,
 } from '../db/schema';
-import { requireAuth, AuthRequest } from '../middleware/auth';
+import { requireAuth, requireApprovedAccess, AuthRequest } from '../middleware/auth';
 import { requireCapability } from '../middleware/capabilities';
 import { attachReactions } from '../utils/attachReactions';
 import { redactDeletedMessages } from '../utils/redactDeleted';
@@ -118,6 +118,8 @@ const aroundMessageSchema = z.object({
 
 const router = Router();
 router.use(requireAuth);
+// Phase 34 (D-17): pending/rejected users are blocked server-side, independent of the mobile block screen.
+router.use(requireApprovedAccess);
 
 // ── List DM conversations + groups for current user ─────────────────────────
 router.get('/conversations', async (req: AuthRequest, res: Response): Promise<void> => {

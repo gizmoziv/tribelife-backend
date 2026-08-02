@@ -12,7 +12,7 @@ import {
   globeRoomMemberships,
   userProfiles,
 } from '../db/schema';
-import { requireAuth, AuthRequest } from '../middleware/auth';
+import { requireAuth, requireApprovedAccess, AuthRequest } from '../middleware/auth';
 import { translateLegacyTimezoneRoomId, getZoneForTimezone } from '../config/timezoneZones';
 import { getIO } from '../lib/socketRegistry';
 import { emitReadForConversations } from '../socket/receipts';
@@ -21,6 +21,8 @@ import logger from '../lib/logger';
 
 const router = Router();
 router.use(requireAuth);
+// Phase 34 (D-17): pending/rejected users are blocked server-side, independent of the mobile block screen.
+router.use(requireApprovedAccess);
 
 // ── Get notifications for current user ────────────────────────────────────
 router.get('/', async (req: AuthRequest, res: Response): Promise<void> => {

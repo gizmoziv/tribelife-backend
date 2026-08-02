@@ -7,11 +7,13 @@ import { eq, and } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '../db';
 import { blockedUsers, contentReports, users, userProfiles, messages } from '../db/schema';
-import { requireAuth, AuthRequest } from '../middleware/auth';
+import { requireAuth, requireApprovedAccess, AuthRequest } from '../middleware/auth';
 import { cdnUrlToKey } from '../services/storage';
 
 const router = Router();
 router.use(requireAuth);
+// Phase 34 (D-17): pending/rejected users are blocked server-side, independent of the mobile block screen.
+router.use(requireApprovedAccess);
 
 sgMail.setApiKey(process.env.SENDGRID_API_KEY!);
 

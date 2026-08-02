@@ -3,7 +3,7 @@ import { and, desc, eq, inArray, lt, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '../db';
 import { newsArticles, newsOutlets, newsReactions } from '../db/schema';
-import { requireAuth, AuthRequest } from '../middleware/auth';
+import { requireAuth, requireApprovedAccess, AuthRequest } from '../middleware/auth';
 import { attachNewsReactions } from '../utils/attachNewsReactions';
 import { getConfig } from '../services/news/config';
 import logger from '../lib/logger';
@@ -11,6 +11,8 @@ import logger from '../lib/logger';
 const log = logger.child({ module: 'news-feed' });
 const router = Router();
 router.use(requireAuth);
+// Phase 34 (D-17): pending/rejected users are blocked server-side, independent of the mobile block screen.
+router.use(requireApprovedAccess);
 
 const PAGE_SIZE = 20;
 

@@ -7,10 +7,12 @@ import { z } from 'zod';
 import { Server } from 'socket.io';
 import { db } from '../db';
 import { reactions, messages } from '../db/schema';
-import { requireAuth, AuthRequest } from '../middleware/auth';
+import { requireAuth, requireApprovedAccess, AuthRequest } from '../middleware/auth';
 
 const router = Router();
 router.use(requireAuth);
+// Phase 34 (D-17): pending/rejected users are blocked server-side, independent of the mobile block screen.
+router.use(requireApprovedAccess);
 
 // ── Toggle a reaction (add or remove) ─────────────────────────────────────
 const toggleReactionSchema = z.object({

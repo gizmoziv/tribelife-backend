@@ -3,12 +3,14 @@ import { eq, and, inArray, ne, isNull, sql, asc, ilike } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '../db';
 import { users, userProfiles, conversationParticipants, organizationMemberships } from '../db/schema';
-import { requireAuth, AuthRequest } from '../middleware/auth';
+import { requireAuth, requireApprovedAccess, AuthRequest } from '../middleware/auth';
 import { GLOBE_ROOMS } from '../config/globeRooms';
 import { getZoneForTimezone, getTimezoneZone } from '../config/timezoneZones';
 
 const router = Router();
 router.use(requireAuth);
+// Phase 34 (D-17): pending/rejected users are blocked server-side, independent of the mobile block screen.
+router.use(requireApprovedAccess);
 
 // ⚠️ Route ordering matters here. The `/:handle` route below is greedy and
 // matches any single-segment path. All static single-segment routes

@@ -11,7 +11,7 @@ import {
   users,
   notifications,
 } from '../db/schema';
-import { requireAuth, AuthRequest } from '../middleware/auth';
+import { requireAuth, requireApprovedAccess, AuthRequest } from '../middleware/auth';
 import { requireCapability, getCapabilities } from '../middleware/capabilities';
 import { sendPushToUser } from '../services/pushNotifications';
 import { emitCapabilityInvalidationToUser } from '../services/capabilityInvalidation';
@@ -21,6 +21,8 @@ import logger from '../lib/logger';
 const log = logger.child({ module: 'orgs' });
 const router = Router();
 router.use(requireAuth);
+// Phase 34 (D-17): pending/rejected users are blocked server-side, independent of the mobile block screen.
+router.use(requireApprovedAccess);
 
 // ── Reserved slugs that cannot be claimed (collide with route segments) ──────
 const RESERVED_SLUGS = new Set(['invites', 'me', 'admin', 'new']);

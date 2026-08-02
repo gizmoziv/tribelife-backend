@@ -6,7 +6,7 @@ import { eq, and, desc, isNull, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '../db';
 import { beacons, beaconMatches, userProfiles, users } from '../db/schema';
-import { requireAuth, AuthRequest } from '../middleware/auth';
+import { requireAuth, requireApprovedAccess, AuthRequest } from '../middleware/auth';
 import { CapabilityViolationError, getCapabilities } from '../middleware/capabilities';
 import { enforceLimit, countOccupiedBeaconSlots, getOccupiedBeaconSlotInfo } from '../services/limitChecks';
 import { analyzeBeacon } from '../services/claude';
@@ -15,6 +15,8 @@ import { moderationEnforced } from '../lib/moderationEnforcement';
 
 const router = Router();
 router.use(requireAuth);
+// Phase 34 (D-17): pending/rejected users are blocked server-side, independent of the mobile block screen.
+router.use(requireApprovedAccess);
 
 // ── Create a beacon ────────────────────────────────────────────────────────
 const createBeaconSchema = z.object({

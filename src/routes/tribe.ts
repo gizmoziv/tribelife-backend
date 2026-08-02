@@ -13,7 +13,7 @@ import { z } from 'zod';
 import { db } from '../db';
 import { userProfiles, surveys, surveyOptions, surveyVotes } from '../db/schema';
 import { and, count, eq, inArray, sql } from 'drizzle-orm';
-import { requireAuth, type AuthRequest } from '../middleware/auth';
+import { requireAuth, requireApprovedAccess, type AuthRequest } from '../middleware/auth';
 import { searchCities } from '../services/tribe/geonames';
 import { getToday } from '../services/tribe/todayService';
 import { toWireTodayPayload } from '../services/tribe/todayWire';
@@ -22,6 +22,8 @@ const router = Router();
 
 // All tribe routes require auth
 router.use(requireAuth);
+// Phase 34 (D-17): pending/rejected users are blocked server-side, independent of the mobile block screen.
+router.use(requireApprovedAccess);
 
 // ── GET /api/tribe/cities ─────────────────────────────────────────────────
 

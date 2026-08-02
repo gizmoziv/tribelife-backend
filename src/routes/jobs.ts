@@ -2,12 +2,14 @@ import { Router, Response } from 'express';
 import { and, desc, eq, lt, or, sql } from 'drizzle-orm';
 import { db } from '../db';
 import { jobPostings } from '../db/schema';
-import { requireAuth, AuthRequest } from '../middleware/auth';
+import { requireAuth, requireApprovedAccess, AuthRequest } from '../middleware/auth';
 import logger from '../lib/logger';
 
 const log = logger.child({ module: 'jobs-feed' });
 const router = Router();
 router.use(requireAuth);
+// Phase 34 (D-17): pending/rejected users are blocked server-side, independent of the mobile block screen.
+router.use(requireApprovedAccess);
 
 const PAGE_SIZE = 20;
 

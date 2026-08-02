@@ -25,7 +25,7 @@ import {
   conversations,
   conversationParticipants,
 } from '../db/schema';
-import { requireAuth, AuthRequest } from '../middleware/auth';
+import { requireAuth, requireApprovedAccess, AuthRequest } from '../middleware/auth';
 import { attachReactions } from '../utils/attachReactions';
 import { attachReplyTo } from '../utils/attachReplyTo';
 import { redactDeletedMessages } from '../utils/redactDeleted';
@@ -50,6 +50,8 @@ import { logCapabilityDenial } from '../lib/capabilityLogger';
 
 const router = Router();
 router.use(requireAuth);
+// Phase 34 (D-17): pending/rejected users are blocked server-side, independent of the mobile block screen.
+router.use(requireApprovedAccess);
 
 // ── aroundMessageId query param schema (D-04) ─────────────────────────────────
 // Phase 14 D-04: around-message window schema.

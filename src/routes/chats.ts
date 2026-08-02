@@ -12,7 +12,7 @@ import {
   globeReadPositions,
   globeRoomMemberships,
 } from '../db/schema';
-import { requireAuth, AuthRequest } from '../middleware/auth';
+import { requireAuth, requireApprovedAccess, AuthRequest } from '../middleware/auth';
 import type { ChatsRow, ChatsListResponse } from '../types/chats';
 import { GLOBE_ROOMS, isValidGlobeRoom } from '../config/globeRooms';
 import {
@@ -28,6 +28,8 @@ import { getCapabilities } from '../middleware/capabilities';
 
 const router = Router();
 router.use(requireAuth);
+// Phase 34 (D-17): pending/rejected users are blocked server-side, independent of the mobile block screen.
+router.use(requireApprovedAccess);
 
 // Town Square is the only auto_join globe room in v1.7 — slug + prefixed
 // roomId are hardcoded here to avoid coupling this file to the full
