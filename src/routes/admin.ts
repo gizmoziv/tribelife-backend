@@ -487,33 +487,44 @@ async function decideAccessRequest(
   // No precondition on the current status — that absence is what makes the
   // transition reversible (D-15): approving a previously rejected request
   // works, and no one-way transition is built.
-  const [updatedRequest] = await db.update(accessRequests)
-    .set({
-      status: nextStatus,
-      decidedAt: new Date(),
-      decidedBy: parse.data.adminLabel ?? null,
-    })
-    .where(eq(accessRequests.id, id))
-    .returning({
-      id: accessRequests.id,
-      userId: accessRequests.userId,
-      status: accessRequests.status,
-      decidedAt: accessRequests.decidedAt,
-      decidedBy: accessRequests.decidedBy,
-    });
+  //
+  // WR-02: both writes below happen in one transaction — updating only
+  // access_requests would leave the user still gated despite an approval,
+  // and updating only user_profiles would leave the admin queue showing the
+  // request as undecided. A crash/error between the two awaits must not
+  // leave them out of sync.
+  const updatedRequest = await db.transaction(async (tx) => {
+    const [row] = await tx.update(accessRequests)
+      .set({
+        status: nextStatus,
+        decidedAt: new Date(),
+        decidedBy: parse.data.adminLabel ?? null,
+      })
+      .where(eq(accessRequests.id, id))
+      .returning({
+        id: accessRequests.id,
+        userId: accessRequests.userId,
+        status: accessRequests.status,
+        decidedAt: accessRequests.decidedAt,
+        decidedBy: accessRequests.decidedBy,
+      });
+
+    if (!row) {
+      return undefined;
+    }
+
+    // Mirror the status onto the user (D-12, D-13).
+    await tx.update(userProfiles)
+      .set({ accessStatus: nextStatus, updatedAt: new Date() })
+      .where(eq(userProfiles.userId, row.userId));
+
+    return row;
+  });
 
   if (!updatedRequest) {
     res.status(404).json({ error: 'access request not found' });
     return;
   }
-
-  // Mirror the status onto the user (D-12, D-13). Both writes are required —
-  // updating only access_requests would leave the user still gated despite an
-  // approval, and updating only user_profiles would leave the admin queue
-  // showing the request as undecided.
-  await db.update(userProfiles)
-    .set({ accessStatus: nextStatus, updatedAt: new Date() })
-    .where(eq(userProfiles.userId, updatedRequest.userId));
 
   log.warn(
     { accessRequestId: id, userId: updatedRequest.userId, status: nextStatus },
