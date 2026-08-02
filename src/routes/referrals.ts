@@ -1,6 +1,7 @@
 import { Router, Response } from 'express';
+import { z } from 'zod';
 import { db } from '../db';
-import { referrals, attributionConversions } from '../db/schema';
+import { referrals, attributionConversions, users, userProfiles } from '../db/schema';
 import { eq, count, sql } from 'drizzle-orm';
 import { requireAuth, AuthRequest } from '../middleware/auth';
 
@@ -77,6 +78,108 @@ router.get('/funnel', async (req: AuthRequest, res: Response): Promise<void> => 
   const totalPremiumMonths = Math.min(totalReferrals, 12);
 
   res.json({ bySource, totalPremiumMonths });
+});
+
+// ── D-05: durable server-side referral-attempt cap ────────────────────────
+export const REFERRAL_MAX_ATTEMPTS = 3;
+
+// Deliberately no .min(1) — a blank handle is a valid request that takes the
+// D-10 zero-attempts branch below, not a 400.
+const referralValidateSchema = z.object({ handle: z.string() });
+
+// ── Live-validate a referral handle, separate from the final onboarding
+// submit (D-04 — this handler never inserts into `referrals`). D-06: the
+// uniform 200 body below is built through exactly ONE shared res.json(...)
+// call fed by locally computed valid/exhausted/attemptsRemaining/blank — that
+// uniformity IS the anti-enumeration control. Do not add cause-specific
+// messages or status codes here; a future "helpful" branch would leak handle
+// existence through the response shape alone.
+router.post('/validate', async (req: AuthRequest, res: Response): Promise<void> => {
+  const parse = referralValidateSchema.safeParse(req.body);
+  if (!parse.success) {
+    // Request-shape error, not a handle-existence signal — 400 here does not
+    // violate D-06.
+    res.status(400);
+    res.json({ error: parse.error.errors[0].message });
+    return;
+  }
+  const { handle } = parse.data;
+  const userId = req.user!.id;
+
+  // D-05: read the durable counter only from user_profiles.referral_attempts,
+  // never from the request payload — the cap must hold against a caller
+  // hitting the API directly with no mobile client involved.
+  const [row] = await db
+    .select({ referralAttempts: userProfiles.referralAttempts })
+    .from(userProfiles)
+    .where(eq(userProfiles.userId, userId))
+    .limit(1);
+  const attempts = row?.referralAttempts ?? 0;
+
+  const trimmed = handle.trim();
+
+  let valid: boolean;
+  let exhausted: boolean;
+  let attemptsRemaining: number;
+  let blank: boolean;
+
+  if (trimmed.length === 0) {
+    // D-10 (RESEARCH Pitfall 2): blank/whitespace short-circuits BEFORE any
+    // lookup or counter write — a blank referral consumes zero attempts.
+    valid = false;
+    exhausted = false;
+    attemptsRemaining = Math.max(0, REFERRAL_MAX_ATTEMPTS - attempts);
+    blank = true;
+  } else if (attempts >= REFERRAL_MAX_ATTEMPTS) {
+    // D-07: already exhausted before this call — no lookup, no further
+    // increment (also prevents the counter growing unboundedly under a
+    // scripted caller).
+    valid = false;
+    exhausted = true;
+    attemptsRemaining = 0;
+    blank = false;
+  } else {
+    // Reuse the onboarding validity predicate verbatim (auth.ts) so a handle
+    // that validates here cannot later fail at submit.
+    const [referrer] = await db
+      .select({ userId: userProfiles.userId, bannedAt: users.bannedAt })
+      .from(userProfiles)
+      .innerJoin(users, eq(users.id, userProfiles.userId))
+      .where(eq(userProfiles.handle, trimmed.toLowerCase()))
+      .limit(1);
+
+    const isValidReferrer =
+      referrer != null &&
+      referrer.userId !== userId &&
+      referrer.bannedAt === null;
+
+    blank = false;
+
+    if (isValidReferrer) {
+      // D-04: valid path never writes a `referrals` row — that INSERT stays
+      // exclusively in the onboarding submit handler in auth.ts.
+      valid = true;
+      exhausted = false;
+      attemptsRemaining = Math.max(0, REFERRAL_MAX_ATTEMPTS - attempts);
+    } else {
+      // Invalid: nonexistent handle, self-referral, and a suspended referrer
+      // all take this identical branch and produce an identical body (D-06).
+      // Atomic per-row increment via the sql template form (not a JS
+      // read-modify-write) so two concurrent calls cannot both write the
+      // same value (T-34-14).
+      await db
+        .update(userProfiles)
+        .set({ referralAttempts: sql`${userProfiles.referralAttempts} + 1` })
+        .where(eq(userProfiles.userId, userId));
+
+      const nextAttempts = attempts + 1;
+      valid = false;
+      exhausted = nextAttempts >= REFERRAL_MAX_ATTEMPTS;
+      attemptsRemaining = Math.max(0, REFERRAL_MAX_ATTEMPTS - nextAttempts);
+    }
+  }
+
+  res.json({ valid, exhausted, attemptsRemaining, blank });
 });
 
 export default router;
