@@ -7,7 +7,7 @@ import { eq } from 'drizzle-orm';
 import { db } from '../db';
 import { userProfiles, conversations, conversationParticipants, organizations, organizationMemberships } from '../db/schema';
 import { and, isNull } from 'drizzle-orm';
-import { requireAuth, AuthRequest } from '../middleware/auth';
+import { requireAuth, requireApprovedAccess, AuthRequest } from '../middleware/auth';
 import { generateAvatarUploadUrl, generateGroupIconUploadUrl, generateOrgIconUploadUrl, generateMediaUploadUrls, generateVoiceUploadUrl, headVoiceObject, generateDocUploadUrl, headDocObject, objectExists, deleteObject, cdnUrlToKey, setPublicRead } from '../services/storage';
 import { logUserEvent } from '../services/userEvents';
 
@@ -34,7 +34,8 @@ function checkUploadRateLimit(userId: number): boolean {
 }
 
 // ── POST /avatar-url — Generate pre-signed upload URL ───────────────────────
-router.post('/avatar-url', requireAuth, async (req: AuthRequest, res: Response): Promise<void> => {
+// Phase 34 (D-23): presigned upload URLs cost real Spaces storage and moderation budget, so pending/rejected users are blocked here too.
+router.post('/avatar-url', requireAuth, requireApprovedAccess, async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     if (!checkUploadRateLimit(req.user!.id)) {
       res.status(429).json({ error: 'Upload rate limit exceeded. Try again later.' });
@@ -54,7 +55,7 @@ const confirmSchema = z.object({
   key: z.string().min(1),
 });
 
-router.post('/avatar-confirm', requireAuth, async (req: AuthRequest, res: Response): Promise<void> => {
+router.post('/avatar-confirm', requireAuth, requireApprovedAccess, async (req: AuthRequest, res: Response): Promise<void> => {
   log.info({ body: req.body }, 'avatar-confirm called');
   const parse = confirmSchema.safeParse(req.body);
   if (!parse.success) {
@@ -115,7 +116,7 @@ const mediaUrlsSchema = z.object({
   count: z.number().int().min(1).max(4),
 });
 
-router.post('/media-urls', requireAuth, async (req: AuthRequest, res: Response): Promise<void> => {
+router.post('/media-urls', requireAuth, requireApprovedAccess, async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const parse = mediaUrlsSchema.safeParse(req.body);
     if (!parse.success) {
@@ -141,7 +142,7 @@ const mediaConfirmSchema = z.object({
   keys: z.array(z.string().min(1)).min(1).max(4),
 });
 
-router.post('/media-confirm', requireAuth, async (req: AuthRequest, res: Response): Promise<void> => {
+router.post('/media-confirm', requireAuth, requireApprovedAccess, async (req: AuthRequest, res: Response): Promise<void> => {
   const parse = mediaConfirmSchema.safeParse(req.body);
   if (!parse.success) {
     res.status(400).json({ error: parse.error.errors[0].message });
@@ -199,7 +200,7 @@ async function assertGroupAdmin(userId: number, conversationId: number): Promise
   return participant?.role === 'admin';
 }
 
-router.post('/group-icon-url', requireAuth, async (req: AuthRequest, res: Response): Promise<void> => {
+router.post('/group-icon-url', requireAuth, requireApprovedAccess, async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const parse = groupIconUrlSchema.safeParse(req.body);
     if (!parse.success) {
@@ -232,7 +233,7 @@ const groupIconConfirmSchema = z.object({
   key: z.string().min(1),
 });
 
-router.post('/group-icon-confirm', requireAuth, async (req: AuthRequest, res: Response): Promise<void> => {
+router.post('/group-icon-confirm', requireAuth, requireApprovedAccess, async (req: AuthRequest, res: Response): Promise<void> => {
   const parse = groupIconConfirmSchema.safeParse(req.body);
   if (!parse.success) {
     res.status(400).json({ error: 'conversationId and key are required' });
@@ -309,7 +310,7 @@ const orgIconUrlSchema = z.object({
   orgId: z.number().int().positive(),
 });
 
-router.post('/org-icon-url', requireAuth, async (req: AuthRequest, res: Response): Promise<void> => {
+router.post('/org-icon-url', requireAuth, requireApprovedAccess, async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const parse = orgIconUrlSchema.safeParse(req.body);
     if (!parse.success) {
@@ -342,7 +343,7 @@ const orgIconConfirmSchema = z.object({
   key: z.string().min(1),
 });
 
-router.post('/org-icon-confirm', requireAuth, async (req: AuthRequest, res: Response): Promise<void> => {
+router.post('/org-icon-confirm', requireAuth, requireApprovedAccess, async (req: AuthRequest, res: Response): Promise<void> => {
   const parse = orgIconConfirmSchema.safeParse(req.body);
   if (!parse.success) {
     res.status(400).json({ error: 'orgId and key are required' });
@@ -401,7 +402,7 @@ router.post('/org-icon-confirm', requireAuth, async (req: AuthRequest, res: Resp
 const VOICE_MAX_BYTES = 5 * 1024 * 1024; // 5 MB — D-14 gate
 
 // ── POST /voice-url — Generate pre-signed PUT URL for voice audio ────────────
-router.post('/voice-url', requireAuth, async (req: AuthRequest, res: Response): Promise<void> => {
+router.post('/voice-url', requireAuth, requireApprovedAccess, async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     if (!checkUploadRateLimit(req.user!.id)) {
       res.status(429).json({ error: 'Upload rate limit exceeded. Try again later.' });
@@ -421,7 +422,7 @@ const voiceConfirmSchema = z.object({
   key: z.string().min(1),
 });
 
-router.post('/voice-confirm', requireAuth, async (req: AuthRequest, res: Response): Promise<void> => {
+router.post('/voice-confirm', requireAuth, requireApprovedAccess, async (req: AuthRequest, res: Response): Promise<void> => {
   const parse = voiceConfirmSchema.safeParse(req.body);
   if (!parse.success) {
     res.status(400).json({ error: parse.error.errors[0].message });
@@ -476,7 +477,7 @@ const docUrlSchema = z.object({
   filename: z.string().min(1).max(255),
 });
 
-router.post('/doc-url', requireAuth, async (req: AuthRequest, res: Response): Promise<void> => {
+router.post('/doc-url', requireAuth, requireApprovedAccess, async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const parse = docUrlSchema.safeParse(req.body);
     if (!parse.success) {
@@ -506,7 +507,7 @@ const docConfirmSchema = z.object({
   key: z.string().min(1),
 });
 
-router.post('/doc-confirm', requireAuth, async (req: AuthRequest, res: Response): Promise<void> => {
+router.post('/doc-confirm', requireAuth, requireApprovedAccess, async (req: AuthRequest, res: Response): Promise<void> => {
   const parse = docConfirmSchema.safeParse(req.body);
   if (!parse.success) {
     res.status(400).json({ error: parse.error.errors[0].message });
