@@ -450,4 +450,89 @@ router.get('/access-requests', async (req: Request, res: Response): Promise<void
     res.json({ accessRequests: rows, total: countRow?.total ?? 0 });
 });
 
+// D-12, D-13: approve and reject are symmetric decisions on the same request
+// row, differing only by the target status literal. A single shared helper
+// keeps them symmetric — two near-identical copy-pasted handlers are exactly
+// how a later editor accidentally introduces asymmetric behavior and breaks
+// D-15's reversibility.
+const adminDecideSchema = z.object({
+  adminLabel: z.string().max(100).optional(),
+});
+
+// D-14 — the hard rule, and the single most important semantic distinction in
+// this phase. This helper (and the approve/reject routes below) must NEVER
+// write, clear or even read the platform-suspension columns on `users` (the
+// `bannedAt`/`banReason` pair the ban/unban handlers above operate on), must
+// never call announceUserBlocked or any other moderation-announcement
+// service, and must never delete anything. A rejected user keeps their
+// account and all their data, can still authenticate, and is blocked only by
+// the access gate — reject is emphatically not a ban.
+async function decideAccessRequest(
+  req: Request,
+  res: Response,
+  nextStatus: 'approved' | 'rejected',
+): Promise<void> {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    res.status(400).json({ error: 'invalid id' });
+    return;
+  }
+
+  const parse = adminDecideSchema.safeParse(req.body ?? {});
+  if (!parse.success) {
+    res.status(400).json({ error: parse.error.errors[0].message });
+    return;
+  }
+
+  // No precondition on the current status — that absence is what makes the
+  // transition reversible (D-15): approving a previously rejected request
+  // works, and no one-way transition is built.
+  const [updatedRequest] = await db.update(accessRequests)
+    .set({
+      status: nextStatus,
+      decidedAt: new Date(),
+      decidedBy: parse.data.adminLabel ?? null,
+    })
+    .where(eq(accessRequests.id, id))
+    .returning({
+      id: accessRequests.id,
+      userId: accessRequests.userId,
+      status: accessRequests.status,
+      decidedAt: accessRequests.decidedAt,
+      decidedBy: accessRequests.decidedBy,
+    });
+
+  if (!updatedRequest) {
+    res.status(404).json({ error: 'access request not found' });
+    return;
+  }
+
+  // Mirror the status onto the user (D-12, D-13). Both writes are required —
+  // updating only access_requests would leave the user still gated despite an
+  // approval, and updating only user_profiles would leave the admin queue
+  // showing the request as undecided.
+  await db.update(userProfiles)
+    .set({ accessStatus: nextStatus, updatedAt: new Date() })
+    .where(eq(userProfiles.userId, updatedRequest.userId));
+
+  log.warn(
+    { accessRequestId: id, userId: updatedRequest.userId, status: nextStatus },
+    'access request decided',
+  );
+
+  res.json({ ok: true, accessRequest: updatedRequest });
+}
+
+// POST /api/admin/access-requests/:id/approve  { adminLabel?: string }
+router.post('/access-requests/:id/approve', async (req: Request, res: Response): Promise<void> => {
+  await decideAccessRequest(req, res, 'approved');
+});
+
+// POST /api/admin/access-requests/:id/reject  { adminLabel?: string }
+// D-16: no email is sent by this backend — status flip only. Marketing-Hub
+// owns applicant email via its own SendGrid access.
+router.post('/access-requests/:id/reject', async (req: Request, res: Response): Promise<void> => {
+  await decideAccessRequest(req, res, 'rejected');
+});
+
 export default router;
