@@ -3,13 +3,20 @@ import { z } from 'zod';
 import { db } from '../db';
 import { referrals, attributionConversions, users, userProfiles } from '../db/schema';
 import { eq, count, sql } from 'drizzle-orm';
-import { requireAuth, AuthRequest } from '../middleware/auth';
+import { requireAuth, requireApprovedAccess, AuthRequest } from '../middleware/auth';
 
 const router = Router();
 router.use(requireAuth);
 
+// WR-01: /stats and /funnel are post-onboarding "view my referral
+// performance" features and have no reason to stay reachable for a
+// pending/rejected user — every other post-onboarding feature is blocked.
+// /validate below stays deliberately ungated at the router level: it's used
+// DURING onboarding, before a user can be approved (same carve-out pattern
+// as accessRequests.ts).
+
 // ── Get referral stats for current user ──────────────────────────────────
-router.get('/stats', async (req: AuthRequest, res: Response): Promise<void> => {
+router.get('/stats', requireApprovedAccess, async (req: AuthRequest, res: Response): Promise<void> => {
   const userId = req.user!.id;
 
   const [result] = await db
@@ -40,7 +47,7 @@ type FunnelBucket = 'profile_share' | 'group_invite';
 const bucketOf = (source: string | null): FunnelBucket =>
   source === 'group_invite' ? 'group_invite' : 'profile_share';
 
-router.get('/funnel', async (req: AuthRequest, res: Response): Promise<void> => {
+router.get('/funnel', requireApprovedAccess, async (req: AuthRequest, res: Response): Promise<void> => {
   const userId = req.user!.id;
 
   // Signup counts per source (referrals table, locked at onboarding).
