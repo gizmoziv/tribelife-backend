@@ -1,9 +1,9 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { timingSafeEqual } from 'crypto';
-import { eq, or, ilike, sql, isNotNull, and, desc, inArray } from 'drizzle-orm';
+import { eq, or, ilike, sql, isNotNull, and, desc, asc, count, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '../db';
-import { users, userProfiles, surveys, surveyVotes } from '../db/schema';
+import { users, userProfiles, surveys, surveyVotes, accessRequests } from '../db/schema';
 import { announceUserBlocked } from '../services/moderationAnnounce';
 import logger from '../lib/logger';
 import {
@@ -381,4 +381,73 @@ router.get('/presence', async (_req: Request, res: Response): Promise<void> => {
   const sockets = await io.fetchSockets(); // cluster-wide — NOT adapter.rooms (D-09)
   res.json({ liveUsers: sockets.length });
 });
+
+// ── ACCESS REQUESTS (Phase 34) ─────────────────────────────────────────────
+// D-22: this list endpoint is added beyond the PRD's literal R6/R7 because
+// Marketing-Hub Phase 10 is an admin *review* tab, and with approve/reject
+// keyed by request id and no way to discover ids or see who is applying, that
+// phase would be blocked the moment it starts. D-02 states the applicant's
+// email is read via join, which only makes sense if a read endpoint exists.
+//
+// Security notes: this endpoint exposes applicant email addresses, so it must
+// never gain a second mount point outside this requireAdmin-gated router.
+// `limit` is hard-capped at 200 to bound the response (DoS mitigation).
+const adminListQuerySchema = z.object({
+  status: z.enum(['pending', 'approved', 'rejected', 'all']).optional().default('pending'),
+  limit: z.coerce.number().int().min(1).max(200).optional().default(50),
+  offset: z.coerce.number().int().min(0).optional().default(0),
+});
+
+// GET /api/admin/access-requests?status=pending&limit=50&offset=0
+router.get('/access-requests', async (req: Request, res: Response): Promise<void> => {
+    const parse = adminListQuerySchema.safeParse(req.query);
+    if (!parse.success) {
+      res.status(400).json({ error: parse.error.errors[0].message });
+      return;
+    }
+    const { status, limit, offset } = parse.data;
+
+    // Same filter variable feeds both the page query and the count query, so
+    // they provably agree on which rows are in scope.
+    const statusFilter =
+      status === 'all' ? undefined : eq(accessRequests.status, status);
+
+    const pageQuery = db
+      .select({
+        id: accessRequests.id,
+        userId: accessRequests.userId,
+        email: users.email,
+        name: users.name,
+        handle: userProfiles.handle,
+        reason: accessRequests.reason,
+        socials: accessRequests.socials,
+        status: accessRequests.status,
+        createdAt: accessRequests.createdAt,
+        decidedAt: accessRequests.decidedAt,
+        decidedBy: accessRequests.decidedBy,
+      })
+      .from(accessRequests)
+      .innerJoin(users, eq(users.id, accessRequests.userId))
+      // leftJoin so a request from a user without a profile row still appears
+      // rather than silently vanishing from the admin queue.
+      .leftJoin(userProfiles, eq(userProfiles.userId, accessRequests.userId))
+      .orderBy(asc(accessRequests.createdAt)) // oldest pending first — FIFO review queue
+      .limit(limit)
+      .offset(offset);
+
+    const rows = statusFilter
+      ? await pageQuery.where(statusFilter)
+      : await pageQuery;
+
+    const countQuery = db
+      .select({ total: count() })
+      .from(accessRequests);
+
+    const [countRow] = statusFilter
+      ? await countQuery.where(statusFilter)
+      : await countQuery;
+
+    res.json({ accessRequests: rows, total: countRow?.total ?? 0 });
+});
+
 export default router;
