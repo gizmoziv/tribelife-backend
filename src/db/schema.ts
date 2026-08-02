@@ -103,6 +103,10 @@ export const userProfiles = pgTable('user_profiles', {
 }, (t) => ({
   handleIdx: index('user_profiles_handle_idx').on(t.handle),
   timezoneIdx: index('user_profiles_timezone_idx').on(t.timezone),
+  accessStatusCheck: check(
+    'user_profiles_access_status_check',
+    sql`${t.accessStatus} IS NULL OR ${t.accessStatus} IN ('pending', 'approved', 'rejected')`,
+  ),
 }));
 
 // ─────────────────────────────────────────────
@@ -879,4 +883,8 @@ export const accessRequests = pgTable('access_requests', {
 }, (t) => ({
   userIdx: index('access_requests_user_idx').on(t.userId),
   statusIdx: index('access_requests_status_idx').on(t.status),
+  statusCheck: check(
+    'access_requests_status_check',
+    sql`${t.status} IN ('pending', 'approved', 'rejected')`,
+  ),
 }));

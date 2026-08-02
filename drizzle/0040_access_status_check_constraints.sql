@@ -1,0 +1,2 @@
+ALTER TABLE "access_requests" ADD CONSTRAINT "access_requests_status_check" CHECK ("access_requests"."status" IN ('pending', 'approved', 'rejected'));--> statement-breakpoint
+ALTER TABLE "user_profiles" ADD CONSTRAINT "user_profiles_access_status_check" CHECK ("user_profiles"."access_status" IS NULL OR "user_profiles"."access_status" IN ('pending', 'approved', 'rejected'));
