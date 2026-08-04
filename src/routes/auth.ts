@@ -11,7 +11,6 @@ import {
   users,
   userProfiles,
   referrals,
-  messages,
   globeRoomMemberships,
   deviceTokens,
   accountDeletionFeedback,
@@ -30,8 +29,7 @@ import { getOrgMembershipsForUser } from '../services/orgMemberships';
 import { bootstrapAutoJoins } from '../services/globeMembership';
 import { getZoneForTimezone } from '../config/timezoneZones';
 import { callerCanAccessNonNativeTimezone } from '../lib/timezoneRoomAccess';
-import { sendWelcomeEmail } from '../services/email';
-import { getIO } from '../lib/socketRegistry';
+import { announceFirstJoin } from '../services/firstJoinAnnounce';
 import { logUserEvent } from '../services/userEvents';
 
 const router = Router();
@@ -611,64 +609,19 @@ router.post(
       }
     }
 
-    // Fire-and-forget welcome email. We intentionally do not await — email
-    // delivery is not on the critical path of onboarding, and a SendGrid
-    // outage must never block a user from finishing signup.
-    if (isFirstOnboarding && req.user!.email) {
-      sendWelcomeEmail({
-        toEmail: req.user!.email,
-        name: req.user!.name ?? '',
+    // Welcome email + timezone-room "joined the chat" announcement — shared
+    // with the admin access-request approve handler (admin.ts), since a
+    // gated user (Phase 34 referral gate) gets these deferred to approval
+    // time instead of firing here. See firstJoinAnnounce.ts for why.
+    if (isFirstOnboarding && profile.accessStatus !== 'pending') {
+      await announceFirstJoin({
+        userId,
         handle: handle.toLowerCase(),
-      }).catch((err) =>
-        log.error({ err: err?.message, userId }, 'welcome email failed'),
-      );
-    }
-
-    // Announce the new user in their timezone room. Persisted with kind='system'
-    // so it shows up in scrollback for users who weren't connected at the moment
-    // of onboarding (WhatsApp/Slack pattern). senderId is the new user so the
-    // existing leftJoin in chat.ts hydrates handle+avatar, and the literal
-    // "@handle" in the body keeps the link tappable via mention parsing on the
-    // mobile bubble even if the account is later deleted.
-    if (isFirstOnboarding) {
-      try {
-        // Phase 15 (D-01): system messages land in the consolidated zone room
-        // (e.g. timezone:eastern-time), NOT the raw IANA room. NY + Detroit +
-        // Toronto onboardings all post to the same eastern-time history.
-        const timezoneRoom = `timezone:${getZoneForTimezone(timezone)}`;
-        const lowerHandle = handle.toLowerCase();
-        const announcementContent = `@${lowerHandle} joined the chat`;
-
-        const [systemMsg] = await db
-          .insert(messages)
-          .values({
-            content: announcementContent,
-            senderId: userId,
-            roomId: timezoneRoom,
-            kind: 'system',
-            mentions: [userId],
-          })
-          .returning();
-
-        const io = getIO();
-        if (io) {
-          io.to(timezoneRoom).emit('room:message', {
-            id: systemMsg.id,
-            content: announcementContent,
-            senderId: userId,
-            senderHandle: lowerHandle,
-            senderAvatar: profile?.avatarUrl ?? null,
-            roomId: timezoneRoom,
-            createdAt: systemMsg.createdAt,
-            kind: 'system',
-            mentions: [userId],
-            replyToId: null,
-            replyTo: null,
-          });
-        }
-      } catch (err) {
-        log.error({ err, userId }, 'system join-message broadcast failed');
-      }
+        timezone,
+        avatarUrl: profile?.avatarUrl ?? null,
+        email: req.user!.email ?? null,
+        name: req.user!.name ?? null,
+      });
     }
 
     res.json({ profile });

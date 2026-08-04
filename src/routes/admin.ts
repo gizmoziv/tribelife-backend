@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { db } from '../db';
 import { users, userProfiles, surveys, surveyVotes, accessRequests } from '../db/schema';
 import { announceUserBlocked } from '../services/moderationAnnounce';
+import { announceFirstJoin } from '../services/firstJoinAnnounce';
 import logger from '../lib/logger';
 import {
   classifyZoneResolution,
@@ -493,7 +494,7 @@ async function decideAccessRequest(
   // and updating only user_profiles would leave the admin queue showing the
   // request as undecided. A crash/error between the two awaits must not
   // leave them out of sync.
-  const updatedRequest = await db.transaction(async (tx) => {
+  const result = await db.transaction(async (tx) => {
     const [row] = await tx.update(accessRequests)
       .set({
         status: nextStatus,
@@ -513,23 +514,71 @@ async function decideAccessRequest(
       return undefined;
     }
 
+    // Captured BEFORE the status flip below, so we know what to (not) do
+    // once this transition lands: the prior accessStatus guards against
+    // firing side effects twice on a duplicate/double-click approve, and
+    // handle/timezone/email/name are what onboarding's own welcome-email +
+    // join-announcement block (auth.ts) would have used, had it not
+    // suppressed them while this user was gated on 'pending'.
+    const [priorProfile] = await tx
+      .select({
+        accessStatus: userProfiles.accessStatus,
+        handle: userProfiles.handle,
+        timezone: userProfiles.timezone,
+        avatarUrl: userProfiles.avatarUrl,
+        email: users.email,
+        name: users.name,
+      })
+      .from(userProfiles)
+      .innerJoin(users, eq(users.id, userProfiles.userId))
+      .where(eq(userProfiles.userId, row.userId))
+      .limit(1);
+
     // Mirror the status onto the user (D-12, D-13).
     await tx.update(userProfiles)
       .set({ accessStatus: nextStatus, updatedAt: new Date() })
       .where(eq(userProfiles.userId, row.userId));
 
-    return row;
+    return { row, priorProfile };
   });
 
-  if (!updatedRequest) {
+  if (!result) {
     res.status(404).json({ error: 'access request not found' });
     return;
   }
+
+  const { row: updatedRequest, priorProfile } = result;
 
   log.warn(
     { accessRequestId: id, userId: updatedRequest.userId, status: nextStatus },
     'access request decided',
   );
+
+  // Replay the welcome email + timezone-room "joined the chat" announcement
+  // that onboarding suppressed while this user was gated on 'pending'
+  // (auth.ts / firstJoinAnnounce.ts). Guarded so this fires at most once:
+  //   - only on a transition INTO 'approved' (not reject, not re-reject)
+  //   - only if the user wasn't already 'approved' (idempotent against a
+  //     duplicate/double-click approve call — D-15 makes re-approve legal)
+  //   - only if the user actually finished onboarding (real handle, not the
+  //     `_temp_<id>` placeholder) — if they haven't, /onboarding will fire
+  //     these itself once they do, since accessStatus is no longer 'pending'
+  //     by then.
+  if (
+    nextStatus === 'approved' &&
+    priorProfile &&
+    priorProfile.accessStatus !== 'approved' &&
+    !priorProfile.handle.startsWith('_temp_')
+  ) {
+    await announceFirstJoin({
+      userId: updatedRequest.userId,
+      handle: priorProfile.handle,
+      timezone: priorProfile.timezone,
+      avatarUrl: priorProfile.avatarUrl,
+      email: priorProfile.email,
+      name: priorProfile.name,
+    });
+  }
 
   res.json({ ok: true, accessRequest: updatedRequest });
 }
