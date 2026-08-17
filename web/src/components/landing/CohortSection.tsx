@@ -85,18 +85,16 @@ const CohortSection = () => {
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true }}
           transition={{ duration: 0.6, delay: 0.1 }}
-          className="flex flex-col items-center gap-y-10 max-w-3xl mx-auto"
+          className="grid grid-cols-2 gap-x-10 gap-y-10 sm:gap-x-14 max-w-[280px] sm:max-w-xs mx-auto"
         >
-          <div className="flex flex-wrap justify-center gap-x-8 gap-y-10 md:gap-x-10">
-            {members.slice(0, 4).map((member) => (
-              <MemberAvatar key={member.name} member={member} />
-            ))}
-          </div>
-          <div className="flex flex-wrap justify-center gap-x-8 gap-y-10 md:gap-x-10">
-            {members.slice(4).map((member) => (
-              <MemberAvatar key={member.name} member={member} />
-            ))}
-          </div>
+          {members.map((member, i) => {
+            const isLastOdd = i === members.length - 1 && members.length % 2 === 1;
+            return (
+              <div key={member.name} className={isLastOdd ? 'col-span-2 flex justify-center' : 'flex justify-center'}>
+                <MemberAvatar member={member} />
+              </div>
+            );
+          })}
         </motion.div>
       </div>
     </section>
