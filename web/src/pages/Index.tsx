@@ -10,6 +10,7 @@ import WallOfLoveSection from '@/components/landing/WallOfLoveSection';
 import HowItWorksSection from '@/components/landing/HowItWorksSection';
 import FAQSection from '@/components/landing/FAQSection';
 import FoundersNote from '@/components/landing/FoundersNote';
+import CohortSection from '@/components/landing/CohortSection';
 import CTASection from '@/components/landing/CTASection';
 import StickyDownloadBar from '@/components/landing/StickyDownloadBar';
 import Footer from '@/components/landing/Footer';
@@ -39,6 +40,7 @@ const Index = () => {
       <AppShowcaseSection />
       <HowItWorksSection />
       <FoundersNote />
+      <CohortSection />
       <SocialProofSection />
       <FAQSection />
       <PrivacyCallout />
