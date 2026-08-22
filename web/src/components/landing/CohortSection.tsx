@@ -10,13 +10,38 @@ interface Member {
 }
 
 const members: Member[] = [
-  { name: 'Sarina', photo: '/cohort/sarina.png', linkedin: 'https://www.linkedin.com/in/sarina-ziv' },
-  { name: 'Nir', photo: '/cohort/nir.jpg', linkedin: 'https://www.linkedin.com/in/nirziv' },
-  { name: 'Ike', photo: '/cohort/ike.jpg', linkedin: 'https://www.linkedin.com/in/ike-pintchuck' },
-  { name: 'Sagie', photo: '/cohort/sagie.png', linkedin: 'https://www.linkedin.com/in/sagie-baram' },
-  { name: 'Danya', photo: '/cohort/danya.jpg', linkedin: 'https://www.linkedin.com/in/danya-wasser-075185b4' },
-  { name: 'Virginia', photo: '/cohort/virginia.png', linkedin: 'https://www.linkedin.com/in/virginia-weaver' },
-  { name: 'Yaacov', photo: '/cohort/yaacov.jpg', linkedin: 'https://www.linkedin.com/in/yaacovsakowitz' },
+  {
+    name: 'Sarina',
+    photo: '/cohort/sarina.png',
+    linkedin: 'https://www.linkedin.com/in/sarina-ziv',
+  },
+  {
+    name: 'Nir',
+    photo: '/cohort/nir.jpg',
+    linkedin: 'https://www.linkedin.com/in/nirziv',
+  },
+  // { name: 'Ike', photo: '/cohort/ike.jpg', linkedin: 'https://www.linkedin.com/in/ike-pintchuck' },
+
+  {
+    name: 'Danya',
+    photo: '/cohort/danya.jpg',
+    linkedin: 'https://www.linkedin.com/in/danya-wasser-075185b4',
+  },
+  {
+    name: 'Yaacov',
+    photo: '/cohort/yaacov.jpg',
+    linkedin: 'https://www.linkedin.com/in/yaacovsakowitz',
+  },
+  {
+    name: 'Virginia',
+    photo: '/cohort/virginia.png',
+    linkedin: 'https://www.linkedin.com/in/virginia-weaver',
+  },
+  {
+    name: 'Sagie',
+    photo: '/cohort/sagie.png',
+    linkedin: 'https://www.linkedin.com/in/sagie-baram',
+  },
 ];
 
 const initials = (name: string) => name.slice(0, 2).toUpperCase();
@@ -76,7 +101,8 @@ const CohortSection = () => {
             <span className="gradient-text">cohort</span>
           </h2>
           <p className="text-muted-foreground text-lg max-w-2xl mx-auto">
-            The team behind <Brand />'s community.
+            The team behind <Brand />
+            's community.
           </p>
         </motion.div>
 
@@ -88,9 +114,17 @@ const CohortSection = () => {
           className="grid grid-cols-2 gap-x-10 gap-y-10 sm:gap-x-14 max-w-[280px] sm:max-w-xs mx-auto"
         >
           {members.map((member, i) => {
-            const isLastOdd = i === members.length - 1 && members.length % 2 === 1;
+            const isLastOdd =
+              i === members.length - 1 && members.length % 2 === 1;
             return (
-              <div key={member.name} className={isLastOdd ? 'col-span-2 flex justify-center' : 'flex justify-center'}>
+              <div
+                key={member.name}
+                className={
+                  isLastOdd
+                    ? 'col-span-2 flex justify-center'
+                    : 'flex justify-center'
+                }
+              >
                 <MemberAvatar member={member} />
               </div>
             );
