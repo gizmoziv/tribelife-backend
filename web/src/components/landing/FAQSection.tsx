@@ -7,6 +7,34 @@ const faqs = [
   {
     question: (
       <>
+        Who is <Brand /> for?
+      </>
+    ),
+    answer: (
+      <>
+        <Brand /> is a private network for the Jewish community: professionals,
+        founders, creators, students, and community leaders, plus the allies who
+        show up for us. It&apos;s not a general-purpose social app. It&apos;s the
+        room you&apos;d want to walk into: people who get the context without you
+        having to explain it.
+      </>
+    ),
+  },
+  {
+    question: 'How do I get in?',
+    answer: (
+      <>
+        Two ways. Someone already inside refers you, or you apply by telling us
+        why you want in and sharing a social profile so we can see you&apos;re a
+        real person. A human on our team reviews every application. We know
+        that&apos;s more friction than tapping &quot;sign up,&quot; and
+        that&apos;s the point.
+      </>
+    ),
+  },
+  {
+    question: (
+      <>
         Is <Brand /> free?
       </>
     ),
@@ -38,10 +66,11 @@ const faqs = [
     question: 'What security is in place?',
     answer: (
       <>
-        Safety is a top priority. <Brand /> markets by invitation only, and
-        every member authenticates when they join. So the community is curated
-        and verified. Additional safeguards are in place within the app to catch
-        and prevent harmful content, with more protections on the way.
+        Safety is the whole point of the gate. Membership is by referral or
+        reviewed application, every member authenticates when they join, and the
+        member list is never public or sold. Inside the app, automated
+        moderation and human review screen content for harm, and you can report
+        or block anyone at any time. More protections are on the way.
       </>
     ),
   },
@@ -111,7 +140,7 @@ const FAQSection = () => {
             <span className="normal-case">Frequently</span> Asked <span className="gradient-text">Questions</span>
           </h2>
           <p className="text-muted-foreground text-lg">
-            Everything you need to know before joining.
+            Everything you need to know before you apply.
           </p>
         </motion.div>
 

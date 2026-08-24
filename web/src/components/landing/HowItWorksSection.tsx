@@ -4,12 +4,12 @@ import Brand from './Brand';
 const steps = [
   {
     number: '01',
-    title: 'Join Your Chevra',
+    title: 'Get Vetted In',
     description: (
       <>
-        Download <Brand /> and create your profile in seconds. Your timezone
-        places you in a community of people who are actually around when you
-        are.
+        Come in with a referral from a member, or apply and tell us who you are.
+        A real person on our team reviews it. Once you&apos;re in, your timezone
+        places you with people who are actually around when you are.
       </>
     ),
   },

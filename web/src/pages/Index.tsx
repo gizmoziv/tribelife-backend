@@ -26,10 +26,12 @@ const Index = () => {
   return (
     <div className="min-h-screen bg-background">
       <Helmet>
-        <title>Our tribe, supercharged.</title>
+        <title>
+          TribeLife: A Private, Vetted Network for Jewish Professionals
+        </title>
         <meta
           name="description"
-          content="TribeLife connects you with real people nearby. Create beacons for what you need and get intelligent matches in our community."
+          content="TribeLife is a private, vetted network for the Jewish community. You join by referral from a member, or via review from a team member. Post a beacon for what you need and get matched with Jewish professionals who can actually help."
         />
         <link rel="canonical" href="https://tribelife.app/" />
       </Helmet>

@@ -24,7 +24,8 @@ const CTASection = () => {
               <span className="normal-case">Ready</span> to Find Our <span className="gradient-text">Tribe</span>?
             </h2>
             <p className="text-muted-foreground text-lg mb-10 max-w-lg mx-auto">
-              Our chevra is already here.
+              Our chevra is already inside. Come in with a referral from a
+              member, or apply and we&apos;ll review it ourselves.
             </p>
 
             <div className="flex flex-col sm:flex-row items-center justify-center gap-4">

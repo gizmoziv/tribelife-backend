@@ -1,7 +1,7 @@
 {
   "name": "TribeLife",
   "short_name": "TribeLife",
-  "description": "Meet real people in your community through intelligent beacon matching.",
+  "description": "A private, vetted network for Jewish professionals. Post a beacon, get matched with people who show up.",
   "icons": [
     {
       "src": "/android-chrome-192x192.png",
