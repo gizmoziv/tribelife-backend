@@ -38,7 +38,7 @@ const HeroSection = () => {
           transition={{ duration: 0.7, delay: 0.2 }}
         >
           <span className="inline-block gradient-bg text-primary-foreground text-xs font-bold uppercase tracking-widest px-4 py-1.5 rounded-full mb-8">
-            Available on iOS & Android
+            Members-only · iOS &amp; Android
           </span>
         </motion.div>
 
@@ -48,8 +48,9 @@ const HeroSection = () => {
           transition={{ duration: 0.7, delay: 0.35 }}
           className="text-4xl sm:text-5xl md:text-7xl font-bold leading-tight mb-6 text-balance"
         >
-          A Platform That is Built for Our Tribe.{' '}
-          <span className="gradient-text">Actually.</span>
+          A Private <span className="gradient-text">Jewish Network</span>,
+          <br />
+          Built for Our Tribe. Actually.
         </motion.h1>
 
         <motion.p
@@ -58,9 +59,11 @@ const HeroSection = () => {
           transition={{ duration: 0.7, delay: 0.5 }}
           className="text-lg md:text-xl text-muted-foreground max-w-2xl mx-auto mb-10 leading-relaxed"
         >
-          Local and global chats. Networking beacons that hunt for what you
-          need. Unique tools for Jewish creators, leaders and allies to build
-          something real. This is our tribe — supercharged.
+          A vetted network for Jewish professionals, founders, creators,
+          students and leaders. You join by referral from a member, or via
+          review from a team member. Inside: local and global chats, and
+          networking beacons that hunt for what you need. This is our tribe,
+          amplified.
         </motion.p>
 
         <motion.div

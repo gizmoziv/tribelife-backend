@@ -1,26 +1,34 @@
 # TribeLife
 
-> TribeLife is a community matching app that connects real people nearby through intelligent beacon matching.
+> TribeLife is a private, vetted networking app for the Jewish community: a members-only network for Jewish professionals, founders, creators and community leaders.
 
 ## What is TribeLife?
 
-TribeLife is a mobile application (iOS and Android) that helps people find and connect with others in their local community. Users create "beacons" — short descriptions of what they need or offer (e.g., a babysitter, a pickleball partner, a tutor) — and TribeLife's AI-powered matching engine connects them with relevant people nearby.
+TribeLife is a mobile application (iOS and Android) built specifically for the Jewish community. It is not an open social network: membership is gated. A prospective member either comes in on a referral from an existing member, or applies for access by stating why they want in and sharing a social profile. A member of the TribeLife team then reviews the application before granting access.
+
+Once inside, members create "beacons", which are short descriptions of what they need or offer (a Shabbat dinner host in a new city, a co-founder, a chevruta partner, a job lead, a contractor, a pickleball buddy). TribeLife's AI-powered matching engine connects them with relevant members in their timezone.
+
+## Who it is for
+
+Jewish professionals, founders, creators, students and community leaders, plus allies of the community who are referred in. TribeLife is a Jewish networking app; it is not a general-purpose local-services or neighborhood app.
 
 ## Key Features
 
-- **Beacon Matching**: Post what you need or offer, and get matched with relevant community members using AI.
-- **Hyperlocal Discovery**: Connections are based on real proximity — your neighborhood, not the entire internet.
-- **Community Chat**: Timezone-based community rooms for local conversation.
-- **Direct Messaging**: Private conversations with your matches.
-- **AI-Powered Moderation**: All content is screened for safety before posting.
-- **Verified Profiles**: Google Sign-In ensures real identity.
+- **Vetted Membership**: Entry is by member referral or by human-reviewed application. No open sign-up.
+- **Beacon Matching**: Post what you need or offer, and get matched with relevant members using AI.
+- **Local & Global Rooms**: Timezone-based community chat rooms plus a global room, with full chat history from before you joined and no member caps.
+- **Hebrew Auto-Translation**: Messages translate automatically, Hebrew included.
+- **Direct Messaging**: Private DMs and group chats with any member.
+- **AI-Powered Moderation**: All content is screened for safety before posting, backed by human review.
+- **Private by Design**: Member data is never sold, and the member list is not public.
 
 ## How It Works
 
-1. Download TribeLife and create a profile.
-2. Create a beacon describing what you need or offer.
-3. TribeLife's matching engine finds relevant people in your area.
-4. Connect via chat and build real community relationships.
+1. Download TribeLife on iOS or Android.
+2. Get in with a referral from an existing member, or by applying and passing review by our team.
+3. Create a beacon describing what you need or offer.
+4. TribeLife's matching engine finds relevant members in your timezone.
+5. Connect via chat and build real community relationships.
 
 ## Company
 
@@ -38,4 +46,4 @@ TribeLife is built by UBot Labs.
 
 ## Availability
 
-Available on iOS via the Apple App Store. Android version coming soon.
+Available on iOS via the Apple App Store and on Android via Google Play.

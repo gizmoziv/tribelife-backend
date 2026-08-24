@@ -3,10 +3,18 @@ import { motion } from "framer-motion";
 import { Flame } from "lucide-react";
 
 const perks: ReactNode[] = [
+  <>
+    Every member is referred in by the tribe, or reviewed by a human before
+    they get the keys.{' '}
+    <span className="font-semibold text-foreground">
+      No open door, no bots, no bad actors.
+    </span>
+  </>,
+  "Built for Jewish life: Shabbat tables, chevruta, simchas, business deals",
   "The whole chat history is here, even if you show up late",
-  "Auto-translation, Hebrew included — come as you are",
+  "Auto-translation, Hebrew included, so come as you are",
   "Local + global rooms by default, no caps on # of members",
-  "Your own DMs and group chats, no gatekeepers",
+  "Your own DMs and group chats, or create your own community",
   <>
     One beacon hunts networks for you every night, FREE.
     <br />

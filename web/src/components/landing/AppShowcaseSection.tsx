@@ -3,19 +3,19 @@ import { motion } from "framer-motion";
 const screenshots = [
   {
     src: "/screenshots/chat.png",
-    alt: "TribeLife community chat — warm Passover greetings and friendly conversation",
+    alt: "TribeLife community chat with warm Passover greetings and friendly conversation",
     label: "Connect",
     description: "Join vibrant conversations with our community",
   },
   {
     src: "/screenshots/beacon-setup.png",
-    alt: "Setting up a beacon on TribeLife — describe what you need in one sentence",
+    alt: "Setting up a beacon on TribeLife by describing what you need in one sentence",
     label: "Post a Beacon",
     description: "Tell us what you need in one simple sentence",
   },
   {
     src: "/screenshots/beacon-matches.png",
-    alt: "Beacon matches on TribeLife — matched with people who share your interests",
+    alt: "Beacon matches on TribeLife, showing people who share your interests",
     label: "Get Matched",
     description: "Wake up to real, meaningful matches nearby",
   },
@@ -38,7 +38,8 @@ const AppShowcaseSection = () => {
             in Action
           </h2>
           <p className="text-lg text-muted-foreground max-w-xl mx-auto">
-            Fun. Valuable. One app built intentionally for our community.
+            Fun. Valuable. One app built intentionally for the Jewish
+            community.
           </p>
         </motion.div>
 

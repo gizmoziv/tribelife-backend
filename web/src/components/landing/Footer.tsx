@@ -23,8 +23,9 @@ const Footer = () => {
         <div className="flex flex-col md:flex-row items-center justify-between gap-8">
           <div className="flex flex-col items-center md:items-start gap-3">
             <Logo iconClassName="h-7" textClassName="text-lg" />
-            <p className="text-sm text-muted-foreground">
-              Our tribe, supercharged.
+            <p className="text-sm text-muted-foreground max-w-xs text-center md:text-left">
+              A private, vetted network for the Jewish community. Our tribe,
+              amplified.
             </p>
           </div>
 
