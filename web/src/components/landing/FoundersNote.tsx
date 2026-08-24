@@ -36,7 +36,10 @@ const FoundersNote = () => {
               Our team has spent years in the Jewish social network space. We've
               seen communities that offer breadth but lack depth, and private ones
               that go deeper but still leave people spraying and praying for the
-              right connection. Neither works the way it should.
+              right connection. Neither works the way it should. So we built a
+              network that is unapologetically ours: for Jewish professionals,
+              gated at the door, and small enough that the people inside are
+              actually worth knowing.
             </p>
             <p>
               For thousands of years, shuls were where intentional matches

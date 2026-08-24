@@ -29,8 +29,9 @@ const SocialProofSection = () => {
             <span className="gradient-text">get it</span>
           </h2>
           <p className="text-muted-foreground text-lg max-w-2xl mx-auto">
-            A community that shows up for Shabbat dinners, study sessions,
-            gatherings, business deals and everything in between.
+            Jewish professionals, founders, creators and students who show up
+            for Shabbat dinners, study sessions, simchas, business deals and
+            everything in between.
           </p>
         </motion.div>
 
