@@ -60,8 +60,8 @@ export function computeCapabilities(args: {
   const isPremiumDerived = premiumActive;
 
   const personalLimits = premiumActive
-    ? { maxBeacons: 3, maxGroupsOwned: 5, maxGroupMembers: 250 }
-    : { maxBeacons: 1, maxGroupsOwned: 1, maxGroupMembers: 25 };
+    ? { maxBeacons: 3, maxGroupsOwned: 5, maxGroupMembers: 1000 }
+    : { maxBeacons: 1, maxGroupsOwned: 1, maxGroupMembers: 250 };
 
   const limits = {
     ...personalLimits,
