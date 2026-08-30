@@ -387,30 +387,34 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
             .where(eq(userProfiles.userId, targetId))
             .limit(1);
           const token = targetProfile?.expoPushToken;
-          await deliverPersonPush({
-            recipientId: targetId,
-            legacyToken: token,
-            message: {
-              to: token ?? '',
-              title,
-              body: notifBody,
-              mutableContent: true,
-              categoryId: 'message',
-              data: {
-                type: 'chat',
-                source: 'group',
-                entityId: data.conversationId,
-                conversationId: data.conversationId,
-                groupName: groupLabel,
-                notificationId: inserted.id,
-                messageId: msg.id,
-                senderHandle: handle,
-                sender: { id: userId, name: handle, avatarUrl: resolveGroupAvatar(convo.groupIconUrl, { conversationId: data.conversationId, groupName: groupLabel }) },
-                conversation: { id: String(data.conversationId), title: groupLabel, isGroup: true },
+          try {
+            await deliverPersonPush({
+              recipientId: targetId,
+              legacyToken: token,
+              message: {
+                to: token ?? '',
+                title,
+                body: notifBody,
+                mutableContent: true,
+                categoryId: 'message',
+                data: {
+                  type: 'chat',
+                  source: 'group',
+                  entityId: data.conversationId,
+                  conversationId: data.conversationId,
+                  groupName: groupLabel,
+                  notificationId: inserted.id,
+                  messageId: msg.id,
+                  senderHandle: handle,
+                  sender: { id: userId, name: handle, avatarUrl: resolveGroupAvatar(convo.groupIconUrl, { conversationId: data.conversationId, groupName: groupLabel }) },
+                  conversation: { id: String(data.conversationId), title: groupLabel, isGroup: true },
+                },
+                sound: 'default',
               },
-              sound: 'default',
-            },
-          });
+            });
+          } catch (err) {
+            log.error({ err }, '[dm mention] push delivery failed');
+          }
         }
       }
 
@@ -610,29 +614,33 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
 
           if (await shouldSendPush(p.userId, 'dm')) {
             const token = otherProfile[0]?.expoPushToken;
-            await deliverPersonPush({
-              recipientId: p.userId,
-              legacyToken: token,
-              message: {
-                to: token ?? '',
-                title: `Message from @${handle}`,
-                body: messageNotificationBody(content, mediaUrls),
-                mutableContent: true,
-                categoryId: 'message',
-                data: {
-                  type: 'chat',
-                  source: 'dm',
-                  entityId: data.conversationId,
-                  conversationId: data.conversationId,
-                  notificationId: notifId,
-                  messageId: msg.id, // Phase 14 D-04
-                  senderHandle: handle,
-                  sender: { id: userId, name: handle, avatarUrl: senderAvatarUrl },
-                  conversation: { id: String(data.conversationId), title: `@${handle}`, isGroup: false },
+            try {
+              await deliverPersonPush({
+                recipientId: p.userId,
+                legacyToken: token,
+                message: {
+                  to: token ?? '',
+                  title: `Message from @${handle}`,
+                  body: messageNotificationBody(content, mediaUrls),
+                  mutableContent: true,
+                  categoryId: 'message',
+                  data: {
+                    type: 'chat',
+                    source: 'dm',
+                    entityId: data.conversationId,
+                    conversationId: data.conversationId,
+                    notificationId: notifId,
+                    messageId: msg.id, // Phase 14 D-04
+                    senderHandle: handle,
+                    sender: { id: userId, name: handle, avatarUrl: senderAvatarUrl },
+                    conversation: { id: String(data.conversationId), title: `@${handle}`, isGroup: false },
+                  },
+                  sound: 'default',
                 },
-                sound: 'default',
-              },
-            });
+              });
+            } catch (err) {
+              log.error({ err }, '[dm message] push delivery failed');
+            }
           }
         }
       }
@@ -886,29 +894,33 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
 
           if (await shouldSendPush(p.userId, 'dm')) {
             const token = otherProfile?.expoPushToken;
-            await deliverPersonPush({
-              recipientId: p.userId,
-              legacyToken: token,
-              message: {
-                to: token ?? '',
-                title: `Voice message from @${handle}`,
-                body: VOICE_FALLBACK,
-                mutableContent: true,
-                categoryId: 'message',
-                data: {
-                  type: 'chat',
-                  source: 'dm',
-                  entityId: data.conversationId,
-                  conversationId: data.conversationId,
-                  notificationId: notifId,
-                  messageId: msg.id,
-                  senderHandle: handle,
-                  sender: { id: userId, name: handle, avatarUrl: senderAvatarUrl },
-                  conversation: { id: String(data.conversationId), title: `@${handle}`, isGroup: false },
+            try {
+              await deliverPersonPush({
+                recipientId: p.userId,
+                legacyToken: token,
+                message: {
+                  to: token ?? '',
+                  title: `Voice message from @${handle}`,
+                  body: VOICE_FALLBACK,
+                  mutableContent: true,
+                  categoryId: 'message',
+                  data: {
+                    type: 'chat',
+                    source: 'dm',
+                    entityId: data.conversationId,
+                    conversationId: data.conversationId,
+                    notificationId: notifId,
+                    messageId: msg.id,
+                    senderHandle: handle,
+                    sender: { id: userId, name: handle, avatarUrl: senderAvatarUrl },
+                    conversation: { id: String(data.conversationId), title: `@${handle}`, isGroup: false },
+                  },
+                  sound: 'default',
                 },
-                sound: 'default',
-              },
-            });
+              });
+            } catch (err) {
+              log.error({ err }, '[dm voice] push delivery failed');
+            }
           }
         }
       }

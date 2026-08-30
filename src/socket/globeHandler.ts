@@ -355,29 +355,33 @@ export function registerGlobeHandlers(io: Server, socket: Socket): void {
 
       if (await shouldSendPush(notifyId, 'mention')) {
         const token = targetProfile?.expoPushToken;
-        await deliverPersonPush({
-          recipientId: notifyId,
-          legacyToken: token,
-          message: {
-            to: token ?? '',
-            title,
-            body: messageNotificationBody(content, mediaUrls),
-            mutableContent: true,
-            categoryId: 'message',
-            data: {
-              type: 'chat',
-              source: 'globe_room',
-              entityId: data.slug,
-              roomSlug: data.slug,
-              notificationId: inserted.id,
-              messageId: msg.id, // Phase 14 D-04
-              senderHandle: handle,
-              sender: { id: userId, name: handle, avatarUrl: senderAvatarUrl },
-              conversation: { id: data.slug, title: data.slug, isGroup: true },
+        try {
+          await deliverPersonPush({
+            recipientId: notifyId,
+            legacyToken: token,
+            message: {
+              to: token ?? '',
+              title,
+              body: messageNotificationBody(content, mediaUrls),
+              mutableContent: true,
+              categoryId: 'message',
+              data: {
+                type: 'chat',
+                source: 'globe_room',
+                entityId: data.slug,
+                roomSlug: data.slug,
+                notificationId: inserted.id,
+                messageId: msg.id, // Phase 14 D-04
+                senderHandle: handle,
+                sender: { id: userId, name: handle, avatarUrl: senderAvatarUrl },
+                conversation: { id: data.slug, title: data.slug, isGroup: true },
+              },
+              sound: 'default',
             },
-            sound: 'default',
-          },
-        });
+          });
+        } catch (err) {
+          log.error({ err }, '[globe mention] push delivery failed');
+        }
       }
     }
 

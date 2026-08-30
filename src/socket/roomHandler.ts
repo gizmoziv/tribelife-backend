@@ -248,7 +248,8 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
 
       if (await shouldSendPush(notifyId, 'mention')) {
         const token = mentionedProfile?.expoPushToken;
-        await deliverPersonPush({
+        try {
+          await deliverPersonPush({
           recipientId: notifyId,
           legacyToken: token,
           message: {
@@ -272,6 +273,9 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
             sound: 'default',
           },
         });
+        } catch (err) {
+          log.error({ err }, '[room mention] push delivery failed');
+        }
       }
     }
 
