@@ -1,8 +1,10 @@
 import { Router, Response } from 'express';
-import { and, desc, eq, lt, or, sql } from 'drizzle-orm';
+import { and, desc, eq, ilike, isNull, lt, or, sql } from 'drizzle-orm';
 import { db } from '../db';
 import { jobPostings } from '../db/schema';
 import { requireAuth, requireApprovedAccess, AuthRequest } from '../middleware/auth';
+import { getZoneForTimezone } from '../config/timezoneZones';
+import { getLocationKeywordsForZone } from '../config/jobLocationZones';
 import logger from '../lib/logger';
 
 const log = logger.child({ module: 'jobs-feed' });
@@ -55,11 +57,43 @@ router.get('/feed', async (req: AuthRequest, res: Response): Promise<void> => {
       )
     : undefined;
 
+  // D-04/D-05/D-09: `?myLocation=true` (strict string equality — no zod, no
+  // coercion; any other value falls through to today's unfiltered behavior).
+  const myLocation = req.query.myLocation === 'true';
+
+  const locationFilter = myLocation
+    ? (() => {
+        // Caller's zone from their own profile timezone (server-derived, never
+        // client-supplied) — null timezone falls back to the 'utc' zone.
+        const zoneSlug = getZoneForTimezone(req.user!.timezone ?? 'UTC');
+        const keywords = getLocationKeywordsForZone(zoneSlug);
+
+        // Always-included: null-location jobs + jobs mentioning "remote" in any
+        // casing. Built as its own variable — see LANDMINE note below.
+        const alwaysIncluded = or(
+          isNull(jobPostings.location),
+          ilike(jobPostings.location, '%remote%'),
+        );
+
+        // LANDMINE: Drizzle's or() returns undefined when given zero conditions,
+        // and an undefined predicate passed into and(...) is silently dropped —
+        // which would turn myLocation=true for a keyword-less zone into an
+        // *unfiltered whole-table* response. This explicit empty-array branch
+        // is what prevents that.
+        if (keywords.length === 0) return alwaysIncluded;
+
+        return or(
+          alwaysIncluded,
+          ...keywords.map((kw) => ilike(jobPostings.location, `%${kw}%`)),
+        );
+      })()
+    : undefined;
+
   try {
     const rows = await db
       .select()
       .from(jobPostings)
-      .where(and(ageFilter, cursorFilter))
+      .where(and(ageFilter, cursorFilter, locationFilter))
       .orderBy(desc(jobPostings.viewCount), desc(jobPostings.id))
       .limit(PAGE_SIZE + 1); // fetch 1 extra to determine hasMore
 
