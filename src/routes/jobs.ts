@@ -35,6 +35,32 @@ function decodeCursor(raw: string): { viewCount: number; id: number } | null {
   }
 }
 
+// ── Location keyword matching ─────────────────────────────────────────────
+// jobLocationZones.ts stores two kinds of keywords: full place names
+// ("Michigan") and comma-space-prefixed 2-letter abbreviations (", MI").
+// Full names are matched with plain case-insensitive substring (ILIKE) —
+// they're long enough that an unrelated-prefix collision isn't a realistic
+// concern. Abbreviations need a trailing word-boundary check: plain ILIKE
+// substring containment lets ", MI" match ", Missouri" (Missouri starts with
+// "Mi" right after the comma-space), silently pulling central-time postings
+// into an eastern-time filter. See debug session
+// my-timezone-filter-wrong-zone.
+//
+// Fixed via a case-insensitive Postgres regex (~*) requiring the character
+// immediately after the code to be a non-letter or end-of-string. Postgres'
+// default (ARE) regex flavor has no lookahead, so the boundary is expressed
+// as an explicit trailing alternation: `([^A-Za-z]|$)`.
+function buildKeywordCondition(keyword: string) {
+  if (keyword.startsWith(', ')) {
+    // Escape regex metacharacters defensively — today's codes are plain
+    // A-Z letters, but this keeps the match correct if that ever changes.
+    const code = keyword.slice(2).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const pattern = `,\\s*${code}([^A-Za-z]|$)`;
+    return sql`${jobPostings.location} ~* ${pattern}`;
+  }
+  return ilike(jobPostings.location, `%${keyword}%`);
+}
+
 // ── GET /feed ──────────────────────────────────────────────────────────────
 // Returns view-count-DESC paginated job postings within a 60-day window.
 // Implements: JOBS-04 (keyset pagination), JOBS-05 (60-day filter, no duplicates),
@@ -82,10 +108,7 @@ router.get('/feed', async (req: AuthRequest, res: Response): Promise<void> => {
         // is what prevents that.
         if (keywords.length === 0) return alwaysIncluded;
 
-        return or(
-          alwaysIncluded,
-          ...keywords.map((kw) => ilike(jobPostings.location, `%${kw}%`)),
-        );
+        return or(alwaysIncluded, ...keywords.map(buildKeywordCondition));
       })()
     : undefined;
 
