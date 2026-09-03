@@ -15,7 +15,10 @@ const socialEntrySchema = z
   .object({
     platform: z.enum(['linkedin', 'instagram', 'facebook', 'other']),
     platformOther: z.string().trim().min(1).max(50).optional(),
-    handle: z.string().trim().min(1).max(100),
+    // 200 matches the mobile input's own maxLength (SocialsRepeater.tsx) —
+    // the field's placeholder invites a full profile link, not just a
+    // short @handle, so the cap must fit what the UI actually allows in.
+    handle: z.string().trim().min(1).max(200),
   })
   .superRefine((data, ctx) => {
     if (data.platform === 'other' && !data.platformOther) {
@@ -45,6 +48,10 @@ router.use(requireAuth);
 router.post('/', async (req: AuthRequest, res: Response): Promise<void> => {
   const parse = accessRequestSchema.safeParse(req.body);
   if (!parse.success) {
+    console.error('[access-request] validation failed', {
+      userId: req.user?.id,
+      issues: parse.error.errors.map((e) => ({ path: e.path, message: e.message })),
+    });
     res.status(400).json({ error: parse.error.errors[0].message });
     return;
   }
