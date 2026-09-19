@@ -1,5 +1,5 @@
 import { Router, Response } from 'express';
-import { and, desc, eq, lt } from 'drizzle-orm';
+import { and, desc, eq, gt, lt, lte } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '../db';
 import { esekProducts } from '../db/schema';
@@ -37,11 +37,29 @@ function decodeCursor(raw: string): { id: number } | null {
   }
 }
 
+// ── Max-price cap ────────────────────────────────────────────────────────────
+// Optional operator cap (USD) read from ESEK_MAX_PRICE on every call — never at module
+// scope — so a bad value can't break boot and a change needs only a restart.
+// Returns null (= no price filtering) for unset, blank, non-numeric, non-finite, or <= 0.
+function getEsekMaxPrice(): number | null {
+  const raw = process.env.ESEK_MAX_PRICE;
+  if (raw === undefined) return null;
+  const trimmed = raw.trim();
+  if (trimmed === '') return null;
+  const cap = Number(trimmed);
+  if (!Number.isFinite(cap)) return null;
+  if (cap <= 0) return null;
+  return cap;
+}
+
 // ── GET /esek/feed ───────────────────────────────────────────────────────────
 // Keyset-paginated (id DESC → newest-first, since id is monotonic with first-seen)
 // in-stock, non-delisted Esek products, in the jobs-feed response shape
 // { products, hasMore, nextCursor }. The esek_products_feed_idx
 // (delisted, available, created_at DESC, id DESC) still serves the WHERE prefix.
+// Additionally narrowed by an optional ESEK_MAX_PRICE cap (see getEsekMaxPrice). The
+// price column is variants[0].price only, so a multi-variant product is judged on its
+// first variant's price rather than on its cheapest variant.
 const feedQuerySchema = z.object({ cursor: z.string().optional() });
 
 router.get('/esek/feed', async (req: AuthRequest, res: Response): Promise<void> => {
@@ -58,6 +76,13 @@ router.get('/esek/feed', async (req: AuthRequest, res: Response): Promise<void> 
   // Keyset cursor filter: rows with a smaller id than the cursor (id DESC order).
   const cursorFilter = cursor ? lt(esekProducts.id, cursor.id) : undefined;
 
+  // Optional price cap: both predicates are undefined when no cap is active, so the SQL is
+  // unchanged. The zero floor rides along with the cap (excludes zero-priced products).
+  // price is a numeric column (string-typed in JS), so bounds are passed as strings.
+  const maxPrice = getEsekMaxPrice();
+  const maxPriceFilter = maxPrice !== null ? lte(esekProducts.price, String(maxPrice)) : undefined;
+  const minPriceFilter = maxPrice !== null ? gt(esekProducts.price, '0') : undefined;
+
   try {
     const rows = await db
       .select({
@@ -70,7 +95,15 @@ router.get('/esek/feed', async (req: AuthRequest, res: Response): Promise<void> 
         handle: esekProducts.handle,
       })
       .from(esekProducts)
-      .where(and(eq(esekProducts.available, true), eq(esekProducts.delisted, false), cursorFilter))
+      .where(
+        and(
+          eq(esekProducts.available, true),
+          eq(esekProducts.delisted, false),
+          cursorFilter,
+          maxPriceFilter,
+          minPriceFilter,
+        ),
+      )
       .orderBy(desc(esekProducts.id))
       .limit(PAGE_SIZE + 1); // fetch 1 extra to determine hasMore
 
