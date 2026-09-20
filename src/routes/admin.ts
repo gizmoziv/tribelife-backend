@@ -7,6 +7,7 @@ import { db } from '../db';
 import { users, userProfiles, surveys, surveyVotes, accessRequests } from '../db/schema';
 import { announceUserBlocked } from '../services/moderationAnnounce';
 import { announceFirstJoin } from '../services/firstJoinAnnounce';
+import { applyReferralCreditOnApproval } from '../services/referralCredit';
 import logger from '../lib/logger';
 import {
   classifyZoneResolution,
@@ -518,6 +519,8 @@ async function decideAccessRequest(
         status: accessRequests.status,
         decidedAt: accessRequests.decidedAt,
         decidedBy: accessRequests.decidedBy,
+        referrerUserId: accessRequests.referrerUserId,
+        referralSource: accessRequests.referralSource,
       });
 
     if (!row) {
@@ -548,6 +551,36 @@ async function decideAccessRequest(
     await tx.update(userProfiles)
       .set({ accessStatus: nextStatus, updatedAt: new Date() })
       .where(eq(userProfiles.userId, row.userId));
+
+    // Phase 36 D-06: a request that carries a pending referrer (a review-gated
+    // joiner) earns its referral credit HERE, on the transition INTO approved,
+    // inside this same transaction and on the `tx` handle. Approval and credit
+    // are therefore one atomic unit: nothing below catches, so an error from
+    // the credit rolls back the referrals insert, both premium writes, the
+    // access_requests flip and the user_profiles mirror together, then
+    // propagates out of the handler (express-async-errors + the HARDEN-01
+    // global errorHandler log it at level=error and return a 500). The
+    // approval did not happen, so the request is still undecided and the admin
+    // pressing Approve again genuinely re-enters this code — a post-commit
+    // retry would instead be refused by the already-approved guard below, and a
+    // half-written credit would be masked forever by the duplicate guard in
+    // applyReferralCreditOnApproval. Every DB call must go through `tx`: a
+    // `db` call is a separate pooled connection (not atomic, and it would
+    // self-deadlock on the user_profiles row this transaction has locked).
+    // Deliberately NO `_temp_` handle guard: credit must land even if the
+    // applicant has not finished onboarding. Reject never reaches this block.
+    if (
+      nextStatus === 'approved' &&
+      priorProfile &&
+      priorProfile.accessStatus !== 'approved' &&
+      row.referrerUserId !== null
+    ) {
+      await applyReferralCreditOnApproval(tx, {
+        referredUserId: row.userId,
+        referrerUserId: row.referrerUserId,
+        source: row.referralSource,
+      });
+    }
 
     return { row, priorProfile };
   });
