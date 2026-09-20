@@ -30,6 +30,7 @@ import { bootstrapAutoJoins } from '../services/globeMembership';
 import { getZoneForTimezone } from '../config/timezoneZones';
 import { callerCanAccessNonNativeTimezone } from '../lib/timezoneRoomAccess';
 import { announceFirstJoin } from '../services/firstJoinAnnounce';
+import { isReviewRequiredReferrer } from '../services/referralReview';
 import { logUserEvent } from '../services/userEvents';
 
 const router = Router();
@@ -478,6 +479,37 @@ router.post(
       return;
     }
 
+    // Resolve the referrer BEFORE any write (Phase 36 D-05) so a review-required
+    // referrer's code can be refused without leaving a half-onboarded user behind.
+    // Joins users to also fetch bannedAt so banned referrers are excluded (REF-09).
+    const [referrerLookup] = referralCode
+      ? await db
+          .select({ userId: userProfiles.userId, bannedAt: users.bannedAt })
+          .from(userProfiles)
+          .innerJoin(users, eq(users.id, userProfiles.userId))
+          .where(eq(userProfiles.handle, referralCode.toLowerCase()))
+          .limit(1)
+      : [];
+
+    // Valid referrer: exists, is a different user, and is not banned (REF-09)
+    const isValidReferrer =
+      referrerLookup != null &&
+      referrerLookup.userId !== userId &&
+      referrerLookup.bannedAt === null;
+
+    // Phase 36 D-05: server-side safety net. A listed referrer's code must never
+    // finish onboarding ungated — refuse before any write so the user keeps their
+    // placeholder handle (the mobile apply-for-access screen persists the real
+    // handle only after the access request succeeds). The `code` key is a
+    // cross-repo contract consumed by the mobile client.
+    if (referralCode && isValidReferrer && isReviewRequiredReferrer(referrerLookup.userId)) {
+      res.status(409).json({
+        error: 'Your referral needs a quick review before you can continue.',
+        code: 'referral_review_required',
+      });
+      return;
+    }
+
     // Detect first-time onboarding vs handle change. On signup we create a
     // skeleton profile with handle "_temp_<id>" so FKs work, then flip it to
     // the real handle on the first /onboarding call. Any subsequent call to
@@ -516,23 +548,9 @@ router.post(
 
     // Track referral if code provided
     if (referralCode) {
-      // Join users table to also fetch bannedAt so we can exclude banned referrers (REF-09)
-      const [referrer] = await db
-        .select({ userId: userProfiles.userId, bannedAt: users.bannedAt })
-        .from(userProfiles)
-        .innerJoin(users, eq(users.id, userProfiles.userId))
-        .where(eq(userProfiles.handle, referralCode.toLowerCase()))
-        .limit(1);
-
-      // Valid referrer: exists, is a different user, and is not banned (REF-09)
-      const isValidReferrer =
-        referrer != null &&
-        referrer.userId !== userId &&
-        referrer.bannedAt === null;
-
       if (isValidReferrer) {
         await db.insert(referrals).values({
-          referrerId: referrer.userId,
+          referrerId: referrerLookup.userId,
           referredUserId: userId,
           referralCode: referralCode.toLowerCase(),
           status: 'onboarded',
@@ -542,7 +560,7 @@ router.post(
 
         console.log('[attribution]', {
           userId,
-          referrerId: referrer.userId,
+          referrerId: referrerLookup.userId,
           source: attributionSource ?? 'handle_code',
         });
 
@@ -550,7 +568,7 @@ router.post(
         const [countResult] = await db
           .select({ total: count() })
           .from(referrals)
-          .where(eq(referrals.referrerId, referrer.userId));
+          .where(eq(referrals.referrerId, referrerLookup.userId));
 
         const totalReferrals = Math.min(countResult?.total ?? 0, 12);
         if (totalReferrals > 0) {
@@ -563,7 +581,7 @@ router.post(
               premiumExpiresAt: premiumExpiry,
               updatedAt: new Date(),
             })
-            .where(eq(userProfiles.userId, referrer.userId));
+            .where(eq(userProfiles.userId, referrerLookup.userId));
         }
 
         // Grant joiner premium — net-new users only (REF-06)
@@ -592,7 +610,7 @@ router.post(
           profile.updatedAt = grantedAt;
           console.log('[attribution] joiner premium granted', {
             userId,
-            referrerId: referrer.userId,
+            referrerId: referrerLookup.userId,
             days: joinerPremiumDays,
           });
         }
