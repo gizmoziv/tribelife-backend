@@ -1,9 +1,10 @@
 import { Router, Response } from 'express';
 import { z } from 'zod';
 import { db } from '../db';
-import { accessRequests, userProfiles } from '../db/schema';
+import { accessRequests, userProfiles, users } from '../db/schema';
 import { eq, and, inArray } from 'drizzle-orm';
 import { requireAuth, AuthRequest } from '../middleware/auth';
+import { isReviewRequiredReferrer } from '../services/referralReview';
 
 // ── Zod schemas (module-scope constants, safeParse-only validation,
 // first-error-message-only — project convention) ──────────────────────────
@@ -33,6 +34,12 @@ const socialEntrySchema = z
 const accessRequestSchema = z.object({
   reason: z.string().trim().min(1).max(2000),
   socials: z.array(socialEntrySchema).min(1, 'At least one social link is required'),
+  // Phase 36 (D-04): optional pending referrer. Never trusted — the server
+  // re-resolves the handle itself and only stores it when it qualifies.
+  referralCode: z.string().trim().max(50).optional(),
+  referralSource: z
+    .enum(['handle_code', 'profile_share', 'group_invite', 'manual_entry'])
+    .optional(),
 });
 
 const router = Router();
@@ -103,6 +110,33 @@ router.post('/', async (req: AuthRequest, res: Response): Promise<void> => {
     return;
   }
 
+  // Phase 36 (D-04): resolve the pending referrer server-side, exactly as
+  // auth.ts /onboarding does. It qualifies only when it exists, is a different
+  // user, is not banned, AND is on the review-required list. Any non-qualifying
+  // code (absent, unknown, self, banned, unlisted) is ignored silently — no
+  // error branch, no new status code, no new response field — so the caller
+  // cannot tell qualifying from non-qualifying (anti-enumeration, Phase 34 D-06).
+  let referrerUserId: number | undefined;
+  let referralSource: 'handle_code' | 'profile_share' | 'group_invite' | 'manual_entry' | undefined;
+  if (parse.data.referralCode) {
+    const [referrer] = await db
+      .select({ userId: userProfiles.userId, bannedAt: users.bannedAt })
+      .from(userProfiles)
+      .innerJoin(users, eq(users.id, userProfiles.userId))
+      .where(eq(userProfiles.handle, parse.data.referralCode.toLowerCase()))
+      .limit(1);
+
+    if (
+      referrer != null &&
+      referrer.userId !== userId &&
+      referrer.bannedAt === null &&
+      isReviewRequiredReferrer(referrer.userId)
+    ) {
+      referrerUserId = referrer.userId;
+      referralSource = parse.data.referralSource ?? 'handle_code';
+    }
+  }
+
   // WR-02: wrap the insert + gate-flip in a transaction — both writes must
   // succeed together, or neither does (contrast with the previous two
   // independent awaits, which could leave access_requests and
@@ -117,6 +151,8 @@ router.post('/', async (req: AuthRequest, res: Response): Promise<void> => {
         reason: parse.data.reason,
         socials: parse.data.socials,
         status: 'pending',
+        referrerUserId,
+        referralSource,
       })
       .returning({
         id: accessRequests.id,
@@ -135,7 +171,11 @@ router.post('/', async (req: AuthRequest, res: Response): Promise<void> => {
     return row;
   });
 
-  console.log('[access-request]', { userId, requestId: created.id });
+  console.log('[access-request]', {
+    userId,
+    requestId: created.id,
+    referrerUserId: referrerUserId ?? null,
+  });
 
   res.json({ ok: true, accessRequest: created });
 });
