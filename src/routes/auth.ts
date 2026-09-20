@@ -4,7 +4,7 @@ import logger from '../lib/logger';
 const log = logger.child({ module: 'auth' });
 import { OAuth2Client } from 'google-auth-library';
 import { createRemoteJWKSet, jwtVerify } from 'jose';
-import { eq, count, and, ne } from 'drizzle-orm';
+import { eq, and, ne } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '../db';
 import {
@@ -31,16 +31,14 @@ import { getZoneForTimezone } from '../config/timezoneZones';
 import { callerCanAccessNonNativeTimezone } from '../lib/timezoneRoomAccess';
 import { announceFirstJoin } from '../services/firstJoinAnnounce';
 import { isReviewRequiredReferrer } from '../services/referralReview';
+import {
+  grantReferrerPremiumMonths,
+  grantJoinerPremiumIfEligible,
+} from '../services/referralCredit';
 import { logUserEvent } from '../services/userEvents';
 
 const router = Router();
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
-
-// Free-premium days granted to a net-new joiner who provides a valid referrer (REF-06)
-const joinerPremiumDays = parseInt(
-  process.env.REFERRAL_JOINER_PREMIUM_DAYS || '14',
-  10,
-);
 
 // Apple Sign-In JWKS for token verification
 const appleJWKS = createRemoteJWKSet(
@@ -564,55 +562,25 @@ router.post(
           source: attributionSource ?? 'handle_code',
         });
 
-        // Grant referrer premium: 1 referral = 1 month, cap at 12 (REF-07 — unchanged)
-        const [countResult] = await db
-          .select({ total: count() })
-          .from(referrals)
-          .where(eq(referrals.referrerId, referrerLookup.userId));
+        // Grant referrer premium: 1 referral = 1 month, cap at 12 (REF-07).
+        // Shared with the admin approve path (referralCredit.ts) so the two
+        // cannot drift. No executor: /onboarding is deliberately not transactional.
+        await grantReferrerPremiumMonths(referrerLookup.userId);
 
-        const totalReferrals = Math.min(countResult?.total ?? 0, 12);
-        if (totalReferrals > 0) {
-          const premiumExpiry = new Date();
-          premiumExpiry.setMonth(premiumExpiry.getMonth() + totalReferrals);
-          await db
-            .update(userProfiles)
-            .set({
-              isPremium: true,
-              premiumExpiresAt: premiumExpiry,
-              updatedAt: new Date(),
-            })
-            .where(eq(userProfiles.userId, referrerLookup.userId));
-        }
-
-        // Grant joiner premium — net-new users only (REF-06)
-        // Predicate mirrors capabilities.ts: isPremium && (premiumExpiresAt === null || premiumExpiresAt > now)
-        const now = new Date();
-        const joinerHasActivePremium =
-          profile.isPremium &&
-          (profile.premiumExpiresAt === null || profile.premiumExpiresAt > now);
-
-        if (isFirstOnboarding && !joinerHasActivePremium) {
-          const premiumExpiry = new Date(
-            Date.now() + joinerPremiumDays * 86400000,
-          );
-          const grantedAt = new Date();
-          await db
-            .update(userProfiles)
-            .set({
-              isPremium: true,
-              premiumExpiresAt: premiumExpiry,
-              updatedAt: grantedAt,
-            })
-            .where(eq(userProfiles.userId, userId));
-          // Sync in-memory profile so res.json({ profile }) reflects the grant
-          profile.isPremium = true;
-          profile.premiumExpiresAt = premiumExpiry;
-          profile.updatedAt = grantedAt;
-          console.log('[attribution] joiner premium granted', {
+        // Grant joiner premium — net-new users only (REF-06). The
+        // isFirstOnboarding gate is onboarding-specific and stays here; the
+        // active-premium predicate lives in the helper.
+        if (isFirstOnboarding) {
+          const joinerGrant = await grantJoinerPremiumIfEligible(
             userId,
-            referrerId: referrerLookup.userId,
-            days: joinerPremiumDays,
-          });
+            referrerLookup.userId,
+          );
+          if (joinerGrant.granted) {
+            // Sync in-memory profile so res.json({ profile }) reflects the grant
+            profile.isPremium = true;
+            profile.premiumExpiresAt = joinerGrant.premiumExpiresAt;
+            profile.updatedAt = new Date();
+          }
         }
       } else {
         // Referral miss: code was supplied but did not resolve to a valid different non-banned referrer (REF-09, REF-04)
