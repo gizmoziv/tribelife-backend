@@ -4,6 +4,7 @@ import { db } from '../db';
 import { referrals, attributionConversions, users, userProfiles } from '../db/schema';
 import { eq, and, lt, count, sql } from 'drizzle-orm';
 import { requireAuth, requireApprovedAccess, AuthRequest } from '../middleware/auth';
+import { isReviewRequiredReferrer } from '../services/referralReview';
 
 const router = Router();
 router.use(requireAuth);
@@ -97,10 +98,13 @@ const referralValidateSchema = z.object({ handle: z.string() });
 // ── Live-validate a referral handle, separate from the final onboarding
 // submit (D-04 — this handler never inserts into `referrals`). D-06: the
 // uniform 200 body below is built through exactly ONE shared res.json(...)
-// call fed by locally computed valid/exhausted/attemptsRemaining/blank — that
-// uniformity IS the anti-enumeration control. Do not add cause-specific
-// messages or status codes here; a future "helpful" branch would leak handle
-// existence through the response shape alone.
+// call fed by locally computed valid/exhausted/attemptsRemaining/blank/
+// requiresReview — that uniformity IS the anti-enumeration control. Do not add
+// cause-specific messages or status codes here; a future "helpful" branch would
+// leak handle existence through the response shape alone. Phase 36 (D-03):
+// requiresReview is present on EVERY branch (false unless the referrer is
+// valid AND on the review-required list) — a key on only one branch would
+// itself be an enumeration signal.
 router.post('/validate', async (req: AuthRequest, res: Response): Promise<void> => {
   const parse = referralValidateSchema.safeParse(req.body);
   if (!parse.success) {
@@ -129,6 +133,7 @@ router.post('/validate', async (req: AuthRequest, res: Response): Promise<void> 
   let exhausted: boolean;
   let attemptsRemaining: number;
   let blank: boolean;
+  let requiresReview = false;
 
   if (trimmed.length === 0) {
     // D-10 (RESEARCH Pitfall 2): blank/whitespace short-circuits BEFORE any
@@ -168,6 +173,10 @@ router.post('/validate', async (req: AuthRequest, res: Response): Promise<void> 
       valid = true;
       exhausted = false;
       attemptsRemaining = Math.max(0, REFERRAL_MAX_ATTEMPTS - attempts);
+      // Phase 36 (D-03): a valid code from a review-required referrer still
+      // consumes zero attempts — the flag only tells the client to route the
+      // joiner through Apply for Access instead of finishing onboarding.
+      requiresReview = isReviewRequiredReferrer(referrer.userId);
     } else {
       // Invalid: nonexistent handle, self-referral, and a suspended referrer
       // all take this identical branch and produce an identical body (D-06).
@@ -201,7 +210,7 @@ router.post('/validate', async (req: AuthRequest, res: Response): Promise<void> 
     }
   }
 
-  res.json({ valid, exhausted, attemptsRemaining, blank });
+  res.json({ valid, exhausted, attemptsRemaining, blank, requiresReview });
 });
 
 export default router;

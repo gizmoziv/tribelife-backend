@@ -880,6 +880,10 @@ export const accessRequests = pgTable('access_requests', {
   createdAt: timestamp('created_at').defaultNow().notNull(),
   decidedAt: timestamp('decided_at'),
   decidedBy: varchar('decided_by', { length: 100 }), // free-text admin label supplied by the caller (adminLabel)
+  // Phase 36 (D-04): pending referrer carried with the request when the code
+  // belongs to a review-required referrer. Credit is applied at admin approve.
+  referrerUserId: integer('referrer_user_id').references(() => users.id, { onDelete: 'set null' }),
+  referralSource: varchar('referral_source', { length: 20 }), // 'handle_code' | 'profile_share' | 'group_invite' | 'manual_entry'
 }, (t) => ({
   userIdx: index('access_requests_user_idx').on(t.userId),
   statusIdx: index('access_requests_status_idx').on(t.status),

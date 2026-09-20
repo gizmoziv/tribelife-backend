@@ -1,11 +1,13 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { timingSafeEqual } from 'crypto';
 import { eq, or, ilike, sql, isNotNull, and, desc, asc, count, inArray } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
 import { z } from 'zod';
 import { db } from '../db';
 import { users, userProfiles, surveys, surveyVotes, accessRequests } from '../db/schema';
 import { announceUserBlocked } from '../services/moderationAnnounce';
 import { announceFirstJoin } from '../services/firstJoinAnnounce';
+import { applyReferralCreditOnApproval } from '../services/referralCredit';
 import logger from '../lib/logger';
 import {
   classifyZoneResolution,
@@ -413,6 +415,10 @@ router.get('/access-requests', async (req: Request, res: Response): Promise<void
     const statusFilter =
       status === 'all' ? undefined : eq(accessRequests.status, status);
 
+    // Phase 36 (D-09): second userProfiles alias for the pending referrer, so
+    // the applicant's own profile join above is not disturbed.
+    const referrerProfile = alias(userProfiles, 'referrer_profile');
+
     const pageQuery = db
       .select({
         id: accessRequests.id,
@@ -426,12 +432,17 @@ router.get('/access-requests', async (req: Request, res: Response): Promise<void
         createdAt: accessRequests.createdAt,
         decidedAt: accessRequests.decidedAt,
         decidedBy: accessRequests.decidedBy,
+        referrerUserId: accessRequests.referrerUserId,
+        referrerHandle: referrerProfile.handle,
       })
       .from(accessRequests)
       .innerJoin(users, eq(users.id, accessRequests.userId))
       // leftJoin so a request from a user without a profile row still appears
       // rather than silently vanishing from the admin queue.
       .leftJoin(userProfiles, eq(userProfiles.userId, accessRequests.userId))
+      // leftJoin: no stored referrer (or a referrer whose account was since
+      // deleted) yields nulls rather than dropping the row.
+      .leftJoin(referrerProfile, eq(referrerProfile.userId, accessRequests.referrerUserId))
       .orderBy(asc(accessRequests.createdAt)) // oldest pending first — FIFO review queue
       .limit(limit)
       .offset(offset);
@@ -508,6 +519,8 @@ async function decideAccessRequest(
         status: accessRequests.status,
         decidedAt: accessRequests.decidedAt,
         decidedBy: accessRequests.decidedBy,
+        referrerUserId: accessRequests.referrerUserId,
+        referralSource: accessRequests.referralSource,
       });
 
     if (!row) {
@@ -538,6 +551,36 @@ async function decideAccessRequest(
     await tx.update(userProfiles)
       .set({ accessStatus: nextStatus, updatedAt: new Date() })
       .where(eq(userProfiles.userId, row.userId));
+
+    // Phase 36 D-06: a request that carries a pending referrer (a review-gated
+    // joiner) earns its referral credit HERE, on the transition INTO approved,
+    // inside this same transaction and on the `tx` handle. Approval and credit
+    // are therefore one atomic unit: nothing below catches, so an error from
+    // the credit rolls back the referrals insert, both premium writes, the
+    // access_requests flip and the user_profiles mirror together, then
+    // propagates out of the handler (express-async-errors + the HARDEN-01
+    // global errorHandler log it at level=error and return a 500). The
+    // approval did not happen, so the request is still undecided and the admin
+    // pressing Approve again genuinely re-enters this code — a post-commit
+    // retry would instead be refused by the already-approved guard below, and a
+    // half-written credit would be masked forever by the duplicate guard in
+    // applyReferralCreditOnApproval. Every DB call must go through `tx`: a
+    // `db` call is a separate pooled connection (not atomic, and it would
+    // self-deadlock on the user_profiles row this transaction has locked).
+    // Deliberately NO `_temp_` handle guard: credit must land even if the
+    // applicant has not finished onboarding. Reject never reaches this block.
+    if (
+      nextStatus === 'approved' &&
+      priorProfile &&
+      priorProfile.accessStatus !== 'approved' &&
+      row.referrerUserId !== null
+    ) {
+      await applyReferralCreditOnApproval(tx, {
+        referredUserId: row.userId,
+        referrerUserId: row.referrerUserId,
+        source: row.referralSource,
+      });
+    }
 
     return { row, priorProfile };
   });
