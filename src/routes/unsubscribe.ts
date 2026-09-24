@@ -60,7 +60,10 @@ router.post(
         .where(eq(userProfiles.userId, userId ?? -1));
       log.info('unsubscribe request processed');
     } catch {
-      // Swallow — never distinguish failure reasons (contract section 3 rule 6).
+      // Coarse, detail-free signal only — never the token or user id
+      // (contract section 3 rule 6) — so a DB error on this route isn't
+      // completely invisible in production.
+      log.warn('unsubscribe request failed');
     }
     res.status(200).json(GENERIC_RESPONSE);
   },
