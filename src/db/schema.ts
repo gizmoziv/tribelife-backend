@@ -98,6 +98,10 @@ export const userProfiles = pgTable('user_profiles', {
   // stays NULL (= ungated). Only set once a user submits an access request.
   accessStatus: varchar('access_status', { length: 20 }), // null | 'pending' | 'approved' | 'rejected'
   referralAttempts: integer('referral_attempts').notNull().default(0), // server-side 3-attempt cap (D-05)
+  // Phase 37 (TRIBELIFE-CONTRACT.md section 6) — Marketing-Hub cross-repo email
+  // marketing opt-out flag. Default true = opt-out model, knowingly accepted by
+  // the operator for v1 (contract section 6).
+  acceptsEmailMarketing: boolean('accepts_email_marketing').notNull().default(true),
   createdAt: timestamp('created_at').defaultNow(),
   updatedAt: timestamp('updated_at').defaultNow(),
 }, (t) => ({
