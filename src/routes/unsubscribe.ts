@@ -47,16 +47,17 @@ router.post(
       // return null, which falls through to the same generic response.
       const secret = process.env.UNSUBSCRIBE_TOKEN_SECRET;
       const key = loadUnsubscribeKey(secret);
-      if (key !== null) {
-        // req.body is informational only per RFC 8058 — never branched on.
-        // The token comes from req.query.t and nowhere else.
-        const userId = decryptToken(req.query.t, key);
-        if (userId !== null) {
-          await db.update(userProfiles)
-            .set({ acceptsEmailMarketing: false })
-            .where(eq(userProfiles.userId, userId));
-        }
-      }
+      // req.body is informational only per RFC 8058 — never branched on.
+      // The token comes from req.query.t and nowhere else.
+      const userId = key !== null ? decryptToken(req.query.t, key) : null;
+      // Run unconditionally so timing does not distinguish "token decrypted"
+      // from "token rejected" — a timing-visible branch the contract
+      // explicitly forbids (section 3 rule 6). -1 never matches a real
+      // users.id, so this is a harmless 0-row UPDATE for every
+      // invalid/malformed/missing case.
+      await db.update(userProfiles)
+        .set({ acceptsEmailMarketing: false })
+        .where(eq(userProfiles.userId, userId ?? -1));
       log.info('unsubscribe request processed');
     } catch {
       // Swallow — never distinguish failure reasons (contract section 3 rule 6).
