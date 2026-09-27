@@ -1,0 +1,1 @@
+ALTER TABLE "conversations" ADD COLUMN "group_description" text;
