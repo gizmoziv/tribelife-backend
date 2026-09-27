@@ -269,6 +269,7 @@ router.get('/:slug', async (req: AuthRequest, res: Response): Promise<void> => {
       id: conversations.id,
       groupName: conversations.groupName,
       groupIconUrl: conversations.groupIconUrl,
+      groupDescription: conversations.groupDescription,
       inviteSlug: conversations.inviteSlug,   // always the CURRENT slug so clients re-canonicalize old links
       isPublic: conversations.isPublic,
       createdAt: conversations.createdAt,
@@ -333,6 +334,7 @@ router.get('/:slug', async (req: AuthRequest, res: Response): Promise<void> => {
       id: group.id,
       groupName: group.groupName,
       groupIconUrl: group.groupIconUrl,
+      groupDescription: group.groupDescription ?? null,
       inviteSlug: group.inviteSlug,
       isPublic: group.isPublic,
       memberCount: countResult?.count ?? 0,
@@ -541,6 +543,7 @@ const updateGroupSchema = z.object({
   slug: z.string().min(1).max(50).optional(),
   groupIconUrl: z.string().optional(),
   isPublic: z.boolean().optional(),
+  groupDescription: z.string().trim().max(500).nullable().optional(),
 });
 
 router.put('/:id', async (req: AuthRequest, res: Response): Promise<void> => {
@@ -590,6 +593,10 @@ router.put('/:id', async (req: AuthRequest, res: Response): Promise<void> => {
   if (parse.data.name) updates.groupName = parse.data.name;
   if (parse.data.groupIconUrl !== undefined) updates.groupIconUrl = parse.data.groupIconUrl;
   if (parse.data.isPublic !== undefined) updates.isPublic = parse.data.isPublic;
+  // Empty string (after zod's .trim()) means "clear" — store a real NULL, not ''.
+  if (parse.data.groupDescription !== undefined) {
+    updates.groupDescription = parse.data.groupDescription === '' ? null : parse.data.groupDescription;
+  }
 
   // Canonical slug follows the name (any client-supplied `slug` is ignored). When
   // the name changes we re-derive the slug; if it collides with another group or
@@ -716,6 +723,7 @@ router.put('/:id', async (req: AuthRequest, res: Response): Promise<void> => {
       groupIconUrl: updated.groupIconUrl,
       inviteSlug: updated.inviteSlug,
       isPublic: updated.isPublic,
+      groupDescription: updated.groupDescription ?? null,
     },
   });
 });

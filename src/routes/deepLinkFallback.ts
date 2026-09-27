@@ -1,6 +1,67 @@
 import { Router, Request, Response, NextFunction } from 'express';
+import { and, eq } from 'drizzle-orm';
+import { db } from '../db';
+import { conversations, groupSlugAliases } from '../db/schema';
+import logger from '../lib/logger';
+import {
+  escapeHtml,
+  groupShareCopy,
+  renderSocialMeta,
+  type GroupShareSource,
+} from '../lib/sharePreview';
+
+const log = logger.child({ module: 'deepLinkFallback' });
 
 const router = Router();
+
+// ── Group share-preview lookup (260927-bi0) ─────────────────────────────────
+// READ-ONLY: resolves a /g/:slug slug to the fields groupShareCopy() needs,
+// mirroring groups.ts's resolveGroupIdBySlug alias-fallback shape. Unlike
+// that helper, this one must NOT bump groupSlugAliases.lastUsedAt — this path
+// is hit by unauthenticated link-preview crawlers, and extending an alias's
+// TTL from crawler traffic (not real user traffic) would be wrong.
+async function lookupGroupShareSource(slug: string): Promise<GroupShareSource | null> {
+  const [direct] = await db
+    .select({
+      groupName: conversations.groupName,
+      groupDescription: conversations.groupDescription,
+      isPublic: conversations.isPublic,
+      archivedAt: conversations.archivedAt,
+    })
+    .from(conversations)
+    .where(and(eq(conversations.inviteSlug, slug), eq(conversations.isGroup, true)))
+    .limit(1);
+
+  if (direct) {
+    return {
+      name: direct.groupName,
+      description: direct.groupDescription,
+      isPublic: direct.isPublic,
+      archived: direct.archivedAt != null,
+    };
+  }
+
+  const [aliased] = await db
+    .select({
+      groupName: conversations.groupName,
+      groupDescription: conversations.groupDescription,
+      isPublic: conversations.isPublic,
+      archivedAt: conversations.archivedAt,
+    })
+    .from(groupSlugAliases)
+    .innerJoin(conversations, eq(conversations.id, groupSlugAliases.conversationId))
+    .where(and(eq(groupSlugAliases.slug, slug), eq(conversations.isGroup, true)))
+    .limit(1);
+
+  if (!aliased) return null;
+
+  return {
+    name: aliased.groupName,
+    description: aliased.groupDescription,
+    isPublic: aliased.isPublic,
+    archived: aliased.archivedAt != null,
+  };
+}
 
 /** Detect platform from User-Agent header */
 function detectPlatform(ua: string): 'ios' | 'android' | 'web' {
@@ -25,9 +86,11 @@ function storeUrls(): { ios: string; android: string } {
 // that copy-pasting a share link into a browser shows a real "get the app"
 // page instead of falling through to the SPA catch-all, which has no /u or /g
 // route and renders its NotFound (the reported 404). Includes OG/Twitter meta
-// so the same links unfurl with a rich preview when shared. Inputs are already
-// sanitized by the callers to [a-zA-Z0-9_-], so no further HTML-escaping is
-// required for interpolation here.
+// so the same links unfurl with a rich preview when shared. heading/subtext
+// MAY be user-authored (group name/description, since 260927-bi0), so every
+// interpolation below goes through escapeHtml / renderSocialMeta — the old
+// "inputs are already sanitized, no further escaping required" claim no
+// longer holds now that group name/description flow through here.
 function renderDownloadLanding(opts: {
   canonicalUrl: string;
   heading: string;
@@ -36,22 +99,15 @@ function renderDownloadLanding(opts: {
   const { canonicalUrl, heading, subtext } = opts;
   const { ios, android } = storeUrls();
   const ogImage = 'https://tribelife.app/android-chrome-512x512.png';
+  const safeHeading = escapeHtml(heading);
+  const safeSubtext = escapeHtml(subtext);
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>${heading}</title>
-<meta name="description" content="${subtext}" />
-<meta property="og:type" content="website" />
-<meta property="og:title" content="${heading}" />
-<meta property="og:description" content="${subtext}" />
-<meta property="og:image" content="${ogImage}" />
-<meta property="og:url" content="${canonicalUrl}" />
-<meta name="twitter:card" content="summary" />
-<meta name="twitter:title" content="${heading}" />
-<meta name="twitter:description" content="${subtext}" />
-<meta name="twitter:image" content="${ogImage}" />
+<title>${safeHeading}</title>
+${renderSocialMeta({ canonicalUrl, title: heading, description: subtext, image: ogImage })}
 <style>
   html, body { margin: 0; padding: 0; height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0F172A; color: #fff; }
   .wrap { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 24px; text-align: center; }
@@ -140,8 +196,8 @@ function renderDownloadLanding(opts: {
       </g>
     </svg>
   </div>
-  <h1>${heading}</h1>
-  <p>${subtext}</p>
+  <h1>${safeHeading}</h1>
+  <p>${safeSubtext}</p>
   <div class="badges">
     <a class="store-badge" href="${ios}" aria-label="Download on the App Store">
       <svg width="24" height="24" viewBox="0 0 24 24" fill="#fff" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
@@ -248,13 +304,29 @@ ${buttonsHtml}
 // Tries to open the app via custom scheme; falls back to the appropriate store.
 // This is a permanent safety net under iOS Universal Links / Android App Links
 // for users without the app installed, old app versions, or in-app browsers.
-router.get('/g/:slug', (req: Request, res: Response, next: NextFunction) => {
+router.get('/g/:slug', async (req: Request, res: Response, next: NextFunction) => {
   const ua = req.headers['user-agent'] || '';
   const platform = detectPlatform(ua);
 
   // Sanitize slug (defence-in-depth; Express already URL-decodes :slug)
   const rawSlug = String(req.params.slug ?? '');
   const safeSlug = rawSlug.replace(/[^a-zA-Z0-9-_]/g, '');
+
+  // 260927-bi0: look up the group's share-preview source (name/description/
+  // visibility/archived) so link-preview crawlers unfurl a rich card. This
+  // handler must NEVER reject/500 — a share link that 500s is worse than one
+  // that falls back to the generic copy, so any lookup failure just degrades
+  // to groupShareCopy(null).
+  let shareSource: GroupShareSource | null = null;
+  if (safeSlug) {
+    try {
+      shareSource = await lookupGroupShareSource(safeSlug);
+    } catch (err) {
+      log.warn({ err, slug: safeSlug }, 'group share-preview lookup failed');
+      shareSource = null;
+    }
+  }
+  const { heading, subtext } = groupShareCopy(shareSource);
 
   if (platform === 'web') {
     // Web (desktop / non-mobile UA): render the "get the app" landing instead of
@@ -264,9 +336,8 @@ router.get('/g/:slug', (req: Request, res: Response, next: NextFunction) => {
     return res.type('html').send(
       renderDownloadLanding({
         canonicalUrl: `https://tribelife.app/g/${safeSlug}`,
-        heading: 'Join this group on TribeLife',
-        subtext:
-          'TribeLife is a mobile app — download it on your phone to join the conversation.',
+        heading,
+        subtext,
       }),
     );
   }
@@ -302,12 +373,23 @@ router.get('/g/:slug', (req: Request, res: Response, next: NextFunction) => {
   // Clipboard payload format: tribelife-g-ref:<ref>:<slug>. Empty when no
   // ref present so the inline <script> branch becomes a no-op.
   const clipboardPayload = safeRef ? `tribelife-g-ref:${safeRef}:${safeSlug}` : '';
+  // 260927-bi0: crawlers that send a mobile UA (WhatsApp/iMessage/etc. on-device
+  // share previews) also land on this interstitial branch, so give them the
+  // same OG/Twitter meta as the web landing page. Visible title/h1/buttons/
+  // clipboard script below are unchanged.
+  const socialMetaHtml = renderSocialMeta({
+    canonicalUrl: `https://tribelife.app/g/${safeSlug}`,
+    title: heading,
+    description: subtext,
+    image: 'https://tribelife.app/android-chrome-512x512.png',
+  });
 
   const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
+${socialMetaHtml}
 <title>Open TribeLife</title>
 <style>
   html, body { margin: 0; padding: 0; height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0F172A; color: #fff; }

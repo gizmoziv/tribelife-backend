@@ -145,6 +145,7 @@ export const conversations = pgTable('conversations', {
   groupName: varchar('group_name', { length: 100 }),        // SCHM-04: nullable, only set for groups
   createdById: integer('created_by_id').references(() => users.id, { onDelete: 'set null' }),
   groupIconUrl: text('group_icon_url'),
+  groupDescription: text('group_description'),              // 260927-bi0: admin-set description, shown in Group Info and share-link previews for public groups
   inviteSlug: varchar('invite_slug', { length: 50 }).unique(),
   maxMembers: integer('max_members').default(200),
   // Phase 12 D-01: public/archive flags for group discovery + last-admin auto-archive
