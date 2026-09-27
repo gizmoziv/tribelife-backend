@@ -144,6 +144,7 @@ const createGroupSchema = z.object({
   name: z.string().min(1).max(50),
   slug: z.string().min(1).max(50).optional(),
   isPublic: z.boolean().default(false),
+  groupDescription: z.string().trim().max(500).nullable().optional(),
 });
 
 router.post(
@@ -188,6 +189,9 @@ router.post(
 
   const { name } = parse.data;
 
+  // Empty string (after zod's .trim()) or omitted → store a real NULL, not ''.
+  const groupDescription: string | null = parse.data.groupDescription || null;
+
   // Canonical slug: always derived from the name (any client-supplied `slug` is
   // ignored). The name → slug map is 1:1, so a name that normalizes to an
   // existing group's slug is a duplicate and is rejected — no random suffix.
@@ -212,6 +216,7 @@ router.post(
           inviteSlug: slug,
           createdById: userId,
           isPublic: parse.data.isPublic,
+          groupDescription,
         })
         .returning();
       convo = row;
@@ -242,6 +247,7 @@ router.post(
         groupName: convo.groupName,
         inviteSlug: convo.inviteSlug,
         createdAt: convo.createdAt,
+        groupDescription: convo.groupDescription ?? null,
       },
     });
   } catch (err) {
