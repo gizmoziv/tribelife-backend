@@ -4,8 +4,9 @@ import { db } from '../db';
 
 const log = logger.child({ module: 'socket:room' });
 import { messages, userProfiles, notifications } from '../db/schema';
-import type { MessageAttachment } from '../db/schema';
+import type { MessageAttachment, OrderedMention } from '../db/schema';
 import { and, eq, inArray } from 'drizzle-orm';
+import { parseMentionHandles, buildOrderedMentions } from '../utils/mentionParse';
 import { moderateMessage } from '../services/claude';
 import { logModerationEvent } from '../lib/moderationLog';
 import { moderationEnforced } from '../lib/moderationEnforcement';
@@ -97,9 +98,10 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
     // Parse @mentions (none for a document message — the caption is discarded).
     const mentionedHandles = hasAttachment
       ? []
-      : [...content.matchAll(/@([a-zA-Z0-9_]+)/g)].map((m) => m[1].toLowerCase());
+      : parseMentionHandles(content);
 
     let mentionedUserIds: number[] = [];
+    let orderedMentions: OrderedMention[] = [];
 
     if (mentionedHandles.length > 0) {
       const mentionedProfiles = await db
@@ -113,6 +115,11 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
       mentionedUserIds = mentionedProfiles
         .filter((p) => getZoneForTimezone(p.timezone ?? 'UTC') === zoneSlug)
         .map((p) => p.userId);
+
+      // Phase 38.1 D-00b: NOT zone-filtered — tap-navigation is independent of
+      // room membership, unlike the notification-targeting mentionedUserIds above.
+      const mentionLookup = new Map(mentionedProfiles.map((p) => [p.handle, p.userId]));
+      orderedMentions = buildOrderedMentions(mentionedHandles, mentionLookup);
     }
 
     // Persist message
@@ -123,6 +130,7 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
         senderId: userId,
         roomId: timezoneRoom,
         mentions: mentionedUserIds,
+        orderedMentions,
         replyToId: data.replyToId ?? null,
         mediaUrls: mediaUrls.length > 0 ? mediaUrls : null,
         attachments: hasAttachment ? attachments : null,
@@ -160,6 +168,7 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
       roomId: timezoneRoom,
       createdAt: msg.createdAt,
       mentions: mentionedUserIds,
+      orderedMentions,
       replyToId: data.replyToId ?? null,
       replyTo,
       mediaUrls: mediaUrls.length > 0 ? mediaUrls : undefined,

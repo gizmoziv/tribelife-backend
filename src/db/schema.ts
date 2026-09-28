@@ -235,6 +235,9 @@ export type MessageAttachment = {
   type: 'pdf';
 };
 
+// Phase 38.1 D-00b: mentions in text order, 1:1 with client parse
+export type OrderedMention = { handle: string; userId: number | null };
+
 export const messages = pgTable('messages', {
   id: serial('id').primaryKey(),
   content: text('content').notNull(),
@@ -246,6 +249,8 @@ export const messages = pgTable('messages', {
 
   // Mentions: array of userId strings parsed from @handle mentions
   mentions: jsonb('mentions').$type<number[]>().default([]),
+  // Phase 38.1 D-00b: mentions in text order, 1:1 with client parse
+  orderedMentions: jsonb('ordered_mentions').$type<OrderedMention[]>(),
 
   createdAt: timestamp('created_at').defaultNow(),
   deletedAt: timestamp('deleted_at'),

@@ -215,6 +215,37 @@ router.put('/me/news-push', async (req: AuthRequest, res: Response): Promise<voi
   }
 });
 
+// ── Resolve userId → current handle ───────────────────────────────────────
+// Phase 38.1 D-00e: tap-navigation resolves the stored orderedMentions userId
+// to the mentioned user's CURRENT handle (handles can change after send).
+router.get('/by-id/:userId/handle', async (req: AuthRequest, res: Response): Promise<void> => {
+  const raw = req.params.userId as string;
+  if (!/^\d+$/.test(raw)) {
+    res.status(400).json({ error: 'Invalid user ID' });
+    return;
+  }
+  const userId = parseInt(raw, 10);
+
+  try {
+    const result = await db
+      .select({ handle: userProfiles.handle })
+      .from(userProfiles)
+      .innerJoin(users, eq(users.id, userProfiles.userId))
+      .where(and(eq(userProfiles.userId, userId), isNull(users.bannedAt)))
+      .limit(1);
+
+    if (result.length === 0 || !result[0].handle) {
+      res.status(404).json({ error: 'User not found' });
+      return;
+    }
+
+    res.json({ handle: result[0].handle });
+  } catch (err) {
+    console.error('[users/by-id]', err);
+    res.status(500).json({ error: 'Failed to resolve user' });
+  }
+});
+
 // ── Get a user's public profile ──────────────────────────────────────────
 // MUST stay last in the file — `/:handle` is greedy and would otherwise
 // shadow any single-segment route registered after it.
