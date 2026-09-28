@@ -494,6 +494,7 @@ router.post('/:slug/join', async (req: AuthRequest, res: Response): Promise<void
           conversationId: group.id,
           kind: 'system',
           mentions: [userId],
+          orderedMentions: [{ handle: joinerHandle, userId }],
         })
         .returning();
 
@@ -515,6 +516,7 @@ router.post('/:slug/join', async (req: AuthRequest, res: Response): Promise<void
           createdAt: systemMsg.createdAt,
           kind: 'system',
           mentions: [userId],
+          orderedMentions: [{ handle: joinerHandle, userId }],
           replyToId: null,
           replyTo: null,
         });
@@ -681,6 +683,7 @@ router.put('/:id', async (req: AuthRequest, res: Response): Promise<void> => {
           conversationId: convId,
           kind: 'system',
           mentions: [userId],
+          orderedMentions: [{ handle: actorHandle, userId }],
         })
         .returning();
 
@@ -702,6 +705,7 @@ router.put('/:id', async (req: AuthRequest, res: Response): Promise<void> => {
           createdAt: systemMsg.createdAt,
           kind: 'system',
           mentions: [userId],
+          orderedMentions: [{ handle: actorHandle, userId }],
           replyToId: null,
           replyTo: null,
         });

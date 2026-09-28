@@ -1,6 +1,7 @@
 import { eq } from 'drizzle-orm';
 import { db } from '../db';
 import { messages, conversations } from '../db/schema';
+import type { OrderedMention } from '../db/schema';
 import { getIO } from '../lib/socketRegistry';
 import logger from '../lib/logger';
 
@@ -44,6 +45,7 @@ export interface PinSystemMessage {
   createdAt: Date | null;
   kind: 'system';
   mentions: number[];
+  orderedMentions: OrderedMention[];
   replyToId: null;
   replyTo: null;
   roomId?: string;
@@ -83,7 +85,7 @@ export async function announcePinAction(args: {
     try {
       const [sysMsg] = await db
         .insert(messages)
-        .values({ content, senderId: userId, roomId, kind: 'system', mentions: [userId] })
+        .values({ content, senderId: userId, roomId, kind: 'system', mentions: [userId], orderedMentions: [{ handle: lower, userId }] })
         .returning();
 
       const base = {
@@ -95,6 +97,7 @@ export async function announcePinAction(args: {
         createdAt: sysMsg.createdAt,
         kind: 'system' as const,
         mentions: [userId],
+        orderedMentions: [{ handle: lower, userId }],
         replyToId: null as null,
         replyTo: null as null,
       };
@@ -137,7 +140,7 @@ export async function announcePinAction(args: {
     try {
       const [sysMsg] = await db
         .insert(messages)
-        .values({ content, senderId: userId, conversationId, kind: 'system', mentions: [userId] })
+        .values({ content, senderId: userId, conversationId, kind: 'system', mentions: [userId], orderedMentions: [{ handle: lower, userId }] })
         .returning();
 
       // Pitfall 5: bump lastMessageAt so the pin system line floats the Chats list to top
@@ -155,6 +158,7 @@ export async function announcePinAction(args: {
         createdAt: sysMsg.createdAt,
         kind: 'system' as const,
         mentions: [userId],
+        orderedMentions: [{ handle: lower, userId }],
         replyToId: null as null,
         replyTo: null as null,
       };

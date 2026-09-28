@@ -48,7 +48,7 @@ export async function announceUserBlocked(
     try {
       const [sysMsg] = await db
         .insert(messages)
-        .values({ content, senderId: userId, roomId, kind: 'system', mentions: [userId] })
+        .values({ content, senderId: userId, roomId, kind: 'system', mentions: [userId], orderedMentions: [{ handle: lower, userId }] })
         .returning();
 
       if (!io) continue;
@@ -61,6 +61,7 @@ export async function announceUserBlocked(
         createdAt: sysMsg.createdAt,
         kind: 'system' as const,
         mentions: [userId],
+        orderedMentions: [{ handle: lower, userId }],
         replyToId: null,
         replyTo: null,
       };
@@ -83,7 +84,7 @@ export async function announceUserBlocked(
     try {
       const [sysMsg] = await db
         .insert(messages)
-        .values({ content, senderId: userId, conversationId, kind: 'system', mentions: [userId] })
+        .values({ content, senderId: userId, conversationId, kind: 'system', mentions: [userId], orderedMentions: [{ handle: lower, userId }] })
         .returning();
 
       // Bump lastMessageAt so the notice orders correctly in the Chats list.
@@ -103,6 +104,7 @@ export async function announceUserBlocked(
         createdAt: sysMsg.createdAt,
         kind: 'system',
         mentions: [userId],
+        orderedMentions: [{ handle: lower, userId }],
         replyToId: null,
         replyTo: null,
       });

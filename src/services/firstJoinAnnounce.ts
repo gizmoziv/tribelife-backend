@@ -50,6 +50,7 @@ export async function announceFirstJoin(opts: {
         roomId: timezoneRoom,
         kind: 'system',
         mentions: [userId],
+        orderedMentions: [{ handle: lowerHandle, userId }],
       })
       .returning();
 
@@ -65,6 +66,7 @@ export async function announceFirstJoin(opts: {
         createdAt: systemMsg.createdAt,
         kind: 'system',
         mentions: [userId],
+        orderedMentions: [{ handle: lowerHandle, userId }],
         replyToId: null,
         replyTo: null,
       });
