@@ -341,7 +341,6 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
       // (if they are a recipient). Sender is already excluded from recipients.
       const directedTargets = new Set<number>(mentionedInGroup);
       if (replyToSenderId !== null) {
-        const recipientIds = new Set(recipients.map((p) => p.userId));
         if (recipientIds.has(replyToSenderId)) {
           directedTargets.add(replyToSenderId);
         }
