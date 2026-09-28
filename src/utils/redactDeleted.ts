@@ -14,6 +14,7 @@ export function redactDeletedMessages<
     content?: string;
     mediaUrls?: unknown;
     mentions?: unknown;
+    orderedMentions?: unknown;
     voiceUrl?: string | null;
     voiceDurationMs?: number | null;
     voiceWaveform?: unknown;
@@ -27,6 +28,7 @@ export function redactDeletedMessages<
           content: '',
           mediaUrls: null,
           mentions: [],
+          orderedMentions: [],
           voiceUrl: null,
           voiceDurationMs: null,
           voiceWaveform: null,

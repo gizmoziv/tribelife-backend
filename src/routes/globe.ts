@@ -606,6 +606,7 @@ router.get(
         senderHandle: userProfiles.handle,
         senderAvatar: userProfiles.avatarUrl,
         mentions: messages.mentions,
+        orderedMentions: messages.orderedMentions,
         mediaUrls: messages.mediaUrls,
         attachments: messages.attachments,
         // Without this, the mobile's `if (message.kind === 'system')` check
@@ -712,6 +713,7 @@ router.get(
         senderHandle: userProfiles.handle,
         senderAvatar: userProfiles.avatarUrl,
         mentions: messages.mentions,
+        orderedMentions: messages.orderedMentions,
         mediaUrls: messages.mediaUrls,
         attachments: messages.attachments,
         // Mirrors msgSelect above — see comment there for context.
