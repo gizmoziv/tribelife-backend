@@ -2,8 +2,9 @@ import { Server, Socket } from 'socket.io';
 import logger from '../lib/logger';
 import { db } from '../db';
 import { messages, userProfiles, notifications } from '../db/schema';
-import type { MessageAttachment } from '../db/schema';
+import type { MessageAttachment, OrderedMention } from '../db/schema';
 import { and, eq, inArray } from 'drizzle-orm';
+import { parseMentionHandles, buildOrderedMentions } from '../utils/mentionParse';
 import { checkRateLimit } from './rateLimit';
 import { isValidGlobeRoom, AGE_GATE_HOURS } from '../config/globeRooms';
 import { moderateMessage } from '../services/claude';
@@ -201,13 +202,12 @@ export function registerGlobeHandlers(io: Server, socket: Socket): void {
 
     // Parse @mentions so we can store them on the message and notify targets (none for
     // a document message — the caption is discarded).
-    const mentionedHandles = hasAttachment
-      ? []
-      : [...content.matchAll(/@([a-zA-Z0-9_]+)/g)].map((m) => m[1].toLowerCase());
+    const mentionedHandles = hasAttachment ? [] : parseMentionHandles(content);
     let mentionedUserIds: number[] = [];
+    let orderedMentions: OrderedMention[] = [];
     if (mentionedHandles.length > 0) {
       const mentionedProfiles = await db
-        .select({ userId: userProfiles.userId })
+        .select({ userId: userProfiles.userId, handle: userProfiles.handle })
         .from(userProfiles)
         .where(inArray(userProfiles.handle, mentionedHandles));
       // NOTIF-03: intersect with globe room membership — a mention of a handle
@@ -216,6 +216,11 @@ export function registerGlobeHandlers(io: Server, socket: Socket): void {
       mentionedUserIds = mentionedProfiles
         .map((p) => p.userId)
         .filter((id) => roomMemberIds.has(id));
+
+      // Phase 38.1 D-00b: NOT membership-filtered — tap-navigation is independent
+      // of room membership, unlike the notification-targeting mentionedUserIds above.
+      const mentionLookup = new Map(mentionedProfiles.map((p) => [p.handle, p.userId]));
+      orderedMentions = buildOrderedMentions(mentionedHandles, mentionLookup);
     }
 
     // Persist message
@@ -226,6 +231,7 @@ export function registerGlobeHandlers(io: Server, socket: Socket): void {
         senderId: userId,
         roomId,
         mentions: mentionedUserIds,
+        orderedMentions,
         replyToId: data.replyToId ?? null,
         mediaUrls: mediaUrls.length > 0 ? mediaUrls : null,
         attachments: hasAttachment ? attachments : null,
@@ -269,6 +275,7 @@ export function registerGlobeHandlers(io: Server, socket: Socket): void {
       slug: data.slug,
       createdAt: msg.createdAt,
       mentions: mentionedUserIds,
+      orderedMentions,
       replyToId: data.replyToId ?? null,
       replyTo,
       mediaUrls: mediaUrls.length > 0 ? mediaUrls : undefined,

@@ -9,8 +9,9 @@ import {
   notifications,
   blockedUsers,
 } from '../db/schema';
-import type { MessageAttachment } from '../db/schema';
+import type { MessageAttachment, OrderedMention } from '../db/schema';
 import { eq, and, isNull, isNotNull, ne, inArray } from 'drizzle-orm';
+import { parseMentionHandles, buildOrderedMentions } from '../utils/mentionParse';
 import { moderateMessage } from '../services/claude';
 import { logModerationEvent } from '../lib/moderationLog';
 import { moderationEnforced } from '../lib/moderationEnforcement';
@@ -175,6 +176,21 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
       }
     }
 
+    // Phase 38.1 D-00c: parse @mentions BEFORE the insert so orderedMentions can be
+    // persisted + broadcast for both 1:1 and group DMs. The `mentions` column is NOT
+    // written here (unchanged stored semantics, D-00a) — only orderedMentions.
+    const mentionedHandles = hasAttachment ? [] : parseMentionHandles(content);
+    const mentionedProfiles = mentionedHandles.length > 0
+      ? await db
+          .select({ userId: userProfiles.userId, handle: userProfiles.handle })
+          .from(userProfiles)
+          .where(inArray(userProfiles.handle, mentionedHandles))
+      : [];
+    const orderedMentions: OrderedMention[] = buildOrderedMentions(
+      mentionedHandles,
+      new Map(mentionedProfiles.map((p) => [p.handle, p.userId])),
+    );
+
     // Save message
     const [msg] = await db
       .insert(messages)
@@ -182,6 +198,7 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
         content,
         senderId: userId,
         conversationId: data.conversationId,
+        orderedMentions,
         replyToId: data.replyToId ?? null,
         mediaUrls: mediaUrls.length > 0 ? mediaUrls : null,
         attachments: hasAttachment ? attachments : null,
@@ -243,6 +260,7 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
       senderHandle: handle,
       conversationId: data.conversationId,
       createdAt: msg.createdAt,
+      orderedMentions,
       replyToId: data.replyToId ?? null,
       replyTo,
       mediaUrls: mediaUrls.length > 0 ? mediaUrls : undefined,
@@ -310,24 +328,14 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
       const groupLabel = convo.groupName ?? 'Group';
       const notifBody = messageNotificationBody(content, mediaUrls);
 
-      // Parse @mentions in the group message (reuse roomHandler pattern).
-      // Resolve handles → userIds, then intersect with the sender-excluded
-      // recipient set so a mention of a non-member produces no notification
-      // (NOTIF-03).
-      const mentionedHandles = hasAttachment
-        ? []
-        : [...content.matchAll(/@([a-zA-Z0-9_]+)/g)].map((m) => m[1].toLowerCase());
-      let mentionedInGroup: number[] = [];
-      if (mentionedHandles.length > 0) {
-        const mentionedProfiles = await db
-          .select({ userId: userProfiles.userId })
-          .from(userProfiles)
-          .where(inArray(userProfiles.handle, mentionedHandles));
-        const recipientIds = new Set(recipients.map((p) => p.userId));
-        mentionedInGroup = mentionedProfiles
-          .map((p) => p.userId)
-          .filter((id) => recipientIds.has(id));
-      }
+      // Phase 38.1: @mentions in the group message were already parsed and looked
+      // up pre-insert (hoisted above, `mentionedProfiles`). Resolve handles →
+      // userIds, then intersect with the sender-excluded recipient set so a
+      // mention of a non-member produces no notification (NOTIF-03).
+      const recipientIds = new Set(recipients.map((p) => p.userId));
+      const mentionedInGroup: number[] = mentionedProfiles
+        .map((p) => p.userId)
+        .filter((id) => recipientIds.has(id));
 
       // Build directed target set: mentioned group members ∪ reply target
       // (if they are a recipient). Sender is already excluded from recipients.
