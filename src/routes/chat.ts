@@ -28,7 +28,12 @@ import type { Server } from 'socket.io';
 import logger from '../lib/logger';
 import type { SearchResult, SearchResponse } from '../types/searchResult';
 import { GLOBE_ROOMS } from '../config/globeRooms';
-import { TIMEZONE_ZONES, translateLegacyTimezoneRoomId } from '../config/timezoneZones';
+import { TIMEZONE_ZONES, translateLegacyTimezoneRoomId, getZoneForTimezone } from '../config/timezoneZones';
+import { getGlobeMembershipsForRoomSlug } from '../services/globeMembership';
+import { parseMentionHandles, buildOrderedMentions, diffAddedMentionIds } from '../utils/mentionParse';
+import { notifyEditAddedMentions } from '../services/editMentionNotify';
+import type { EditSurface } from '../services/editMentionNotify';
+import type { OrderedMention } from '../db/schema';
 
 const log = logger.child({ module: 'chat' });
 
@@ -1182,6 +1187,14 @@ router.patch('/messages/:id', async (req: AuthRequest, res: Response): Promise<v
       return;
     }
 
+    // 5b. T-38.1-10: system messages (e.g. "@handle joined the chat" pills)
+    // cannot be edited — hardens against rewriting one to inject a mention
+    // notification, which is newly possible under D-02.
+    if (msg.kind === 'system') {
+      res.status(422).json({ error: 'System messages cannot be edited' });
+      return;
+    }
+
     // 6. Media guard: text-only edits in v1
     if (Array.isArray(msg.mediaUrls) && msg.mediaUrls.length > 0) {
       res.status(422).json({ error: 'Edits are not supported on media messages yet' });
@@ -1201,6 +1214,102 @@ router.patch('/messages/:id', async (req: AuthRequest, res: Response): Promise<v
       logModerationEvent({ surface: 'text', action: 'shadow_would_block', reason: modResult.reason, senderId: req.user!.id, messageId });
     }
 
+    // 7b. Phase 38.1 D-00d: recompute ordered + targeting mentions from the new
+    // content BEFORE the transaction. hasNonText mirrors the send-path rule that
+    // a voice/attachment message carries no @mention parse.
+    const hasNonText = !!msg.voiceUrl || (Array.isArray(msg.attachments) && msg.attachments.length > 0);
+    const newHandles = hasNonText ? [] : parseMentionHandles(content);
+    const oldHandles = hasNonText ? [] : parseMentionHandles(msg.content ?? '');
+    const handleUnion = [...new Set([...newHandles, ...oldHandles])];
+
+    let lookup = new Map<string, number>();
+    let profileById = new Map<number, string | null>();
+    if (handleUnion.length > 0) {
+      const profiles = await db
+        .select({ userId: userProfiles.userId, handle: userProfiles.handle, timezone: userProfiles.timezone })
+        .from(userProfiles)
+        .where(inArray(userProfiles.handle, handleUnion));
+      lookup = new Map(profiles.map((p) => [p.handle, p.userId]));
+      profileById = new Map(profiles.map((p) => [p.userId, p.timezone]));
+    }
+    const orderedMentions = buildOrderedMentions(newHandles, lookup);
+
+    // 7c. Resolve the edit surface + an eligibility predicate reproducing the
+    // send path's membership rule for this room/conversation type (D-00d).
+    let surface: EditSurface | null = null;
+    let isEligible: (id: number) => boolean = () => false;
+
+    if (msg.roomId != null && msg.roomId.startsWith('timezone:')) {
+      const { roomId: canonicalRoomId } = translateLegacyTimezoneRoomId(msg.roomId);
+      const zoneSlug = canonicalRoomId.slice('timezone:'.length);
+      const globeMemberIds = await getGlobeMembershipsForRoomSlug(zoneSlug);
+      isEligible = (id) => getZoneForTimezone(profileById.get(id) ?? 'UTC') === zoneSlug || globeMemberIds.has(id);
+      surface = { kind: 'local_chat', roomId: canonicalRoomId, zoneSlug, timezoneIana: req.user!.timezone ?? 'UTC' };
+    } else if (msg.roomId != null && msg.roomId.startsWith('globe:')) {
+      const slug = msg.roomId.slice('globe:'.length);
+      const globeMemberIds = await getGlobeMembershipsForRoomSlug(slug);
+      isEligible = (id) => globeMemberIds.has(id);
+      surface = { kind: 'globe_room', slug, roomId: msg.roomId };
+    } else if (msg.conversationId != null) {
+      const [convo] = await db
+        .select({
+          isGroup: conversations.isGroup,
+          groupName: conversations.groupName,
+          groupIconUrl: conversations.groupIconUrl,
+        })
+        .from(conversations)
+        .where(eq(conversations.id, msg.conversationId))
+        .limit(1);
+      if (convo?.isGroup) {
+        const participantRows = await db
+          .select({ userId: conversationParticipants.userId })
+          .from(conversationParticipants)
+          .where(
+            and(
+              eq(conversationParticipants.conversationId, msg.conversationId),
+              isNull(conversationParticipants.leftAt),
+            ),
+          );
+        const activeParticipantIds = new Set(participantRows.map((p) => p.userId));
+        isEligible = (id) => id !== req.user!.id && activeParticipantIds.has(id);
+        surface = {
+          kind: 'group',
+          conversationId: msg.conversationId,
+          groupName: convo.groupName ?? 'Group',
+          groupIconUrl: convo.groupIconUrl ?? null,
+        };
+      }
+      // else: 1:1 DM — no surface, no mention notifications (matches the send path).
+    }
+
+    // 7d. currentIds: unique resolvable + eligible userIds from the NEW content.
+    // previousIds: everything that already counted as "mentioned" before this
+    // edit — the stored `mentions`, the stored `orderedMentions` userIds, and the
+    // OLD content's resolvable+eligible mentions. Removed mentions produce no
+    // action (D-03) — they simply aren't in currentIds.
+    const currentIdsSet = new Set<number>();
+    for (const h of newHandles) {
+      const id = lookup.get(h);
+      if (id !== undefined && isEligible(id)) currentIdsSet.add(id);
+    }
+    const currentIds = [...currentIdsSet];
+
+    const oldEligibleIds = new Set<number>();
+    for (const h of oldHandles) {
+      const id = lookup.get(h);
+      if (id !== undefined && isEligible(id)) oldEligibleIds.add(id);
+    }
+
+    const previousIds = new Set<number>([
+      ...(((msg.mentions ?? []) as number[])),
+      ...(((msg.orderedMentions ?? []) as OrderedMention[])
+        .map((m) => m.userId)
+        .filter((id): id is number => id !== null)),
+      ...oldEligibleIds,
+    ]);
+
+    const addedIds = diffAddedMentionIds(previousIds, currentIds, req.user!.id);
+
     // 8. Transaction: audit insert + message update
     const now = new Date();
     await db.transaction(async (tx) => {
@@ -1210,7 +1319,14 @@ router.patch('/messages/:id', async (req: AuthRequest, res: Response): Promise<v
         editedAt: now,
       });
       await tx.update(messages)
-        .set({ content, editedAt: now })
+        .set({
+          content,
+          editedAt: now,
+          orderedMentions,
+          // Conversation messages leave `mentions` untouched — dmHandler never
+          // writes it (D-00a). Only room surfaces recompute the targeting field.
+          ...(msg.roomId != null ? { mentions: currentIds } : {}),
+        })
         .where(eq(messages.id, msg.id));
     });
 
@@ -1254,6 +1370,7 @@ router.patch('/messages/:id', async (req: AuthRequest, res: Response): Promise<v
         editedAt: now.toISOString(),
         roomId: msg.roomId,
         conversationId: msg.conversationId,
+        orderedMentions,
       };
       if (msg.conversationId != null) {
         io.to(`conversation:${msg.conversationId}`).emit('message:edited', payload);
@@ -1264,6 +1381,26 @@ router.patch('/messages/:id', async (req: AuthRequest, res: Response): Promise<v
 
     // 11. Return updated message
     res.json({ message: updatedMessage });
+
+    // 12. Phase 38.1 D-02: notify newly-added eligible mentions AFTER the
+    // response — the edit round-trip never waits on notification fan-out
+    // (T-38.1-14). Removed mentions produce no action (D-03).
+    if (addedIds.length > 0 && surface && io) {
+      const notifySurface = surface;
+      const notifyIo = io;
+      setImmediate(() => {
+        notifyEditAddedMentions({
+          io: notifyIo,
+          messageId: msg.id,
+          surface: notifySurface,
+          senderId: req.user!.id,
+          senderHandle: req.user!.handle ?? '',
+          senderAvatarUrl: req.user!.avatarUrl,
+          content,
+          targetIds: addedIds,
+        }).catch((err) => console.error('[chat/edit-mention]', err));
+      });
+    }
   } catch (err) {
     console.error('[chat/edit]', err);
     res.status(500).json({ error: 'Edit failed' });
