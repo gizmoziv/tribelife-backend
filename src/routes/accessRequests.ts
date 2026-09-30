@@ -112,15 +112,16 @@ router.post('/', async (req: AuthRequest, res: Response): Promise<void> => {
 
   // Phase 36 (D-04): resolve the pending referrer server-side, exactly as
   // auth.ts /onboarding does. It qualifies only when it exists, is a different
-  // user, is not banned, AND is on the review-required list. Any non-qualifying
-  // code (absent, unknown, self, banned, unlisted) is ignored silently — no
-  // error branch, no new status code, no new response field — so the caller
-  // cannot tell qualifying from non-qualifying (anti-enumeration, Phase 34 D-06).
+  // user, is not banned, is not a seed/test account (quick 260930-ofn D-1), AND
+  // is on the review-required list. Any non-qualifying code (absent, unknown,
+  // self, banned, seed, unlisted) is ignored silently — no error branch, no new
+  // status code, no new response field — so the caller cannot tell qualifying
+  // from non-qualifying (anti-enumeration, Phase 34 D-06).
   let referrerUserId: number | undefined;
   let referralSource: 'handle_code' | 'profile_share' | 'group_invite' | 'manual_entry' | undefined;
   if (parse.data.referralCode) {
     const [referrer] = await db
-      .select({ userId: userProfiles.userId, bannedAt: users.bannedAt })
+      .select({ userId: userProfiles.userId, bannedAt: users.bannedAt, isSeed: users.isSeed })
       .from(userProfiles)
       .innerJoin(users, eq(users.id, userProfiles.userId))
       .where(eq(userProfiles.handle, parse.data.referralCode.toLowerCase()))
@@ -130,6 +131,7 @@ router.post('/', async (req: AuthRequest, res: Response): Promise<void> => {
       referrer != null &&
       referrer.userId !== userId &&
       referrer.bannedAt === null &&
+      referrer.isSeed === false &&
       isReviewRequiredReferrer(referrer.userId)
     ) {
       referrerUserId = referrer.userId;

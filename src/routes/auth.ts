@@ -479,21 +479,24 @@ router.post(
 
     // Resolve the referrer BEFORE any write (Phase 36 D-05) so a review-required
     // referrer's code can be refused without leaving a half-onboarded user behind.
-    // Joins users to also fetch bannedAt so banned referrers are excluded (REF-09).
+    // Joins users to also fetch bannedAt/isSeed so banned referrers and seed/test
+    // accounts are excluded (REF-09; quick 260930-ofn D-1).
     const [referrerLookup] = referralCode
       ? await db
-          .select({ userId: userProfiles.userId, bannedAt: users.bannedAt })
+          .select({ userId: userProfiles.userId, bannedAt: users.bannedAt, isSeed: users.isSeed })
           .from(userProfiles)
           .innerJoin(users, eq(users.id, userProfiles.userId))
           .where(eq(userProfiles.handle, referralCode.toLowerCase()))
           .limit(1)
       : [];
 
-    // Valid referrer: exists, is a different user, and is not banned (REF-09)
+    // Valid referrer: exists, is a different user, is not banned, and is not a
+    // seed/test account (REF-09; quick 260930-ofn D-1)
     const isValidReferrer =
       referrerLookup != null &&
       referrerLookup.userId !== userId &&
-      referrerLookup.bannedAt === null;
+      referrerLookup.bannedAt === null &&
+      referrerLookup.isSeed === false;
 
     // Phase 36 D-05: server-side safety net. A listed referrer's code must never
     // finish onboarding ungated — refuse before any write so the user keeps their
@@ -583,7 +586,8 @@ router.post(
           }
         }
       } else {
-        // Referral miss: code was supplied but did not resolve to a valid different non-banned referrer (REF-09, REF-04)
+        // Referral miss: code was supplied but did not resolve to a valid different
+        // non-banned, non-seed referrer (REF-09, REF-04; quick 260930-ofn D-1)
         log.warn(
           {
             attemptedHandle: referralCode.toLowerCase(),

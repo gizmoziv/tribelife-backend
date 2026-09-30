@@ -120,20 +120,25 @@ export async function applyReferralCreditOnApproval(
 ): Promise<'applied' | 'skipped_existing' | 'skipped_referrer_invalid'> {
   const { referredUserId, referrerUserId, source } = opts;
 
-  // 1. Referrer must still exist and not be banned at approval time (REF-09).
+  // 1. Referrer must still exist, not be banned, and not be a seed account at
+  // approval time (REF-09; quick 260930-ofn D-1).
   const [referrer] = await exec
-    .select({ handle: userProfiles.handle, bannedAt: users.bannedAt })
+    .select({ handle: userProfiles.handle, bannedAt: users.bannedAt, isSeed: users.isSeed })
     .from(userProfiles)
     .innerJoin(users, eq(users.id, userProfiles.userId))
     .where(eq(userProfiles.userId, referrerUserId))
     .limit(1);
 
-  if (!referrer || referrer.bannedAt !== null) {
+  if (!referrer || referrer.bannedAt !== null || referrer.isSeed) {
     log.warn(
       {
         userId: referredUserId,
         referrerId: referrerUserId,
-        reason: !referrer ? 'referrer_missing' : 'referrer_banned',
+        reason: !referrer
+          ? 'referrer_missing'
+          : referrer.bannedAt !== null
+            ? 'referrer_banned'
+            : 'referrer_seed',
       },
       '[attribution] approval credit skipped',
     );

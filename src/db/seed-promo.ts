@@ -16,6 +16,8 @@
  * - @rose user in Miami (premium, 3 beacons)
  * - Conversations ranging from "hey I'm new" to "Happy Passover!"
  * - Globe room and timezone room messages
+ *
+ * Every seeded user is written with is_seed = true and can never be a valid referrer.
  */
 
 import 'dotenv/config';
@@ -662,9 +664,9 @@ async function main() {
 
   for (const u of allUsers) {
     await db.execute(
-      sql`INSERT INTO users (name, email, password_hash)
-          VALUES (${u.name}, ${u.email}, ${`$promo$${u.handle}`})
-          ON CONFLICT (email) DO NOTHING`
+      sql`INSERT INTO users (name, email, password_hash, is_seed)
+          VALUES (${u.name}, ${u.email}, ${`$promo$${u.handle}`}, true)
+          ON CONFLICT (email) DO UPDATE SET is_seed = true`
     );
     const row = await db.execute<{ id: number }>(
       sql`SELECT id FROM users WHERE email = ${u.email}`
