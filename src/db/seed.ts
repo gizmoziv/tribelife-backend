@@ -4,6 +4,8 @@
  * Run with: npm run db:seed
  *
  * Idempotent: skips rooms that already have messages.
+ *
+ * Every seeded user is written with is_seed = true and can never be a valid referrer.
  */
 
 import 'dotenv/config';
@@ -566,7 +568,7 @@ async function main() {
     for (const u of tzData.users) {
       // Insert user, get id back (handle conflict gracefully)
       await db.execute(
-        sql`INSERT INTO users (name, email) VALUES (${u.name}, ${u.email}) ON CONFLICT (email) DO NOTHING`
+        sql`INSERT INTO users (name, email, is_seed) VALUES (${u.name}, ${u.email}, true) ON CONFLICT (email) DO UPDATE SET is_seed = true`
       );
       const row = await db.execute<{ id: number }>(
         sql`SELECT id FROM users WHERE email = ${u.email}`

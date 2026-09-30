@@ -29,6 +29,7 @@ export const users = pgTable('users', {
   bannedAt: timestamp('banned_at'),               // platform ban: non-null = suspended (blocks sign-in + kills live sessions)
   banReason: text('ban_reason'),                  // optional admin note for the ban
   isStaff: boolean('is_staff').notNull().default(false), // global staff flag — grants pin rights in community rooms (D-03, D-06)
+  isSeed: boolean('is_seed').notNull().default(false), // marks seed/demo accounts created by src/db/seed*.ts — such accounts are never valid referrers (quick 260930-ofn, D-1)
   createdAt: timestamp('created_at').defaultNow(),
   updatedAt: timestamp('updated_at').defaultNow(),
 });

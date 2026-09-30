@@ -154,7 +154,7 @@ router.post('/validate', async (req: AuthRequest, res: Response): Promise<void> 
     // Reuse the onboarding validity predicate verbatim (auth.ts) so a handle
     // that validates here cannot later fail at submit.
     const [referrer] = await db
-      .select({ userId: userProfiles.userId, bannedAt: users.bannedAt })
+      .select({ userId: userProfiles.userId, bannedAt: users.bannedAt, isSeed: users.isSeed })
       .from(userProfiles)
       .innerJoin(users, eq(users.id, userProfiles.userId))
       .where(eq(userProfiles.handle, trimmed.toLowerCase()))
@@ -163,7 +163,8 @@ router.post('/validate', async (req: AuthRequest, res: Response): Promise<void> 
     const isValidReferrer =
       referrer != null &&
       referrer.userId !== userId &&
-      referrer.bannedAt === null;
+      referrer.bannedAt === null &&
+      referrer.isSeed === false;
 
     blank = false;
 
@@ -178,8 +179,9 @@ router.post('/validate', async (req: AuthRequest, res: Response): Promise<void> 
       // joiner through Apply for Access instead of finishing onboarding.
       requiresReview = isReviewRequiredReferrer(referrer.userId);
     } else {
-      // Invalid: nonexistent handle, self-referral, and a suspended referrer
-      // all take this identical branch and produce an identical body (D-06).
+      // Invalid: nonexistent handle, self-referral, a suspended referrer, and a
+      // seed/test account all take this identical branch and produce an
+      // identical body (D-06).
       // Atomic per-row increment via the sql template form (not a JS
       // read-modify-write) so two concurrent calls cannot both write the
       // same value (T-34-14).
