@@ -73,11 +73,14 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
     if (hasAttachment) mediaUrls = [];
 
     if (!content && mediaUrls.length === 0 && !hasAttachment) return;
-    if (!hasAttachment && content.length > 2000) return;
+    if (content.length > 2000) return;
+    // Only a caption-less document gets the server fallback line (below); a captioned
+    // document keeps the user's text as content (quick 261002-vk5 D-1).
+    const usesDocFallback = hasAttachment && content.length === 0;
 
-    // Content moderation check (skip for image-only messages AND document messages —
-    // a document's content is a server-generated fallback, not user text, D-06/D-07).
-    if (content && !hasAttachment) {
+    // Content moderation check (skipped only for media-only and caption-less document
+    // messages — plain text, image captions and PDF captions are all moderated).
+    if (content) {
       const modResult = moderateMessage(content);
       if (!modResult.isAllowed) {
         if (moderationEnforced()) {
@@ -90,15 +93,18 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
       }
     }
 
-    // D-07: for a document message, replace content with the server-generated fallback
-    // line so old clients render a readable bubble. Any user caption is discarded per
-    // the standalone-document contract (D-01a).
-    if (hasAttachment) content = DOC_FALLBACK(handle);
+    // Quick 261002-vk5 D-1: a PDF caption is kept as `content` and shown under the
+    // document card; this supersedes the Phase 30 D-01a caption-discard rule.
+    // The D-07 fallback line is used only when there is no caption, so caption-less
+    // PDFs behave as before.
+    // Accepted old-client tradeoff: clients from before Phase 31 don't know
+    // `attachments`, so for a captioned PDF they render just the caption text without
+    // the "update the app" hint. No schema change, no MIN_CLIENT_VERSION bump.
+    if (usesDocFallback) content = DOC_FALLBACK(handle);
 
-    // Parse @mentions (none for a document message — the caption is discarded).
-    const mentionedHandles = hasAttachment
-      ? []
-      : parseMentionHandles(content);
+    // Parse @mentions (not from the server fallback line, which embeds the sender's own
+    // @handle; PDF captions are parsed like any user text).
+    const mentionedHandles = usesDocFallback ? [] : parseMentionHandles(content);
 
     let mentionedUserIds: number[] = [];
     let orderedMentions: OrderedMention[] = [];

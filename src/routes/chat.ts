@@ -1215,9 +1215,9 @@ router.patch('/messages/:id', async (req: AuthRequest, res: Response): Promise<v
     }
 
     // 7b. Phase 38.1 D-00d: recompute ordered + targeting mentions from the new
-    // content BEFORE the transaction. hasNonText mirrors the send-path rule that
-    // a voice/attachment message carries no @mention parse.
-    const hasNonText = !!msg.voiceUrl || (Array.isArray(msg.attachments) && msg.attachments.length > 0);
+    // content BEFORE the transaction. hasNonText mirrors the send-path rule: only voice
+    // messages skip the @mention parse; PDF captions are user text parsed like any message.
+    const hasNonText = !!msg.voiceUrl;
     const newHandles = hasNonText ? [] : parseMentionHandles(content);
     const oldHandles = hasNonText ? [] : parseMentionHandles(msg.content ?? '');
     const handleUnion = [...new Set([...newHandles, ...oldHandles])];
