@@ -76,6 +76,7 @@ export function computeCapabilities(args: {
     canPostBeacon: true,
     canTranslateMessages: true, // free for all authenticated users — matches existing /api/chat/translate behavior
     canSendVoiceMessages: true, // D-10: hardcoded true for all tiers at launch; flip to `premiumActive` to gate premium-only
+    canViewLinkAnalytics: premiumActive, // quick 261003-nfu: PAID premium only, like canCreatePrivateGroup — the org-admin role does not unlock it
   };
 
   return {
