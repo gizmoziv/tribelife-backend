@@ -4,6 +4,11 @@
  * Returns: { shabbat: ShabbatInfo | null, daf: DafYomi | null, needsLocation: boolean }
  *
  * - Daf Yomi: global, cache key "daf:global:{yyyy-mm-dd}"
+ * - Week selection: Hebcal is queried with the UTC date of (now - 24h) and rolls
+ *   over ONCE to next week after the location's Havdalah has passed (see
+ *   hebcal.resolveShabbatWeek), so Saturday keeps this week's times through
+ *   Havdalah in every timezone. The rollover costs at most one extra Hebcal call
+ *   per location per query-date key, and it is cached like any other week.
  * - Shabbat + parsha: keyed by the caller's stored candle location (geonameid
  *   or lat/lon). When no location is stored, falls back to a timezone-derived
  *   geonameid so parsha (Israel vs Diaspora) is still correct, but
@@ -19,7 +24,7 @@
  */
 
 import tzlookup from 'tz-lookup';
-import { fetchShabbatByGeonameid, fetchShabbatByLatLon, computeDaysUntil, type ShabbatInfo } from './hebcal';
+import { fetchShabbatByGeonameid, fetchShabbatByLatLon, computeDaysUntil, resolveShabbatWeek, type ShabbatInfo } from './hebcal';
 import { fetchDafYomi, type DafYomi } from './sefaria';
 import { geonameidFromTimezone } from '../../config/tribeRegions';
 import { redisGet, redisSet } from '../../lib/redisCache';
@@ -122,13 +127,17 @@ function dafKey(dateStr: string): string {
 
 // ── Cached fetchers ────────────────────────────────────────────────────────
 
-async function getShabbatByGeonameid(geonameid: number, now: Date): Promise<ShabbatInfo | null> {
-  const key = shabbatKeyGeonameid(geonameid, dateKey(now));
+async function getShabbatByGeonameid(
+  geonameid: number,
+  queryDate: Date,
+  now: Date,
+): Promise<ShabbatInfo | null> {
+  const key = shabbatKeyGeonameid(geonameid, dateKey(queryDate));
   const cached = await cacheGet<ShabbatInfo>(key);
   if (cached !== undefined) return cached.value;
 
   try {
-    const result = await fetchShabbatByGeonameid(geonameid, now);
+    const result = await fetchShabbatByGeonameid(geonameid, queryDate);
     await cacheSet(key, result, now);
     return result;
   } catch (err) {
@@ -143,9 +152,10 @@ async function getShabbatByLatLon(
   lat: number,
   lon: number,
   tzid: string,
+  queryDate: Date,
   now: Date,
 ): Promise<ShabbatInfo | null> {
-  const key = shabbatKeyLatLon(lat, lon, dateKey(now));
+  const key = shabbatKeyLatLon(lat, lon, dateKey(queryDate));
   const cached = await cacheGet<ShabbatInfo>(key);
   if (cached !== undefined) return cached.value;
 
@@ -161,7 +171,7 @@ async function getShabbatByLatLon(
   })();
 
   try {
-    const result = await fetchShabbatByLatLon(lat, lon, resolvedTz, now);
+    const result = await fetchShabbatByLatLon(lat, lon, resolvedTz, queryDate);
     await cacheSet(key, result, now);
     return result;
   } catch (err) {
@@ -194,6 +204,7 @@ async function getDafYomiCached(now: Date): Promise<DafYomi | null> {
  *
  * Logic:
  *  1. Run Hebcal + Sefaria in parallel (Promise.allSettled — upstream failure → null).
+ *     Hebcal goes through resolveShabbatWeek (this week until Havdalah, then next week).
  *  2. If the caller has a stored geonameid → fetch by geonameid (correct parsha + candle times).
  *  3. If the caller has stored lat/lon → fetch by lat/lon + tzid (correct parsha + candle times).
  *  4. If neither → derive a geonameid from timezone (Israel tz → Jerusalem, else NYC) for parsha
@@ -213,13 +224,17 @@ export async function getToday(opts: TodayOptions): Promise<TodayPayload> {
     let shabbatResult: ShabbatInfo | null = null;
     let needsLocation = false;
 
-    // Run Hebcal + Sefaria in parallel
-    const [shabbatSettled, dafSettled] = await Promise.allSettled([
+    // One cached Hebcal week for a query date, from the caller's location source.
+    const fetchWeek = (queryDate: Date): Promise<ShabbatInfo | null> =>
       hasGeonameid
-        ? getShabbatByGeonameid(opts.geonameid!, now)
+        ? getShabbatByGeonameid(opts.geonameid!, queryDate, now)
         : hasLatLon
-          ? getShabbatByLatLon(opts.lat!, opts.lon!, opts.tzid, now)
-          : getShabbatByGeonameid(geonameidFromTimezone(opts.tzid), now),
+          ? getShabbatByLatLon(opts.lat!, opts.lon!, opts.tzid, queryDate, now)
+          : getShabbatByGeonameid(geonameidFromTimezone(opts.tzid), queryDate, now);
+
+    // Run Hebcal (week selection) + Sefaria in parallel
+    const [shabbatSettled, dafSettled] = await Promise.allSettled([
+      resolveShabbatWeek(fetchWeek, now),
       getDafYomiCached(now),
     ]);
 

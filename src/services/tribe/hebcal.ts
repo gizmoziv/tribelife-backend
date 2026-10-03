@@ -8,7 +8,8 @@
  * by Hebcal based on the location's country code (Jerusalem → Israel parsha).
  *
  * Pure parser parseHebcalShabbat(json, now) is exported for unit testing.
- * No DB imports. Uses global fetch (Node ES2022).
+ * Week selection (which week to show on Saturday / after Havdalah) is also pure:
+ * see resolveShabbatWeek. No DB imports. Uses global fetch (Node ES2022).
  */
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -95,6 +96,62 @@ export function computeDaysUntil(candleLighting: string | null, now: Date): numb
     Date.UTC(nowLocal.getUTCFullYear(), nowLocal.getUTCMonth(), nowLocal.getUTCDate()),
   );
   return Math.round((candleDay.getTime() - todayLocal.getTime()) / 86_400_000);
+}
+
+// ── Week selection ─────────────────────────────────────────────────────────
+//
+// Hebcal's /shabbat week for a query date starts at that date, or at the
+// PRECEDING Friday when the date is a Saturday (so on Saturday the candles item
+// is yesterday's). The query date is a UTC calendar date, so querying `now`
+// directly flips to next week at UTC midnight: that is BEFORE Havdalah west of
+// UTC (Americas) and long AFTER it east of UTC (Israel, Europe, Australia).
+//
+// Instead, query (now - 24h): that date always lands on or before the location's
+// own local date, so the current (or just-finished) week comes back. Then roll
+// over exactly once, to (Havdalah's date + 1), when the Havdalah instant has
+// passed. Havdalah is an ISO timestamp with an offset, i.e. an absolute instant,
+// so "passed" is judged on the location's own clock in every timezone.
+
+/** The date to query Hebcal with: 24 hours before `now`. */
+export function shabbatQueryDate(now: Date): Date {
+  return new Date(now.getTime() - 24 * 60 * 60 * 1000);
+}
+
+/** True once the Havdalah instant is at or before `now`. False when absent/unparseable. */
+export function havdalahHasPassed(info: ShabbatInfo, now: Date): boolean {
+  if (!info.havdalah) return false;
+  const t = Date.parse(info.havdalah);
+  if (!Number.isFinite(t)) return false;
+  return t <= now.getTime();
+}
+
+/**
+ * Query date for the week AFTER the one `info` describes: the day after the
+ * location-local date of its Havdalah (noon UTC, so the UTC date is unambiguous).
+ * Null when there is no usable Havdalah.
+ */
+export function nextWeekQueryDate(info: ShabbatInfo): Date | null {
+  if (!info.havdalah) return null;
+  const m = info.havdalah.match(/^(\d{4})-(\d{2})-(\d{2})T/);
+  if (!m) return null;
+  return new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]) + 1, 12));
+}
+
+/**
+ * Pick the week to show: the current one until its Havdalah has passed, then
+ * next week's. At most two fetches, no loop; a failed rollover fetch keeps the
+ * current week so the payload is never emptied by an upstream blip.
+ */
+export async function resolveShabbatWeek(
+  fetchWeek: (queryDate: Date) => Promise<ShabbatInfo | null>,
+  now: Date,
+): Promise<ShabbatInfo | null> {
+  const current = await fetchWeek(shabbatQueryDate(now));
+  if (current === null || !havdalahHasPassed(current, now)) return current;
+  const nextQuery = nextWeekQueryDate(current);
+  if (nextQuery === null) return current;
+  const next = await fetchWeek(nextQuery);
+  return next ?? current;
 }
 
 /**
