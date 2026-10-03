@@ -23,6 +23,7 @@ import type { PushMessage } from '../services/pushNotifications';
 import { isUserActivelyViewing } from './activeViewing';
 import { emitDeliveredOnSend } from './receipts';
 import { isUserBanned } from '../lib/bannedUsers';
+import { MESSAGE_MAX_LENGTH, MESSAGE_TOO_LONG_REASON, ackSend, rejectSend } from '../lib/messageSend';
 import type { ChatNotificationPayload } from '../types/chatNotification';
 
 const log = logger.child({ module: 'socket:dm' });
@@ -55,7 +56,7 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
   const avatarUrl: string | null = socket.data.avatarUrl;
 
   // ── Send a direct message ─────────────────────────────────────────────
-  socket.on('dm:message', async (data: { conversationId: number; content: string; replyToId?: number; mediaUrls?: string[]; attachments?: MessageAttachment[] }) => {
+  socket.on('dm:message', async (data: { conversationId: number; content: string; replyToId?: number; mediaUrls?: string[]; attachments?: MessageAttachment[] }, ack?: unknown) => {
     log.info({ event: 'dm_received', userId, handle, conversationId: data?.conversationId, contentLen: data?.content?.length ?? 0, mediaCount: Array.isArray(data?.mediaUrls) ? data.mediaUrls.length : 0, hasReply: !!data?.replyToId }, 'dm:message received');
 
     let content = data.content?.trim() ?? '';
@@ -72,10 +73,12 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
 
     if (!content && mediaUrls.length === 0 && !hasAttachment) {
       log.warn({ event: 'dm_dropped_empty', userId, conversationId: data?.conversationId }, 'dm:message dropped — empty content + no media');
+      ackSend(ack, { ok: false, reason: 'empty' });
       return;
     }
-    if (content.length > 2000) {
-      log.warn({ event: 'dm_dropped_too_long', userId, conversationId: data?.conversationId, contentLen: content.length }, 'dm:message dropped — content > 2000 chars');
+    if (content.length > MESSAGE_MAX_LENGTH) {
+      log.warn({ event: 'dm_rejected_too_long', userId, conversationId: data?.conversationId, contentLen: content.length }, 'dm:message rejected — content over the message cap');
+      rejectSend(socket, ack, MESSAGE_TOO_LONG_REASON);
       return;
     }
 
@@ -91,7 +94,7 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
         if (moderationEnforced()) {
           log.warn({ event: 'dm_moderation_rejected', userId, conversationId: data?.conversationId, reason: dmModResult.reason }, 'dm:message rejected by moderation');
           logModerationEvent({ surface: 'text', action: 'rejected', reason: dmModResult.reason, senderId: userId, roomId: `conversation:${data.conversationId}` });
-          socket.emit('message:rejected', { reason: dmModResult.reason });
+          rejectSend(socket, ack, dmModResult.reason);
           return;
         }
         // Shadow mode: log what we would have blocked, then let the DM proceed.
@@ -123,6 +126,7 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
 
     if (participation.length === 0) {
       log.warn({ event: 'dm_dropped_not_participant', userId, conversationId: data?.conversationId }, 'dm:message dropped — sender is not an active participant');
+      ackSend(ack, { ok: false, reason: 'not_participant' });
       return;
     }
 
@@ -135,6 +139,7 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
 
     if (!convo) {
       log.warn({ event: 'dm_dropped_no_convo', userId, conversationId: data?.conversationId }, 'dm:message dropped — conversation not found');
+      ackSend(ack, { ok: false, reason: 'not_found' });
       return;
     }
 
@@ -143,7 +148,7 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
     // D-12: reject messages to archived groups
     if (isGroup && convo.archivedAt) {
       log.warn({ event: 'dm_dropped_archived', userId, conversationId: data?.conversationId }, 'dm:message dropped — group archived');
-      socket.emit('message:rejected', { reason: 'Group archived' });
+      rejectSend(socket, ack, 'Group archived');
       return;
     }
 
@@ -171,14 +176,14 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
           .limit(1);
 
         if (block.length > 0) {
-          socket.emit('message:rejected', { reason: 'You cannot message this user' });
+          rejectSend(socket, ack, 'You cannot message this user');
           return;
         }
       }
 
       for (const otherId of otherParticipantIds) {
         if (await isUserBanned(otherId)) {
-          socket.emit('message:rejected', { reason: 'This person is no longer available' });
+          rejectSend(socket, ack, 'This person is no longer available');
           return;
         }
       }
@@ -284,6 +289,8 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
     // Emit to conversation room
     io.to(`conversation:${data.conversationId}`).emit('dm:message', msgPayload);
     log.info({ event: 'dm_saved_emitted', userId, conversationId: data.conversationId, messageId: msg.id, isGroup }, 'dm:message persisted + broadcast');
+    // Ack lets a split send emit its next part only after this one is persisted and broadcast (ordering, quick 261002-w9b).
+    ackSend(ack, { ok: true, id: msg.id });
 
     // Phase 12 D-04 follow-up: broadcast a light-weight last-message update
     // so anyone currently viewing Chevra can refresh the row without
