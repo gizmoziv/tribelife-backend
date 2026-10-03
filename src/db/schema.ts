@@ -581,6 +581,38 @@ export const messageEditsRelations = relations(messageEdits, ({ one }) => ({
   message: one(messages, { fields: [messageEdits.messageId], references: [messages.id] }),
 }));
 
+// ─────────────────────────────────────────────
+// MESSAGE LINK CLICKS — append-only event log (quick 261003-nfu)
+// One row per in-app tap on a link in a user-created group message (D1: every
+// sender, free or premium). No unique constraint: repeat clicks are data.
+// conversation_id is denormalized so group/org analytics never join through
+// messages. `url` holds the normalized key from utils/messageLinks.ts.
+// All FKs cascade: messages are soft-deleted so their rows survive a normal
+// delete, and self-delete erases the clicker's history (as reactions do).
+// The read-receipts toggle is applied only at display time (D3), never here.
+// ─────────────────────────────────────────────
+export const messageLinkClicks = pgTable('message_link_clicks', {
+  id: serial('id').primaryKey(),
+  messageId: integer('message_id').references(() => messages.id, { onDelete: 'cascade' }).notNull(),
+  conversationId: integer('conversation_id').references(() => conversations.id, { onDelete: 'cascade' }).notNull(),
+  userId: integer('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
+  url: varchar('url', { length: 2048 }).notNull(),
+  source: varchar('source', { length: 10 }).notNull(),
+  platform: varchar('platform', { length: 10 }).notNull(),
+  clickedAt: timestamp('clicked_at').defaultNow().notNull(),
+}, (t) => ({
+  messageIdx: index('message_link_clicks_message_idx').on(t.messageId),
+  messageUserIdx: index('message_link_clicks_message_user_idx').on(t.messageId, t.userId),
+  conversationClickedIdx: index('message_link_clicks_conversation_clicked_idx').on(t.conversationId, t.clickedAt),
+  userIdx: index('message_link_clicks_user_idx').on(t.userId),
+}));
+
+export const messageLinkClicksRelations = relations(messageLinkClicks, ({ one }) => ({
+  message: one(messages, { fields: [messageLinkClicks.messageId], references: [messages.id] }),
+  conversation: one(conversations, { fields: [messageLinkClicks.conversationId], references: [conversations.id] }),
+  user: one(users, { fields: [messageLinkClicks.userId], references: [users.id] }),
+}));
+
 export const beaconsRelations = relations(beacons, ({ one, many }) => ({
   user: one(users, { fields: [beacons.userId], references: [users.id] }),
   matches: many(beaconMatches, { relationName: 'beaconMatches' }),

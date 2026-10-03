@@ -35,6 +35,7 @@ import { notifyEditAddedMentions } from '../services/editMentionNotify';
 import type { EditSurface } from '../services/editMentionNotify';
 import type { OrderedMention } from '../db/schema';
 import { MESSAGE_MAX_LENGTH, MESSAGE_TOO_LONG_REASON } from '../lib/messageSend';
+import linkClicksRouter from './linkClicks';
 
 const log = logger.child({ module: 'chat' });
 
@@ -126,6 +127,8 @@ const router = Router();
 router.use(requireAuth);
 // Phase 34 (D-17): pending/rejected users are blocked server-side, independent of the mobile block screen.
 router.use(requireApprovedAccess);
+// quick 261003-nfu: link-click analytics routes, behind the same auth.
+router.use(linkClicksRouter);
 
 // ── List DM conversations + groups for current user ─────────────────────────
 router.get('/conversations', async (req: AuthRequest, res: Response): Promise<void> => {
