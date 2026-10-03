@@ -18,6 +18,7 @@ import type { PushMessage } from '../services/pushNotifications';
 import { isUserActivelyViewing, canonicalViewingKey } from './activeViewing';
 import type { ChatNotificationPayload } from '../types/chatNotification';
 import { getZoneForTimezone, getZoneMemberIds } from '../config/timezoneZones';
+import { MESSAGE_MAX_LENGTH, MESSAGE_TOO_LONG_REASON, ackSend, rejectSend } from '../lib/messageSend';
 
 // Phase 30 D-07: old-client fallback line for a document message. New clients render
 // the document card from `attachments` and suppress this string; pre-30 clients show
@@ -59,7 +60,7 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
   socket.join(timezoneRoom);
 
   // ── Send a message to a timezone room ─────────────────────────────────
-  socket.on('room:message', async (data: { content: string; replyToId?: number; mediaUrls?: string[]; attachments?: MessageAttachment[] }) => {
+  socket.on('room:message', async (data: { content: string; replyToId?: number; mediaUrls?: string[]; attachments?: MessageAttachment[] }, ack?: unknown) => {
     let content = data.content?.trim() ?? '';
     let mediaUrls = Array.isArray(data.mediaUrls)
       ? data.mediaUrls.filter((u): u is string => typeof u === 'string').slice(0, 4)
@@ -72,8 +73,15 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
     // interleaved with the photo grid. Ignore mediaUrls when an attachment is present.
     if (hasAttachment) mediaUrls = [];
 
-    if (!content && mediaUrls.length === 0 && !hasAttachment) return;
-    if (content.length > 2000) return;
+    if (!content && mediaUrls.length === 0 && !hasAttachment) {
+      ackSend(ack, { ok: false, reason: 'empty' });
+      return;
+    }
+    if (content.length > MESSAGE_MAX_LENGTH) {
+      log.warn({ event: 'room_rejected_too_long', userId, contentLen: content.length }, 'room:message rejected — content over the message cap');
+      rejectSend(socket, ack, MESSAGE_TOO_LONG_REASON);
+      return;
+    }
     // Only a caption-less document gets the server fallback line (below); a captioned
     // document keeps the user's text as content (quick 261002-vk5 D-1).
     const usesDocFallback = hasAttachment && content.length === 0;
@@ -85,7 +93,7 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
       if (!modResult.isAllowed) {
         if (moderationEnforced()) {
           logModerationEvent({ surface: 'text', action: 'rejected', reason: modResult.reason, senderId: userId, roomId: timezoneRoom });
-          socket.emit('message:rejected', { reason: modResult.reason });
+          rejectSend(socket, ack, modResult.reason);
           return;
         }
         // Shadow mode: log what we would have blocked, then let the message proceed.
@@ -183,6 +191,8 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
     };
 
     io.to(timezoneRoom).emit('room:message', payload);
+    // Ack lets a split send emit its next part only after this one is persisted and broadcast (ordering, quick 261002-w9b).
+    ackSend(ack, { ok: true, id: msg.id });
 
     // Never-null avatar for the sender's person pushes (Phase A). Resolved once
     // per send; reused across the mention + group fan-out push sites.

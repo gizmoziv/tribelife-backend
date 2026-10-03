@@ -20,6 +20,7 @@ import { getGlobeMembershipsForUser, getGlobeMembershipsForRoomSlug } from '../s
 import type { ChatNotificationPayload } from '../types/chatNotification';
 import { isValidTimezoneRoom, getZoneForTimezone } from '../config/timezoneZones';
 import { timezoneRoomId } from '../lib/timezoneRoomAccess';
+import { MESSAGE_MAX_LENGTH, MESSAGE_TOO_LONG_REASON, ackSend, rejectSend } from '../lib/messageSend';
 
 // ── Globe Room Event Handlers ───────────────────────────────────────────────
 // Events: globe:join, globe:leave, globe:message, globe:typing
@@ -121,7 +122,7 @@ export function registerGlobeHandlers(io: Server, socket: Socket): void {
   });
 
   // ── Send a message to a Globe room ──────────────────────────────────────
-  socket.on('globe:message', async (data: { slug: string; content: string; replyToId?: number; mediaUrls?: string[]; attachments?: MessageAttachment[] }) => {
+  socket.on('globe:message', async (data: { slug: string; content: string; replyToId?: number; mediaUrls?: string[]; attachments?: MessageAttachment[] }, ack?: unknown) => {
     let content = data.content?.trim() ?? '';
     let mediaUrls = Array.isArray(data.mediaUrls)
       ? data.mediaUrls.filter((u): u is string => typeof u === 'string').slice(0, 4)
@@ -137,14 +138,24 @@ export function registerGlobeHandlers(io: Server, socket: Socket): void {
     // Empty-message guard ONLY — accept when content OR mediaUrls OR a valid attachment
     // is present. Every gate below (age-gate, rate-limit, membership, premium) still
     // runs for document messages exactly as for a normal message.
-    if (!content && mediaUrls.length === 0 && !hasAttachment) return;
-    if (content.length > 2000) return;
+    if (!content && mediaUrls.length === 0 && !hasAttachment) {
+      ackSend(ack, { ok: false, reason: 'empty' });
+      return;
+    }
+    if (content.length > MESSAGE_MAX_LENGTH) {
+      log.warn({ event: 'globe_rejected_too_long', userId, slug: data.slug, contentLen: content.length }, 'globe:message rejected — content over the message cap');
+      rejectSend(socket, ack, MESSAGE_TOO_LONG_REASON);
+      return;
+    }
     // Only a caption-less document gets the server fallback line (below); a captioned
     // document keeps the user's text as content (quick 261002-vk5 D-1).
     const usesDocFallback = hasAttachment && content.length === 0;
     const isGlobe = isValidGlobeRoom(data.slug);
     const isTimezone = isValidTimezoneRoom(data.slug);
-    if (!isGlobe && !isTimezone) return;
+    if (!isGlobe && !isTimezone) {
+      ackSend(ack, { ok: false, reason: 'invalid_room' });
+      return;
+    }
 
     // Age gate check — accounts less than 24 hours old cannot post
     const accountAge = Date.now() - createdAt.getTime();
@@ -153,6 +164,7 @@ export function registerGlobeHandlers(io: Server, socket: Socket): void {
       socket.emit('globe:age_gated', {
         hoursRemaining: Math.ceil((ageGateMs - accountAge) / 3600000),
       });
+      ackSend(ack, { ok: false, reason: 'age_gated' });
       return;
     }
 
@@ -162,6 +174,7 @@ export function registerGlobeHandlers(io: Server, socket: Socket): void {
     const roomId = isTimezone ? timezoneRoomId(data.slug) : 'globe:' + data.slug;
     if (!checkRateLimit(userId, roomId)) {
       socket.emit('globe:rate_limited', { retryAfterMs: 1000 });
+      ackSend(ack, { ok: false, reason: 'rate_limited', retryAfterMs: 1000 });
       return;
     }
 
@@ -172,7 +185,7 @@ export function registerGlobeHandlers(io: Server, socket: Socket): void {
       if (!modResult.isAllowed) {
         if (moderationEnforced()) {
           logModerationEvent({ surface: 'text', action: 'rejected', reason: modResult.reason, senderId: userId, roomId });
-          socket.emit('message:rejected', { reason: modResult.reason });
+          rejectSend(socket, ack, modResult.reason);
           return;
         }
         // Shadow mode: log what we would have blocked, then let the message proceed.
@@ -186,7 +199,7 @@ export function registerGlobeHandlers(io: Server, socket: Socket): void {
     // bypassable, so the server gate is the real enforcement point.
     const memberships = await getGlobeMembershipsForUser(userId);
     if (!memberships.has(data.slug)) {
-      socket.emit('message:rejected', { reason: 'not_a_member' });
+      rejectSend(socket, ack, 'not_a_member');
       return;
     }
 
@@ -194,7 +207,7 @@ export function registerGlobeHandlers(io: Server, socket: Socket): void {
     // proves "explicitly joined", but rows survive downgrade (D-09), so re-check
     // live premium/org-admin for non-native timezone rooms before the DB write.
     if (isTimezone && !canAccessNonNativeTimezone(data.slug)) {
-      socket.emit('message:rejected', { reason: 'premium_required' });
+      rejectSend(socket, ack, 'premium_required');
       return;
     }
 
@@ -290,6 +303,8 @@ export function registerGlobeHandlers(io: Server, socket: Socket): void {
       mediaUrls: mediaUrls.length > 0 ? mediaUrls : undefined,
       attachments: hasAttachment ? attachments : undefined,
     });
+    // Ack lets a split send emit its next part only after this one is persisted and broadcast (ordering, quick 261002-w9b).
+    ackSend(ack, { ok: true, id: msg.id });
 
     // Fan-out a lightweight unread signal to everyone. Users who never joined
     // this globe room (e.g. still looking at the Beacons tab) would otherwise

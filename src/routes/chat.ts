@@ -34,6 +34,7 @@ import { parseMentionHandles, buildOrderedMentions, diffAddedMentionIds } from '
 import { notifyEditAddedMentions } from '../services/editMentionNotify';
 import type { EditSurface } from '../services/editMentionNotify';
 import type { OrderedMention } from '../db/schema';
+import { MESSAGE_MAX_LENGTH, MESSAGE_TOO_LONG_REASON } from '../lib/messageSend';
 
 const log = logger.child({ module: 'chat' });
 
@@ -1074,7 +1075,7 @@ const translateSchema = z.object({
 });
 
 const editMessageSchema = z.object({
-  content: z.string().min(1, 'Message cannot be empty').max(2000),
+  content: z.string().min(1, 'Message cannot be empty').max(MESSAGE_MAX_LENGTH, MESSAGE_TOO_LONG_REASON),
 });
 
 // ── Translate message ─────────────────────────────────────────────────────
