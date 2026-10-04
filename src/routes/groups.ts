@@ -432,19 +432,24 @@ router.post('/:slug/join', async (req: AuthRequest, res: Response): Promise<void
   // TIER-06: enforce maxGroupMembers against the OWNER's capabilities
   // (Phase 4 F-1). Mirror the enforceLimit pattern but compute caps for
   // group.createdById since the joiner's caps are irrelevant.
-  const [ownerProfile] = await db
-    .select({
-      isPremium: userProfiles.isPremium,
-      premiumExpiresAt: userProfiles.premiumExpiresAt,
-    })
-    .from(userProfiles)
-    .where(eq(userProfiles.userId, group.createdById!))
-    .limit(1);
+  // created_by_id is ON DELETE SET NULL, so a group whose owner deleted their
+  // account has no owner profile: fall back to free-tier caps instead of throwing.
+  const ownerId = group.createdById;
+  const [ownerProfile] = ownerId == null
+    ? []
+    : await db
+        .select({
+          isPremium: userProfiles.isPremium,
+          premiumExpiresAt: userProfiles.premiumExpiresAt,
+        })
+        .from(userProfiles)
+        .where(eq(userProfiles.userId, ownerId))
+        .limit(1);
 
-  const ownerMemberships = await getOrgMembershipsForUser(group.createdById!);
+  const ownerMemberships = ownerId == null ? [] : await getOrgMembershipsForUser(ownerId);
   const ownerCaps = computeCapabilities({
-    isPremium: ownerProfile!.isPremium,
-    premiumExpiresAt: ownerProfile!.premiumExpiresAt,
+    isPremium: ownerProfile?.isPremium ?? false,
+    premiumExpiresAt: ownerProfile?.premiumExpiresAt ?? null,
     orgMemberships: ownerMemberships,
   });
   const memberCap = ownerCaps.limits.maxGroupMembers;
