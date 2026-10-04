@@ -17,6 +17,7 @@ import { computeCapabilities } from '../services/capabilities';
 import { enforceLimit, countOwnedGroups } from '../services/limitChecks';
 import { getOrgMembershipsForUser } from '../services/orgMemberships';
 import { logCapabilityDenial } from '../lib/capabilityLogger';
+import { runGroupAdminHandoff } from '../services/groupAdminHandoff';
 import logger from '../lib/logger';
 
 const log = logger.child({ module: 'groups' });
@@ -894,39 +895,43 @@ router.post('/:id/leave', async (req: AuthRequest, res: Response): Promise<void>
     return;
   }
 
-  // D-05: detect last-admin BEFORE mutating leftAt
-  let isLastAdmin = false;
-  if (membership.role === 'admin') {
-    const [{ count: remainingAdmins }] = await db
-      .select({ count: sql<number>`count(*)::int` })
-      .from(conversationParticipants)
-      .where(and(
-        eq(conversationParticipants.conversationId, convId),
-        eq(conversationParticipants.role, 'admin'),
-        isNull(conversationParticipants.leftAt),
-        sql`${conversationParticipants.userId} != ${userId}`,
-      ));
-    isLastAdmin = remainingAdmins === 0;
-  }
+  try {
+    // D-05 (quick 261003-vpp): the last admin hands off to the longest-standing
+    // active member; the group is archived only when nobody is eligible. The
+    // decision runs under the conversation row lock inside this transaction, so
+    // concurrent leaves cannot both see "another admin remains".
+    const outcome = await db.transaction(async (tx) => {
+      const handoff = await runGroupAdminHandoff(tx, { conversationId: convId, departingUserId: userId, mode: 'leave' });
 
-  // D-05: atomic leave + optional archive in a single transaction
-  await db.transaction(async (tx) => {
-    await tx.update(conversationParticipants)
-      .set({ leftAt: new Date() })
-      .where(eq(conversationParticipants.id, membership.id));
+      // A leaving admin is demoted in the same UPDATE, so a rejoin (which only
+      // clears left_at) cannot silently restore admin next to the new owner.
+      await tx.update(conversationParticipants)
+        .set(handoff.demoteDeparting
+          ? { leftAt: new Date(), role: 'member' }
+          : { leftAt: new Date() })
+        .where(and(
+          eq(conversationParticipants.id, membership.id),
+          isNull(conversationParticipants.leftAt),
+        ));
 
-    if (isLastAdmin) {
-      await tx.update(conversations)
-        .set({ archivedAt: new Date() })
-        .where(eq(conversations.id, convId));
+      return handoff;
+    });
+
+    if (outcome.archived) {
+      log.info({ conversationId: convId, archivedBy: userId }, '[groups] archived');
     }
-  });
+    if (outcome.promotedUserId != null) {
+      log.info(
+        { conversationId: convId, leftBy: userId, promotedUserId: outcome.promotedUserId },
+        '[groups] admin handed off',
+      );
+    }
 
-  if (isLastAdmin) {
-    log.info({ conversationId: convId, archivedBy: userId }, '[groups] archived');
+    res.json({ ok: true, archived: outcome.archived });
+  } catch (err) {
+    log.error({ err, conversationId: convId, userId }, '[groups] leave failed');
+    res.status(500).json({ error: 'Failed to leave group' });
   }
-
-  res.json({ ok: true, archived: isLastAdmin });
 });
 
 export default router;
