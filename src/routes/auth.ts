@@ -27,6 +27,7 @@ import {
 import { computeCapabilities } from '../services/capabilities';
 import { getOrgMembershipsForUser } from '../services/orgMemberships';
 import { bootstrapAutoJoins } from '../services/globeMembership';
+import { handOffGroupsForDeletedUser } from '../services/groupAdminHandoff';
 import { getZoneForTimezone } from '../config/timezoneZones';
 import { callerCanAccessNonNativeTimezone } from '../lib/timezoneRoomAccess';
 import { announceFirstJoin } from '../services/firstJoinAnnounce';
@@ -921,6 +922,16 @@ router.delete(
             log.error({ err }, 'deletion feedback insert failed — proceeding with deletion');
           }
         }
+      }
+
+      // quick 261003-vpp: hand off admin and ownership of the user's groups BEFORE
+      // the delete (their participant rows cascade away with the user). Best-effort
+      // and never blocks deletion (App Store requirement).
+      try {
+        const handoff = await handOffGroupsForDeletedUser(userId);
+        log.info({ userId, ...handoff }, '[auth/account] group admin handoff');
+      } catch (err) {
+        log.error({ err, userId }, '[auth/account] group admin handoff threw; proceeding with deletion');
       }
 
       await db.delete(users).where(eq(users.id, userId));

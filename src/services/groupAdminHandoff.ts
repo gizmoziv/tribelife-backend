@@ -1,10 +1,14 @@
 import { and, eq, isNull, or, notInArray } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
+import { db } from '../db';
 import * as schema from '../db/schema';
 import { conversations, conversationParticipants, users } from '../db/schema';
+import logger from '../lib/logger';
 import {
   planGroupHandoff,
   HANDOFF_PROMOTE_ATTEMPTS,
+  HANDOFF_MAX_GROUPS_PER_DELETION,
+  HANDOFF_DELETION_BUDGET_MS,
   type HandoffMode,
   type HandoffReason,
   type HandoffParticipant,
@@ -14,9 +18,13 @@ import {
 // utils/adminHandoffRules.ts, and every query here runs on the caller's
 // transaction so the handoff commits or rolls back together with the leave.
 
+const log = logger.child({ module: 'group-handoff' });
+
 // Anything queries can run on: the module-level `db` or the `tx` handed to
 // db.transaction(async (tx) => ...). Same pattern as services/referralCredit.ts.
 export type GroupHandoffExecutor = NodePgDatabase<typeof schema>;
+
+export type DeletionHandoffSummary = { considered: number; promoted: number; ownerTransfers: number; unchanged: number; failed: number; skipped: number };
 
 export type GroupHandoffResult = {
   reason: HandoffReason;
@@ -142,4 +150,102 @@ export async function runGroupAdminHandoff(
     archived,
     demoteDeparting: plan.demoteDeparting,
   };
+}
+
+/**
+ * Hand admin and ownership of the user's groups to real members BEFORE their
+ * account is deleted. It must run before the users delete, because the user's
+ * participant rows cascade away with the user, so the plan has to see them first.
+ *
+ * Best-effort and NEVER throws: anything it does not hand off is covered by the
+ * c284830 join safety net (a group with no owner can still be joined) and by the
+ * one-time backfill. Account deletion is an App Store requirement and must not
+ * be blocked by group housekeeping.
+ */
+export async function handOffGroupsForDeletedUser(userId: number): Promise<DeletionHandoffSummary> {
+  const summary: DeletionHandoffSummary = {
+    considered: 0,
+    promoted: 0,
+    ownerTransfers: 0,
+    unchanged: 0,
+    failed: 0,
+    skipped: 0,
+  };
+
+  try {
+    // Archived groups are never read (D5), so they can never fail the deletion.
+    const created = await db
+      .select({ id: conversations.id })
+      .from(conversations)
+      .where(and(
+        eq(conversations.createdById, userId),
+        eq(conversations.isGroup, true),
+        isNull(conversations.archivedAt),
+      ));
+
+    const administered = await db
+      .select({ id: conversations.id })
+      .from(conversationParticipants)
+      .innerJoin(conversations, eq(conversations.id, conversationParticipants.conversationId))
+      .where(and(
+        eq(conversationParticipants.userId, userId),
+        eq(conversationParticipants.role, 'admin'),
+        isNull(conversationParticipants.leftAt),
+        eq(conversations.isGroup, true),
+        isNull(conversations.archivedAt),
+      ));
+
+    let ids = Array.from(new Set([...created, ...administered].map((r) => r.id))).sort((a, b) => a - b);
+
+    if (ids.length > HANDOFF_MAX_GROUPS_PER_DELETION) {
+      log.warn(
+        { userId, total: ids.length, cap: HANDOFF_MAX_GROUPS_PER_DELETION },
+        '[auth/account] too many groups to hand off; the rest are left to the backfill',
+      );
+      summary.skipped += ids.length - HANDOFF_MAX_GROUPS_PER_DELETION;
+      ids = ids.slice(0, HANDOFF_MAX_GROUPS_PER_DELETION);
+    }
+
+    // Sequential, one transaction each: the handoff holds one pooled connection
+    // at a time (the pool max is 20).
+    const deadline = Date.now() + HANDOFF_DELETION_BUDGET_MS;
+    for (let i = 0; i < ids.length; i++) {
+      const conversationId = ids[i];
+      if (Date.now() > deadline) {
+        const remaining = ids.length - i;
+        summary.skipped += remaining;
+        log.warn(
+          { userId, remaining },
+          '[auth/account] group admin handoff ran out of time; the rest are left to the backfill',
+        );
+        break;
+      }
+      summary.considered++;
+      try {
+        const result = await db.transaction((tx) =>
+          runGroupAdminHandoff(tx, { conversationId, departingUserId: userId, mode: 'delete' }),
+        );
+        if (result.promotedUserId !== null) {
+          summary.promoted++;
+        } else if (result.reason === 'owner-transfer') {
+          summary.ownerTransfers++;
+        } else {
+          summary.unchanged++;
+        }
+      } catch (err) {
+        summary.failed++;
+        log.error(
+          { err, userId, conversationId },
+          '[auth/account] group admin handoff failed; continuing with deletion',
+        );
+      }
+    }
+  } catch (err) {
+    log.error(
+      { err, userId },
+      '[auth/account] group admin handoff lookup failed; continuing with deletion',
+    );
+  }
+
+  return summary;
 }
