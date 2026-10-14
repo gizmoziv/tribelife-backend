@@ -1,8 +1,8 @@
 ###
-curl -H "x-admin-key:{{ADMIN_API_KEY}}" "https://tribelife.app/api/admin/users/lookup?handle=mary71"
+curl -H "x-admin-key:{{ADMIN_API_KEY}}" "https://tribelife.app/api/admin/users/lookup?handle=bambam28"
 
 
 ###
 curl -X POST "https://tribelife.app/api/admin/users/ban" \
     -H "x-admin-key: {{ADMIN_API_KEY}}" -H "Content-Type: application/json" \
-    -d '{"userId": 1210, "reason": "spam / bot", "announce":true}'
+    -d '{"userId": 1361, "reason": "phishing", "announce":false}'

@@ -140,3 +140,19 @@
     background: var(--gradient-subtle);
   }
 }
+
+/* ── Partners marquee ────────────── */
+@keyframes partners-scroll {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+.partners-track {
+  animation: partners-scroll 30s linear infinite;
+}
+.partners-marquee:hover .partners-track {
+  animation-play-state: paused;
+}
+@media (prefers-reduced-motion: reduce) {
+  .partners-track { animation: none; }
+  .partners-marquee { overflow-x: auto; }
+}

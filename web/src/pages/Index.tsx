@@ -8,6 +8,7 @@ import PrivacyCallout from '@/components/landing/PrivacyCallout';
 import SocialProofSection from '@/components/landing/SocialProofSection';
 import WallOfLoveSection from '@/components/landing/WallOfLoveSection';
 import HowItWorksSection from '@/components/landing/HowItWorksSection';
+import PartnersSection from '@/components/landing/PartnersSection';
 import FAQSection from '@/components/landing/FAQSection';
 import FoundersNote from '@/components/landing/FoundersNote';
 import CohortSection from '@/components/landing/CohortSection';
@@ -44,6 +45,7 @@ const Index = () => {
       <FoundersNote />
       <CohortSection />
       <SocialProofSection />
+      <PartnersSection />
       <FAQSection />
       <PrivacyCallout />
       <CTASection />
