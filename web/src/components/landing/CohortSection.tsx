@@ -33,14 +33,19 @@ const members: Member[] = [
     linkedin: 'https://www.linkedin.com/in/yaacovsakowitz',
   },
   {
-    name: 'Virginia',
-    photo: '/cohort/virginia.png',
-    linkedin: 'https://www.linkedin.com/in/virginia-weaver',
+    name: 'Jonpaul',
+    photo: '/cohort/jonpaul.jpg',
+    linkedin: 'https://www.linkedin.com/in/jonpaulyc',
   },
   {
     name: 'Sagie',
     photo: '/cohort/sagie.png',
     linkedin: 'https://www.linkedin.com/in/sagie-baram',
+  },
+  {
+    name: 'Virginia',
+    photo: '/cohort/virginia.png',
+    linkedin: 'https://www.linkedin.com/in/virginia-weaver',
   },
 ];
 
