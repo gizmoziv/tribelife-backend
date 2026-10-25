@@ -147,7 +147,7 @@
   to { transform: translateX(-50%); }
 }
 .partners-track {
-  animation: partners-scroll 30s linear infinite;
+  animation: partners-scroll 90s linear infinite;
 }
 .partners-marquee:hover .partners-track {
   animation-play-state: paused;
