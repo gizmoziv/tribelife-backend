@@ -7,6 +7,21 @@ import OpenAI from 'openai';
 export interface ModerationResult {
   isAllowed: boolean;
   reason?: string;
+  // Rule is rejected even in shadow mode (MODERATION_ENFORCEMENT_ENABLED unset).
+  alwaysEnforce?: boolean;
+}
+
+// WhatsApp group/channel invites — blocked to keep users from moving the community off-app.
+// Personal wa.me/<phone> links are intentionally not matched. Matched against a normalized
+// copy of the text (zero-width chars removed, whitespace around dots/slashes collapsed).
+const WHATSAPP_INVITE_PATTERN = /(?:^|[^a-z0-9-])(?:chat\.whatsapp\.com\/[a-z0-9]|whatsapp\.com\/channel\/[a-z0-9])/;
+
+function normalizeForLinkCheck(content: string): string {
+  return content
+    .toLowerCase()
+    .replace(/[\u200B-\u200F\u2060\uFEFF]/g, '')
+    .replace(/\s*[.\u3002]\s*/g, '.')
+    .replace(/\s*\/\s*/g, '/');
 }
 
 // Core blocklist — slurs, extreme profanity, hate speech triggers.
@@ -49,6 +64,11 @@ const BLOCKED_PATTERNS: Array<{ pattern: RegExp; reason: string }> = [
  */
 export function moderateMessage(content: string): ModerationResult {
   const normalized = content.toLowerCase();
+
+  // Checked first so a message that also trips a log-only rule is still rejected.
+  if (WHATSAPP_INVITE_PATTERN.test(normalizeForLinkCheck(content))) {
+    return { isAllowed: false, reason: 'WhatsApp group links are not allowed', alwaysEnforce: true };
+  }
 
   for (const { pattern, reason } of BLOCKED_PATTERNS) {
     if (pattern.test(normalized)) {

@@ -91,7 +91,7 @@ export function registerDmHandlers(io: Server, socket: Socket): void {
     if (content) {
       const dmModResult = moderateMessage(content);
       if (!dmModResult.isAllowed) {
-        if (moderationEnforced()) {
+        if (moderationEnforced() || dmModResult.alwaysEnforce) {
           log.warn({ event: 'dm_moderation_rejected', userId, conversationId: data?.conversationId, reason: dmModResult.reason }, 'dm:message rejected by moderation');
           logModerationEvent({ surface: 'text', action: 'rejected', reason: dmModResult.reason, senderId: userId, roomId: `conversation:${data.conversationId}` });
           rejectSend(socket, ack, dmModResult.reason);

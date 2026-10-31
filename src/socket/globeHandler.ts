@@ -183,7 +183,7 @@ export function registerGlobeHandlers(io: Server, socket: Socket): void {
     if (content) {
       const modResult = moderateMessage(content);
       if (!modResult.isAllowed) {
-        if (moderationEnforced()) {
+        if (moderationEnforced() || modResult.alwaysEnforce) {
           logModerationEvent({ surface: 'text', action: 'rejected', reason: modResult.reason, senderId: userId, roomId });
           rejectSend(socket, ack, modResult.reason);
           return;

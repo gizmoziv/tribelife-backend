@@ -1208,7 +1208,7 @@ router.patch('/messages/:id', async (req: AuthRequest, res: Response): Promise<v
     // 7. Moderation re-run on new content
     const modResult = moderateMessage(content);
     if (!modResult.isAllowed) {
-      if (moderationEnforced()) {
+      if (moderationEnforced() || modResult.alwaysEnforce) {
         console.error('[chat/edit]', { messageId, userId: req.user!.id, reason: modResult.reason });
         logModerationEvent({ surface: 'text', action: 'rejected', reason: modResult.reason, senderId: req.user!.id, messageId });
         res.status(422).json({ error: modResult.reason ?? 'Content rejected by moderation' });
