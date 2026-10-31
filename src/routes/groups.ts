@@ -180,7 +180,7 @@ router.post(
       res.status(403).json({
         error: max > 1
           ? `You can own up to ${max} groups`
-          : `Free accounts can own 1 group. Upgrade to Premium for more.`,
+          : `You've reached your group limit. Upgrade to Premium for more.`,
         capabilityViolation: true,
       });
       return;
